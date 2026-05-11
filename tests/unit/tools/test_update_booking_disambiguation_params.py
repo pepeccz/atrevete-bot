@@ -622,3 +622,183 @@ async def test_pre_resolved_service_ids_invalid_uuid_rejected_with_error():
     assert (
         bad_uuid in errors_text
     ), f"Expected invalid UUID {bad_uuid} in error message, got errors: {data.get('errors')}"
+
+
+# ---------------------------------------------------------------------------
+# T2.7 RED — partial_resolved_ids in ToolResponse.collected on ambiguous return
+# ---------------------------------------------------------------------------
+
+
+def _make_mixed_strict_mock(ambiguous_service_term: str, clean_uuid: str):
+    """Return an AsyncMock for _resolve_service_ids_strict with mixed result.
+
+    Simulates: one service term is ambiguous (variant_required), another resolved cleanly.
+    clean_uuid is returned in partial_resolved_ids per ADR-DR-2.
+    """
+    return AsyncMock(
+        return_value=(
+            [],  # resolved_ids — empty (nothing committed when any ambiguous)
+            [],  # unknown_names
+            [
+                {
+                    "status": "ambiguous",
+                    "axis": "variant",
+                    "service_term": ambiguous_service_term,
+                    "family_label": ambiguous_service_term,
+                    "candidates": ["Corte Largo", "Corte Corto"],
+                    "question_hint": "variant_required",
+                }
+            ],  # ambiguous_descriptors — Corte de Mujer fires variant_required
+            [clean_uuid],  # partial_resolved_ids — Tinte resolved cleanly
+        )
+    )
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_response_carries_partial_resolved_ids_when_some_services_clean():
+    """T2.7 RED: when some services are ambiguous and some resolve cleanly,
+    collected.partial_resolved_ids must contain the UUIDs of cleanly resolved services.
+
+    REQ-TL-4 Scenario A continued: the 'tinte preserved' fix.
+    When services=["Corte de Mujer", "Tinte"] and Tinte resolves cleanly,
+    the ambiguous response must include collected.partial_resolved_ids=[<tinte-uuid>].
+    """
+    from agent.tools.update_booking import _update_booking_impl
+
+    tinte_uuid = str(uuid4())
+    strict_mock = _make_mixed_strict_mock("Corte de Mujer", tinte_uuid)
+    mocks = _make_common_mocks(strict_mock)
+
+    with (
+        patch(
+            "agent.tools._booking_helpers._resolve_service_ids",
+            mocks["agent.tools._booking_helpers._resolve_service_ids"],
+        ),
+        patch(
+            "agent.tools._booking_helpers._resolve_service_ids_strict",
+            mocks["agent.tools._booking_helpers._resolve_service_ids_strict"],
+        ),
+        patch(
+            "agent.tools._booking_helpers._resolve_service_categories",
+            mocks["agent.tools._booking_helpers._resolve_service_categories"],
+        ),
+        patch(
+            "agent.tools._booking_helpers._resolve_service_id_to_category_map",
+            mocks["agent.tools._booking_helpers._resolve_service_id_to_category_map"],
+        ),
+        patch(
+            "agent.tools._booking_helpers._resolve_audience_variants",
+            mocks["agent.tools._booking_helpers._resolve_audience_variants"],
+        ),
+        patch(
+            "agent.tools._booking_helpers._resolve_stylist",
+            mocks["agent.tools._booking_helpers._resolve_stylist"],
+        ),
+        patch(
+            "agent.tools._booking_helpers._resolve_active_stylists",
+            mocks["agent.tools._booking_helpers._resolve_active_stylists"],
+        ),
+        patch(
+            "agent.tools._booking_helpers._validate_full_name",
+            mocks["agent.tools._booking_helpers._validate_full_name"],
+        ),
+        patch(
+            "database.connection.get_async_session",
+            mocks["database.connection.get_async_session"],
+        ),
+        patch(
+            "agent.tools._booking_validators.is_date_closed",
+            mocks["agent.tools._booking_validators.is_date_closed"],
+        ),
+    ):
+        raw = await _update_booking_impl(
+            services=["Corte de Mujer", "Tinte"],
+            stylist_name=None,
+            no_preference_stylist=False,
+            date_iso=None,
+            date_text=None,
+            audience=None,
+        )
+
+    data = parse_response(raw)
+    assert data["status"] == "ambiguous", f"Expected status=ambiguous for mixed input, got: {data}"
+    assert (
+        data["next_step"] == "variant_required"
+    ), f"Expected next_step=variant_required, got: {data}"
+    # REQ-TL-4: partial_resolved_ids must be non-empty with the clean UUID
+    partial = data.get("collected", {}).get("partial_resolved_ids", [])
+    assert (
+        tinte_uuid in partial
+    ), f"Expected tinte_uuid {tinte_uuid} in collected.partial_resolved_ids, got: {partial}"
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_response_partial_resolved_ids_empty_when_all_ambiguous():
+    """T2.7 RED (triangulation): when ALL services are ambiguous, partial_resolved_ids is [].
+
+    REQ-TL-4: partial_resolved_ids is only populated when at least one service resolved cleanly.
+    When all services are ambiguous, it must default to empty list.
+    """
+    from agent.tools.update_booking import _update_booking_impl
+
+    # strict mock returns no partial_resolved_ids — all ambiguous
+    strict_mock = _make_variant_ambiguous_strict_mock(str(FAKE_SERVICE_ID))
+    mocks = _make_common_mocks(strict_mock)
+
+    with (
+        patch(
+            "agent.tools._booking_helpers._resolve_service_ids",
+            mocks["agent.tools._booking_helpers._resolve_service_ids"],
+        ),
+        patch(
+            "agent.tools._booking_helpers._resolve_service_ids_strict",
+            mocks["agent.tools._booking_helpers._resolve_service_ids_strict"],
+        ),
+        patch(
+            "agent.tools._booking_helpers._resolve_service_categories",
+            mocks["agent.tools._booking_helpers._resolve_service_categories"],
+        ),
+        patch(
+            "agent.tools._booking_helpers._resolve_service_id_to_category_map",
+            mocks["agent.tools._booking_helpers._resolve_service_id_to_category_map"],
+        ),
+        patch(
+            "agent.tools._booking_helpers._resolve_audience_variants",
+            mocks["agent.tools._booking_helpers._resolve_audience_variants"],
+        ),
+        patch(
+            "agent.tools._booking_helpers._resolve_stylist",
+            mocks["agent.tools._booking_helpers._resolve_stylist"],
+        ),
+        patch(
+            "agent.tools._booking_helpers._resolve_active_stylists",
+            mocks["agent.tools._booking_helpers._resolve_active_stylists"],
+        ),
+        patch(
+            "agent.tools._booking_helpers._validate_full_name",
+            mocks["agent.tools._booking_helpers._validate_full_name"],
+        ),
+        patch(
+            "database.connection.get_async_session",
+            mocks["database.connection.get_async_session"],
+        ),
+        patch(
+            "agent.tools._booking_validators.is_date_closed",
+            mocks["agent.tools._booking_validators.is_date_closed"],
+        ),
+    ):
+        raw = await _update_booking_impl(
+            services=["Tinte"],
+            stylist_name=None,
+            no_preference_stylist=False,
+            date_iso=None,
+            date_text=None,
+            audience=None,
+        )
+
+    data = parse_response(raw)
+    assert data["status"] == "ambiguous", f"Expected ambiguous, got: {data}"
+    partial = data.get("collected", {}).get("partial_resolved_ids", [])
+    assert (
+        partial == []
+    ), f"Expected empty partial_resolved_ids when all services ambiguous, got: {partial}"
