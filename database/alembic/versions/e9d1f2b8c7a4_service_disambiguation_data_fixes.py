@@ -9,7 +9,7 @@ PR-1: Slice 1 — data-fixes for service-disambiguation-and-booking-ux
 Changes:
 - Tinte.audience = 'adult_female' (was NULL; needed for audience disambiguation gate)
 - Rename principal "Depilación de Piernas Enteras" → "Depilación" (UUID unchanged)
-- Update all 11 child variant rows: metadata_[parent_service_name] patched via jsonb_set
+- Update all 11 child variant rows: metadata[parent_service_name] patched via jsonb_set
 - Insert new "Piernas Enteras" variant (12th wax variant, child of "Depilación")
 
 NFR-3: UUID of the renamed principal row is NOT changed. Existing FK references remain valid.
@@ -43,21 +43,21 @@ def upgrade() -> None:
         SET name = 'Depilación',
             description = 'Depilación con cera. Elige la zona corporal (40 min para piernas enteras)'
         WHERE name = 'Depilación de Piernas Enteras'
-          AND metadata_->>'service_type' = 'principal'
+          AND metadata->>'service_type' = 'principal'
         """)
 
     # 3. Patch all 11 child variant rows: parent_service_name string inside JSONB
     op.execute("""
         UPDATE services
-        SET metadata_ = jsonb_set(metadata_, '{parent_service_name}', '"Depilación"'::jsonb)
-        WHERE metadata_->>'parent_service_name' = 'Depilación de Piernas Enteras'
+        SET metadata = jsonb_set(metadata, '{parent_service_name}', '"Depilación"'::jsonb)
+        WHERE metadata->>'parent_service_name' = 'Depilación de Piernas Enteras'
         """)
 
     # 4. Insert "Piernas Enteras" as the 12th wax variant (child of renamed principal)
     op.execute("""
         INSERT INTO services (
             id, name, category, duration_minutes, description,
-            audience, metadata_, is_active, created_at, updated_at
+            audience, metadata, is_active, created_at, updated_at
         )
         VALUES (
             gen_random_uuid(),
@@ -81,21 +81,21 @@ def downgrade() -> None:
     op.execute("""
         DELETE FROM services
         WHERE name = 'Piernas Enteras'
-          AND metadata_->>'parent_service_name' = 'Depilación'
-          AND metadata_->>'service_type' = 'variant'
+          AND metadata->>'parent_service_name' = 'Depilación'
+          AND metadata->>'service_type' = 'variant'
         """)
 
     # 3. Revert child variant parent_service_name back to old name
     op.execute("""
         UPDATE services
-        SET metadata_ = jsonb_set(
-            metadata_,
+        SET metadata = jsonb_set(
+            metadata,
             '{parent_service_name}',
             '"Depilación de Piernas Enteras"'::jsonb
         )
-        WHERE metadata_->>'parent_service_name' = 'Depilación'
-          AND metadata_->>'service_type' = 'variant'
-          AND metadata_->>'dimension' = 'wax'
+        WHERE metadata->>'parent_service_name' = 'Depilación'
+          AND metadata->>'service_type' = 'variant'
+          AND metadata->>'dimension' = 'wax'
         """)
 
     # 2. Revert principal name back
@@ -104,7 +104,7 @@ def downgrade() -> None:
         SET name = 'Depilación de Piernas Enteras',
             description = 'Depilación con cera de piernas enteras: desde tobillo hasta ingle, ambas piernas completas (40 min)'
         WHERE name = 'Depilación'
-          AND metadata_->>'service_type' = 'principal'
+          AND metadata->>'service_type' = 'principal'
         """)
 
     # 1. Revert Tinte audience back to NULL
