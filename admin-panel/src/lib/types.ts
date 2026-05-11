@@ -205,11 +205,26 @@ export interface ConversationMessage {
   timestamp?: string;
 }
 
+/**
+ * WhatsApp contact fallback shown by the inbox CustomerCard when a conversation
+ * has no linked customers row yet. Populated by the inbound webhook from the
+ * Chatwoot conversation.sender object.
+ */
+export interface WhatsappContact {
+  name: string | null;
+  phone: string | null;
+}
+
 export interface ConversationHistory {
   id: string;
   conversation_id: string; // thread_id string (LangGraph thread)
   customer_id: string | null;
   customer_name: string | null;
+  /**
+   * WhatsApp contact info captured from Chatwoot. Always present in detail
+   * responses; either field may be null when no inbound has been processed yet.
+   */
+  whatsapp_contact?: WhatsappContact;
   started_at: string | null;
   ended_at: string | null;
   message_count: number;

@@ -1,21 +1,39 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { User, Phone, Calendar, Loader2, ChevronRight } from "lucide-react";
+import {
+  User,
+  Phone,
+  Calendar,
+  Loader2,
+  ChevronRight,
+  MessageCircle,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { formatDate } from "@/components/shared/format-utils";
 import api from "@/lib/api";
-import type { CustomerDetail, CustomerAppointment } from "@/lib/types";
+import type {
+  CustomerDetail,
+  CustomerAppointment,
+  WhatsappContact,
+} from "@/lib/types";
 import Link from "next/link";
 
 interface CustomerCardProps {
   /**
-   * Customer UUID. If null, renders a placeholder (conversation with unknown customer).
+   * Customer UUID. If null, renders the WhatsApp-metadata fallback when
+   * ``whatsappContact`` carries any info; otherwise an empty placeholder.
    */
   customerId: string | null;
+  /**
+   * Fallback contact info from the inbound webhook (Chatwoot sender). Shown
+   * when ``customerId`` is null. Either field may be null for very old
+   * conversations whose webhook ran before sender_phone was persisted.
+   */
+  whatsappContact?: WhatsappContact | null;
 }
 
 /**
@@ -24,7 +42,7 @@ interface CustomerCardProps {
  * Reuses the existing /customers/[id] data contract (api.getCustomerDetail).
  * FR-UI-1.
  */
-export function CustomerCard({ customerId }: CustomerCardProps) {
+export function CustomerCard({ customerId, whatsappContact }: CustomerCardProps) {
   const [customer, setCustomer] = useState<CustomerDetail | null>(null);
   const [appointments, setAppointments] = useState<CustomerAppointment[]>([]);
   const [loading, setLoading] = useState(false);
@@ -58,11 +76,64 @@ export function CustomerCard({ customerId }: CustomerCardProps) {
   }, [customerId]);
 
   if (!customerId) {
+    const waName = whatsappContact?.name?.trim() || null;
+    const waPhone = whatsappContact?.phone?.trim() || null;
+    const hasAnyWaInfo = Boolean(waName || waPhone);
+
+    if (!hasAnyWaInfo) {
+      return (
+        <div className="flex flex-col items-center justify-center h-full text-sm text-muted-foreground gap-2 p-4">
+          <User className="h-8 w-8 opacity-30" />
+          <span>Cliente no identificado</span>
+        </div>
+      );
+    }
+
     return (
-      <div className="flex flex-col items-center justify-center h-full text-sm text-muted-foreground gap-2 p-4">
-        <User className="h-8 w-8 opacity-30" />
-        <span>Cliente no identificado</span>
-      </div>
+      <ScrollArea className="h-full">
+        <div className="p-4 space-y-5">
+          {/* Header — unidentified, with WhatsApp metadata */}
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted text-muted-foreground font-bold text-sm flex-shrink-0">
+              {(waName ?? "??").slice(0, 2).toUpperCase()}
+            </div>
+            <div className="min-w-0">
+              <p className="font-semibold text-sm truncate">
+                {waName ?? "Sin nombre"}
+              </p>
+              <p className="text-xs text-muted-foreground truncate">
+                Sin identificar
+              </p>
+            </div>
+          </div>
+
+          <Separator />
+
+          {/* Contact from WhatsApp */}
+          <div className="space-y-2">
+            <p className="text-[11px] font-bold tracking-widest text-muted-foreground uppercase">
+              Contacto (WhatsApp)
+            </p>
+            {waPhone ? (
+              <div className="flex items-center gap-2 text-sm">
+                <Phone className="h-3.5 w-3.5 text-muted-foreground flex-shrink-0" />
+                <span>{waPhone}</span>
+              </div>
+            ) : (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <Phone className="h-3.5 w-3.5 flex-shrink-0" />
+                <span>Teléfono no disponible</span>
+              </div>
+            )}
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <MessageCircle className="h-3.5 w-3.5 flex-shrink-0" />
+              <span>
+                Fuente: metadatos de WhatsApp (sin cliente vinculado)
+              </span>
+            </div>
+          </div>
+        </div>
+      </ScrollArea>
     );
   }
 

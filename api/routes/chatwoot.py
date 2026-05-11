@@ -6,6 +6,7 @@ import os
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import aiohttp
 from fastapi import APIRouter, HTTPException, Request
@@ -78,6 +79,12 @@ async def upsert_conversation_history(
     existing = result.scalar_one_or_none()
     now = datetime.now(tz=UTC)
 
+    initial_metadata: dict[str, Any] = {}
+    if sender_name:
+        initial_metadata["sender_name"] = sender_name
+    if sender_phone:
+        initial_metadata["sender_phone"] = sender_phone
+
     if existing is None:
         parent = ConversationHistory(
             conversation_id=conversation_id_str,
@@ -85,7 +92,7 @@ async def upsert_conversation_history(
             started_at=now,
             ended_at=now,
             message_count=0,
-            metadata_={"sender_name": sender_name} if sender_name else {},
+            metadata_=initial_metadata,
         )
         session.add(parent)
         await session.flush()
@@ -94,8 +101,13 @@ async def upsert_conversation_history(
         parent.ended_at = now
         if parent.customer_id is None and customer_id is not None:
             parent.customer_id = customer_id
-        if not parent.metadata_.get("sender_name") and sender_name:
+        # Mirror sender_name and sender_phone from WhatsApp into metadata.
+        # Used by the admin inbox CustomerCard to show contact info when the
+        # conversation is not yet linked to a customers row.
+        if sender_name and not parent.metadata_.get("sender_name"):
             parent.metadata_ = {**parent.metadata_, "sender_name": sender_name}
+        if sender_phone and not parent.metadata_.get("sender_phone"):
+            parent.metadata_ = {**parent.metadata_, "sender_phone": sender_phone}
 
     # Mirror Chatwoot's can_reply (24h WhatsApp window indicator) on both new
     # and updated rows. window_service falls back to message-timestamp

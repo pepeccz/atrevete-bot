@@ -5249,11 +5249,17 @@ async def get_conversation(
         started_at = messages[0]["created_at"] if messages else None
         ended_at = messages[-1]["created_at"] if messages else None
 
+        whatsapp_contact = {
+            "name": customer_name,
+            "phone": state.get("customer_phone") or state.get("pending_whatsapp_phone"),
+        }
+
         return {
             "id": f"redis:{thread_id}",
             "conversation_id": thread_id,
             "customer_id": str(customer_id) if customer_id else None,
             "customer_name": customer_name,
+            "whatsapp_contact": whatsapp_contact,
             "started_at": started_at,
             "ended_at": ended_at,
             "message_count": len(messages),
@@ -5293,6 +5299,16 @@ async def get_conversation(
             for msg in conversation.message_records
         ]
 
+        # WhatsApp contact fallback for the admin inbox CustomerCard. Populated
+        # by the inbound webhook (chatwoot.py) into ConversationHistory.metadata.
+        # Used to render contact info when customer_id is null (no Customer row
+        # has been linked yet).
+        meta = conversation.metadata_ or {}
+        whatsapp_contact = {
+            "name": meta.get("sender_name"),
+            "phone": meta.get("sender_phone"),
+        }
+
         return {
             "id": str(conversation.id),
             "conversation_id": conversation.conversation_id,
@@ -5302,6 +5318,7 @@ async def get_conversation(
                 if conversation.customer
                 else None
             ),
+            "whatsapp_contact": whatsapp_contact,
             "started_at": conversation.started_at.isoformat() if conversation.started_at else None,
             "ended_at": conversation.ended_at.isoformat() if conversation.ended_at else None,
             "message_count": conversation.message_count,
