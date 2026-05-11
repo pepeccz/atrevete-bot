@@ -304,15 +304,19 @@ async def _resolve_active_stylists(
 
 async def _resolve_service_ids_strict(
     session: AsyncSession, service_names: list[str]
-) -> tuple[list[str], list[str], list[dict]]:
+) -> tuple[list[str], list[str], list[dict], list[str]]:
     """Resolve service names to UUIDs with ambiguity detection.
 
-    Like _resolve_service_ids but returns a 3-tuple:
-      (resolved_ids, unknown_names, ambiguous_descriptors)
+    Returns a 4-tuple:
+      (resolved_ids, unknown_names, ambiguous_descriptors, partial_resolved_ids)
 
     When a service term maps to an ambiguous principal (audience axis or variant axis),
     its UUID is NOT appended to resolved_ids — instead, a descriptor dict is added to
     the third element.
+
+    When any ambiguity exists in the call, resolved_ids is set to [] and the UUIDs
+    that DID resolve cleanly are placed in partial_resolved_ids. When no ambiguity
+    exists, partial_resolved_ids is [].
 
     Ambiguous descriptor shape (design §2 Slice 2):
     {
@@ -326,7 +330,7 @@ async def _resolve_service_ids_strict(
 
     _resolve_service_ids stays as a thin 2-tuple wrapper for backward compatibility.
 
-    Refs: design §2 Slice 2, spec R2.1-R2.3, NFR-2
+    Refs: REQ-TL-3, design ADR-DR-2, spec R2.1-R2.3, NFR-2
     """
     from agent.prompts.catalog_builder import _derive_customer_safe_service_name
     from database.models import Service
@@ -352,6 +356,7 @@ async def _resolve_service_ids_strict(
     resolved_ids: list[str] = []
     unknown: list[str] = []
     ambiguous: list[dict] = []
+    clean_uuids: list[str] = []  # UUIDs that resolved cleanly this call (ADR-DR-2)
 
     for name in service_names:
         normalized = _normalize_name(name)
@@ -418,11 +423,16 @@ async def _resolve_service_ids_strict(
             # Unambiguous — commit UUID
             norm = _normalize_name(matched_internal)
             if norm in by_internal:
-                resolved_ids.append(by_internal[norm])
+                clean_uuids.append(by_internal[norm])
             elif norm in by_display:
-                resolved_ids.append(by_display[norm])
+                clean_uuids.append(by_display[norm])
 
-    return resolved_ids, unknown, ambiguous
+    # ADR-DR-2: when any ambiguity exists, nothing is committed this turn.
+    # Clean UUIDs are returned in partial_resolved_ids for the LLM to round-trip.
+    if ambiguous:
+        return [], unknown, ambiguous, clean_uuids
+    resolved_ids = clean_uuids
+    return resolved_ids, unknown, ambiguous, []
 
 
 async def _resolve_service_ids(

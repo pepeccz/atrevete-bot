@@ -248,8 +248,8 @@ async def _update_booking_impl(
             ).model_dump_json()
 
         # ── Resolve service names (strict: detects ambiguous axis at resolution time) ──
-        resolved_ids, unknown_names, ambiguous_descriptors = await _resolve_service_ids_strict(
-            session, services
+        resolved_ids, unknown_names, ambiguous_descriptors, partial_resolved_ids = (
+            await _resolve_service_ids_strict(session, services)
         )
 
         # ── Step 1.7: ambiguous descriptor gate (audience or variant axis) ────
