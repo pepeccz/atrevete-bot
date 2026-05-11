@@ -221,8 +221,8 @@ export default function HolidaysPage() {
                     className="flex items-center justify-between p-4 border rounded-lg hover:bg-accent/50 transition-colors"
                   >
                     <div className="flex items-center gap-4">
-                      <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-red-100 dark:bg-red-900/20">
-                        <Calendar className="h-6 w-6 text-red-600 dark:text-red-400" />
+                      <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-red-100">
+                        <Calendar className="h-6 w-6 text-red-600" />
                       </div>
                       <div>
                         <p className="font-medium">{holiday.name}</p>

@@ -20,7 +20,6 @@ import {
   ChevronRight,
   ExternalLink,
   MessageCircle,
-  Sun,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -279,40 +278,6 @@ function ExternalLinksSection({
   );
 }
 
-// ── Theme toggle (light-only, Oscuro visually disabled) ───────────────────────
-
-function ThemeToggleLightOnly({ isCollapsed }: { isCollapsed: boolean }) {
-  return (
-    <div
-      className={cn(
-        "flex items-center gap-2 px-3 py-2 text-ink-mute text-[13px] font-medium",
-        isCollapsed && "justify-center px-1"
-      )}
-    >
-      <Sun className="h-4 w-4 flex-shrink-0" />
-      {!isCollapsed && (
-        <>
-          <span className="flex-1">Modo claro</span>
-          {/* Toggle pill — dark side visually disabled */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <span
-                className="relative w-8 h-[18px] rounded-pill border border-line bg-line cursor-not-allowed"
-                aria-label="Modo oscuro — próximamente"
-                role="img"
-              >
-                {/* thumb locked to left (light side) */}
-                <span className="absolute left-[2px] top-[2px] w-[13px] h-[13px] rounded-full bg-white shadow-sm" />
-              </span>
-            </TooltipTrigger>
-            <TooltipContent side="right">Próximamente</TooltipContent>
-          </Tooltip>
-        </>
-      )}
-    </div>
-  );
-}
-
 // ── Sidebar inner content ─────────────────────────────────────────────────────
 
 function SidebarContent({
@@ -415,13 +380,8 @@ function SidebarContent({
         />
       </nav>
 
-      {/* Footer: theme toggle + account row */}
+      {/* Footer: account row */}
       <div className="border-t border-line">
-        {/* Theme toggle */}
-        <div className={cn("px-2 pt-2", isCollapsed && "px-1")}>
-          <ThemeToggleLightOnly isCollapsed={isCollapsed} />
-        </div>
-
         {/* Account row */}
         <div className="p-2 pb-3">
           {isCollapsed ? (

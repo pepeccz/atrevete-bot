@@ -42,12 +42,12 @@ export function ConflictWarning({ conflicts, maxShow = 5 }: ConflictWarningProps
   };
 
   return (
-    <Alert variant="destructive" className="border-amber-500 bg-amber-50 dark:bg-amber-950/30">
+    <Alert variant="destructive" className="border-amber-500 bg-amber-50">
       <AlertTriangle className="h-4 w-4 text-amber-600" />
-      <AlertTitle className="text-amber-800 dark:text-amber-200">
+      <AlertTitle className="text-amber-800">
         Conflictos detectados ({conflicts.length})
       </AlertTitle>
-      <AlertDescription className="text-amber-700 dark:text-amber-300">
+      <AlertDescription className="text-amber-700">
         <p className="text-sm mb-2">
           Los siguientes eventos existentes se verán afectados:
         </p>
@@ -67,7 +67,7 @@ export function ConflictWarning({ conflicts, maxShow = 5 }: ConflictWarningProps
             ... y {remaining} conflictos más.
           </p>
         )}
-        <p className="text-sm mt-3 font-medium text-amber-800 dark:text-amber-200">
+        <p className="text-sm mt-3 font-medium text-amber-800">
           El bloqueo tendrá prioridad sobre estos eventos existentes.
         </p>
       </AlertDescription>

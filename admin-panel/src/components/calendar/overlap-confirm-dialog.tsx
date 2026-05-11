@@ -74,26 +74,26 @@ export function OverlapConfirmDialog({
               La nueva cita se solaparía con {conflicts.length} cita{conflicts.length !== 1 ? "s" : ""} existente{conflicts.length !== 1 ? "s" : ""}:
             </span>
 
-            <div className="border rounded-md p-3 space-y-2 bg-amber-50 dark:bg-amber-950/20">
+            <div className="border rounded-md p-3 space-y-2 bg-amber-50">
               {conflicts.map((conflict) => (
                 <div
                   key={conflict.appointment_id}
                   className="text-sm border-b last:border-b-0 pb-2 last:pb-0"
                 >
-                  <div className="font-medium text-amber-800 dark:text-amber-200">
+                  <div className="font-medium text-amber-800">
                     {conflict.customer_name}
                   </div>
-                  <div className="text-amber-700 dark:text-amber-300">
+                  <div className="text-amber-700">
                     {conflict.service_names}
                   </div>
-                  <div className="text-amber-600 dark:text-amber-400 text-xs">
+                  <div className="text-amber-600 text-xs">
                     {formatDateTime(conflict.start_time)} ({formatTimeRange(conflict.start_time, conflict.end_time)})
                   </div>
                 </div>
               ))}
             </div>
 
-            <span className="block font-medium text-amber-700 dark:text-amber-300">
+            <span className="block font-medium text-amber-700">
               ¿Deseas {actionText.question} de todos modos? Esto creará una superposición en el calendario.
             </span>
           </div></AlertDialogDescription>
