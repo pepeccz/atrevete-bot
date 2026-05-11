@@ -11,14 +11,14 @@ Excludes .md files so R-1 quoted prohibited forms don't trigger false positives.
 
 from __future__ import annotations
 
-import re
 import pathlib
+import re
 
 VOSEO_PATTERN = re.compile(
-    r'\b(podés|querés|elegí|decime|contame|tenés|mostrá)\b',
+    r"\b(podés|querés|elegí|decime|contame|tenés|mostrá)\b",
     re.IGNORECASE,
 )
-SCAN_DIRS = ['agent', 'api', 'database', 'shared']
+SCAN_DIRS = ["agent", "api", "database", "shared"]
 
 
 def test_no_voseo_in_production_python() -> None:
@@ -33,13 +33,9 @@ def test_no_voseo_in_production_python() -> None:
         scan_path = repo_root / d
         if not scan_path.exists():
             continue
-        for py in scan_path.rglob('*.py'):
-            text = py.read_text(encoding='utf-8', errors='replace')
+        for py in scan_path.rglob("*.py"):
+            text = py.read_text(encoding="utf-8", errors="replace")
             for m in VOSEO_PATTERN.finditer(text):
-                line_no = text[: m.start()].count('\n') + 1
-                offenders.append(
-                    f"{py.relative_to(repo_root)}:{line_no} — '{m.group(0)}'"
-                )
-    assert not offenders, (
-        "Voseo found in production Python paths:\n" + "\n".join(offenders)
-    )
+                line_no = text[: m.start()].count("\n") + 1
+                offenders.append(f"{py.relative_to(repo_root)}:{line_no} — '{m.group(0)}'")
+    assert not offenders, "Voseo found in production Python paths:\n" + "\n".join(offenders)
