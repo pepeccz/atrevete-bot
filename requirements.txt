@@ -9,7 +9,7 @@ langfuse>=2.0.0
 fastapi[standard]==0.116.1
 uvicorn[standard]>=0.30.0
 python-jose[cryptography]>=3.3.0
-passlib[bcrypt]>=1.7.4  # Password hashing for admin authentication
+passlib[bcrypt]>=1.7.4  # Used by api/routes/admin.py (passlib API); shared/security.py uses bcrypt directly
 
 # Database & ORM
 psycopg[binary]>=3.2.0

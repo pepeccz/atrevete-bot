@@ -1770,6 +1770,43 @@ class ConversationTurn(Base):
         )
 
 
+class AdminUser(Base):
+    """Admin / stylist user account (RBAC).
+
+    Source of truth for authentication and role. The role string is
+    re-read from this row on every authenticated request (see
+    api/dependencies/auth.py::get_current_user). Never trust role
+    claims from JWT payloads.
+    """
+
+    __tablename__ = "admin_users"
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    username: Mapped[str] = mapped_column(String(64), nullable=False, unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    role: Mapped[str] = mapped_column(String(16), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    display_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    last_login_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+    __table_args__ = (
+        CheckConstraint("role IN ('admin','stylist')", name="admin_users_role_check"),
+        Index("ix_admin_users_role_active", "role", "is_active"),
+    )
+
+    def __repr__(self) -> str:
+        return f"<AdminUser(id={self.id}, username='{self.username}', role='{self.role}')>"
+
+
 class Escalation(Base):
     """
     Escalation model — records every human-handoff event.
@@ -1815,9 +1852,18 @@ class Escalation(Base):
         TIMESTAMP(timezone=True), server_default=func.now(), index=True
     )
     resolved_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    resolved_by_user_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("admin_users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     metadata_: Mapped[dict | None] = mapped_column("metadata_escalation", JSONB, nullable=True)
 
-    __table_args__ = (Index("idx_escalations_conv_triggered", "conversation_id", "triggered_at"),)
+    __table_args__ = (
+        Index("idx_escalations_conv_triggered", "conversation_id", "triggered_at"),
+        Index("ix_escalations_resolved_by", "resolved_by_user_id"),
+    )
 
     def __repr__(self) -> str:
         return (
