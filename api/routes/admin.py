@@ -6569,15 +6569,34 @@ async def inbox_window_status(
 
     Permissions: conversations:read (admin + stylist).
     """
+    from uuid import UUID as _UUID
+
     from api.services.window_service import compute_window_open
 
+    # Accept both ConversationHistory.id (UUID, sent by admin-panel) and
+    # ConversationHistory.conversation_id (Chatwoot string id) — matches the
+    # tolerant lookup in ConversationInboxService._get_history.
+    try:
+        uuid_value: _UUID | None = _UUID(conversation_id)
+    except (ValueError, TypeError):
+        uuid_value = None
+
     async with get_async_session() as session:
-        result = await session.execute(
-            select(ConversationHistory).where(
-                ConversationHistory.conversation_id == conversation_id
+        history = None
+        if uuid_value is not None:
+            result = await session.execute(
+                select(ConversationHistory).where(ConversationHistory.id == uuid_value)
             )
-        )
-        history = result.scalar_one_or_none()
+            history = result.scalar_one_or_none()
+
+        if history is None:
+            result = await session.execute(
+                select(ConversationHistory).where(
+                    ConversationHistory.conversation_id == conversation_id
+                )
+            )
+            history = result.scalar_one_or_none()
+
         if history is None:
             raise HTTPException(status_code=404, detail="Conversation not found.")
 
