@@ -1,7 +1,16 @@
 "use client";
 
 import { useCallback, useState } from "react";
-import { MessageSquare, Bot, BotOff, AlertTriangle, Inbox, Mail } from "lucide-react";
+import {
+  MessageSquare,
+  Bot,
+  BotOff,
+  AlertTriangle,
+  Inbox,
+  Mail,
+  PanelLeftClose,
+  PanelLeftOpen,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -110,17 +119,24 @@ interface ConversationListProps {
   activeConversationId: string | null;
   onFilterChange: (filter: InboxFilter) => void;
   onSelectConversation: (id: string) => void;
+  /** True when the column is rendered in narrow icon-rail mode. */
+  collapsed?: boolean;
+  /** Toggle handler — flips collapsed state in the parent. */
+  onToggleCollapsed?: () => void;
 }
 
 /**
  * Left column of the inbox: filter tabs + scrollable conversation list.
  * Polls at 30-60s cadence (FR-UI-2, FR-UI-6).
+ * Supports a collapsed icon-rail mode for more thread real-estate.
  */
 export function ConversationList({
   activeFilter,
   activeConversationId,
   onFilterChange,
   onSelectConversation,
+  collapsed = false,
+  onToggleCollapsed,
 }: ConversationListProps) {
   const [conversations, setConversations] = useState<ConversationHistory[]>([]);
   const [loading, setLoading] = useState(true);
@@ -147,10 +163,98 @@ export function ConversationList({
 
   const filtered = conversations.filter((c) => matchesFilter(c, activeFilter));
 
+  if (collapsed) {
+    return (
+      <div className="flex flex-col h-full border-r border-line items-center py-2 gap-1">
+        {/* Expand toggle */}
+        {onToggleCollapsed && (
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-8 w-8"
+            onClick={onToggleCollapsed}
+            title="Expandir lista de conversaciones"
+          >
+            <PanelLeftOpen className="h-4 w-4" />
+          </Button>
+        )}
+
+        {/* Filter icons stacked vertically with tooltip */}
+        <div className="flex flex-col gap-1 pt-2 border-t border-line w-full items-center">
+          {FILTER_TABS.map((tab) => {
+            const Icon = tab.icon;
+            const isActive = activeFilter === tab.id;
+            return (
+              <Button
+                key={tab.id}
+                variant={isActive ? "default" : "ghost"}
+                size="icon"
+                onClick={() => onFilterChange(tab.id)}
+                className={cn(
+                  "h-8 w-8",
+                  isActive && "bg-gold text-white hover:bg-gold/90"
+                )}
+                title={tab.label}
+              >
+                <Icon className="h-4 w-4" />
+              </Button>
+            );
+          })}
+        </div>
+
+        {/* Conversation avatars (compact) */}
+        <div className="flex-1 overflow-y-auto w-full flex flex-col items-center gap-1 pt-2 mt-1 border-t border-line">
+          {filtered.map((conv) => {
+            const inbox = conv as unknown as ConversationHistoryInbox;
+            const isPaused =
+              inbox.paused_at != null || inbox.atencion_automatica === false;
+            const isActive = conv.id === activeConversationId;
+            const initials = (conv.customer_name ?? "??")
+              .slice(0, 2)
+              .toUpperCase();
+            return (
+              <button
+                key={conv.id}
+                type="button"
+                onClick={() => onSelectConversation(conv.id)}
+                title={conv.customer_name ?? "Cliente desconocido"}
+                className={cn(
+                  "h-8 w-8 rounded-full flex items-center justify-center text-[10px] font-bold transition-colors",
+                  isActive
+                    ? "bg-gold text-white"
+                    : isPaused
+                    ? "bg-amber-100 text-amber-700"
+                    : "bg-muted text-foreground/70 hover:bg-muted/80"
+                )}
+              >
+                {initials}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col h-full border-r border-line">
+      {/* Header with collapse toggle */}
+      {onToggleCollapsed && (
+        <div className="flex items-center justify-end px-2 pt-2">
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-7 w-7"
+            onClick={onToggleCollapsed}
+            title="Contraer lista de conversaciones"
+          >
+            <PanelLeftClose className="h-4 w-4" />
+          </Button>
+        </div>
+      )}
+
       {/* Filter tabs */}
-      <div className="px-2 pt-3 pb-2 border-b border-line flex flex-wrap gap-1">
+      <div className="px-2 pt-1 pb-2 border-b border-line flex flex-wrap gap-1">
         {FILTER_TABS.map((tab) => {
           const Icon = tab.icon;
           const isActive = activeFilter === tab.id;
