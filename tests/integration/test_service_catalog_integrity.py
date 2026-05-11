@@ -150,27 +150,25 @@ async def test_dr1_corte_de_flequillo_is_principal(seeded_services_session) -> N
     parent_service_name IS NULL, and audience IS NULL after disambiguation-resilience
     migration + seed update.
     """
-    result = await seeded_services_session.execute(
-        text("""
+    result = await seeded_services_session.execute(text("""
             SELECT
                 metadata->>'service_type' AS service_type,
                 metadata->>'parent_service_name' AS parent_service_name,
                 audience
             FROM services
             WHERE name = 'Corte de Flequillo'
-        """)
-    )
+        """))
     row = result.fetchone()
     assert row is not None, "Corte de Flequillo not found in seeded data"
-    assert row.service_type == "principal", (
-        f"Expected service_type='principal' for Corte de Flequillo, got '{row.service_type}'"
-    )
-    assert row.parent_service_name is None, (
-        f"Expected parent_service_name IS NULL for Corte de Flequillo, got '{row.parent_service_name}'"
-    )
-    assert row.audience is None, (
-        f"Expected audience IS NULL for Corte de Flequillo, got '{row.audience}'"
-    )
+    assert (
+        row.service_type == "principal"
+    ), f"Expected service_type='principal' for Corte de Flequillo, got '{row.service_type}'"
+    assert (
+        row.parent_service_name is None
+    ), f"Expected parent_service_name IS NULL for Corte de Flequillo, got '{row.parent_service_name}'"
+    assert (
+        row.audience is None
+    ), f"Expected audience IS NULL for Corte de Flequillo, got '{row.audience}'"
 
 
 @pytest.mark.asyncio(loop_scope="module")
@@ -193,15 +191,15 @@ async def test_dr2_barba_perilla_are_addon(seeded_services_session, service_name
     )
     row = result.fetchone()
     assert row is not None, f"'{service_name}' not found in seeded data"
-    assert row.service_type == "addon", (
-        f"Expected service_type='addon' for '{service_name}', got '{row.service_type}'"
-    )
-    assert row.parent_service_name is None, (
-        f"Expected parent_service_name IS NULL for '{service_name}', got '{row.parent_service_name}'"
-    )
-    assert row.category == "HAIRDRESSING", (
-        f"Expected category='HAIRDRESSING' for '{service_name}', got '{row.category}'"
-    )
+    assert (
+        row.service_type == "addon"
+    ), f"Expected service_type='addon' for '{service_name}', got '{row.service_type}'"
+    assert (
+        row.parent_service_name is None
+    ), f"Expected parent_service_name IS NULL for '{service_name}', got '{row.parent_service_name}'"
+    assert (
+        row.category == "HAIRDRESSING"
+    ), f"Expected category='HAIRDRESSING' for '{service_name}', got '{row.category}'"
 
 
 @pytest.mark.asyncio(loop_scope="module")
@@ -210,24 +208,22 @@ async def test_dr3_manicura_de_hombre_is_principal(seeded_services_session) -> N
     audience=adult_male, and parent_service_name IS NULL after
     disambiguation-resilience migration + seed update.
     """
-    result = await seeded_services_session.execute(
-        text("""
+    result = await seeded_services_session.execute(text("""
             SELECT
                 metadata->>'service_type' AS service_type,
                 metadata->>'parent_service_name' AS parent_service_name,
                 audience
             FROM services
             WHERE name = 'Manicura de Hombre'
-        """)
-    )
+        """))
     row = result.fetchone()
     assert row is not None, "Manicura de Hombre not found in seeded data"
-    assert row.service_type == "principal", (
-        f"Expected service_type='principal' for Manicura de Hombre, got '{row.service_type}'"
-    )
-    assert row.audience == "adult_male", (
-        f"Expected audience='adult_male' for Manicura de Hombre, got '{row.audience}'"
-    )
-    assert row.parent_service_name is None, (
-        f"Expected parent_service_name IS NULL for Manicura de Hombre, got '{row.parent_service_name}'"
-    )
+    assert (
+        row.service_type == "principal"
+    ), f"Expected service_type='principal' for Manicura de Hombre, got '{row.service_type}'"
+    assert (
+        row.audience == "adult_male"
+    ), f"Expected audience='adult_male' for Manicura de Hombre, got '{row.audience}'"
+    assert (
+        row.parent_service_name is None
+    ), f"Expected parent_service_name IS NULL for Manicura de Hombre, got '{row.parent_service_name}'"

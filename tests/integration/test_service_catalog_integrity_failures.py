@@ -319,6 +319,6 @@ async def test_failure_cross_dimension_variant_i7(
     ), f"Expected 'SyntheticCrossDimVariant_I7' in violations, got: {names}"
     for v in violations:
         if v.service_name == "SyntheticCrossDimVariant_I7":
-            assert "color" in v.detail or "cut" in v.detail, (
-                f"Expected detail to mention dimension mismatch, got: {v.detail!r}"
-            )
+            assert (
+                "color" in v.detail or "cut" in v.detail
+            ), f"Expected detail to mention dimension mismatch, got: {v.detail!r}"

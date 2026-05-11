@@ -46,6 +46,7 @@ INVARIANT_DESCRIPTIONS: dict[str, str] = {
     "I4": "No duplicate principals by (name, dimension)",
     "I5": "Every variant has a non-null parent_service_name",
     "I6": "Valid dimension — derived from principals at runtime",
+    "I7": "No cross-dimension variant parenting — variant dimension must match its parent's dimension",
 }
 
 # ---------------------------------------------------------------------------
@@ -209,6 +210,48 @@ async def _check_invariant_6(session: AsyncSession) -> list[Violation]:
     ]
 
 
+async def _check_invariant_7(session: AsyncSession) -> list[Violation]:
+    """I7: No cross-dimension variant parenting.
+
+    For every service with service_type='variant', its metadata->>'dimension'
+    MUST match its parent principal's metadata->>'dimension'. Addons
+    (service_type='addon') are excluded — they have no parent and are not
+    subject to this constraint (ADR-DR-3, AR4).
+
+    This invariant catches the historical drift pattern: Barba/Perilla
+    (grooming/cut dimension) were parented under Corte de Hombre (cut),
+    which masked the true classification error. After disambiguation-resilience
+    PR-1, no variant should cross dimensions.
+    """
+    result = await session.execute(text("""
+            SELECT
+                v.name AS variant_name,
+                v.metadata->>'dimension' AS v_dim,
+                p.metadata->>'dimension' AS p_dim,
+                v.metadata->>'parent_service_name' AS parent_name
+            FROM services v
+            JOIN services p
+              ON p.name = v.metadata->>'parent_service_name'
+             AND p.metadata->>'service_type' = 'principal'
+            WHERE v.metadata->>'service_type' = 'variant'
+              AND v.metadata->>'dimension' IS NOT NULL
+              AND p.metadata->>'dimension' IS NOT NULL
+              AND v.metadata->>'dimension' != p.metadata->>'dimension'
+            """))
+    rows = result.fetchall()
+    return [
+        Violation(
+            invariant_id="I7",
+            service_name=row.variant_name,
+            detail=(
+                f"variant dimension='{row.v_dim}' but parent '{row.parent_name}'"
+                f" has dimension='{row.p_dim}' (cross-dimension parenting forbidden)"
+            ),
+        )
+        for row in rows
+    ]
+
+
 # ---------------------------------------------------------------------------
 # CHECKERS registry — maps invariant ID → checker function
 # ---------------------------------------------------------------------------
@@ -220,4 +263,5 @@ CHECKERS: dict[str, Callable[..., object]] = {
     "I4": _check_invariant_4,
     "I5": _check_invariant_5,
     "I6": _check_invariant_6,
+    "I7": _check_invariant_7,
 }
