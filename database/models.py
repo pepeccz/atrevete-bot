@@ -642,6 +642,17 @@ class ConversationHistory(Base):
     started_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     ended_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
 
+    # Bot-pause / resume timestamps for human-inbox takeover (FR-DB-3)
+    # paused_at: set when atencion_automatica is toggled OFF (bot paused by admin)
+    paused_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    # resumed_at: set when atencion_automatica is toggled ON (bot resumed)
+    resumed_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    # context_injected_at: idempotency guard — set after graph.aupdate_state() succeeds
+    # for a given resume cycle; prevents double-injection under concurrent webhooks (NFR-4)
+    context_injected_at: Mapped[Optional[datetime]] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+
     # Denormalized counters (updated by archiver on each sync)
     message_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
@@ -691,11 +702,25 @@ class ConversationHistory(Base):
         )
 
 
+class ConversationMessageRole(str, PyEnum):
+    """Allowed values for ConversationMessage.role.
+
+    Application-layer validation only — no DB CHECK constraint (ADR-3: avoids
+    ACCESS EXCLUSIVE lock on the hot conversation_messages table; all write paths
+    go through this enum before insert).
+    """
+
+    USER = "user"
+    ASSISTANT = "assistant"
+    SYSTEM = "system"
+    HUMAN_AGENT = "human_agent"  # messages sent by admin/stylist users via the inbox
+
+
 class ConversationMessage(Base):
     """
     ConversationMessage model - Individual messages within a conversation.
 
-    Each row is one message (user, assistant, or system).
+    Each row is one message (user, assistant, system, or human_agent).
     Automatically deleted via CASCADE when the parent ConversationHistory is deleted.
     """
 
@@ -722,6 +747,15 @@ class ConversationMessage(Base):
     # Optional Chatwoot correlation ID
     chatwoot_message_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
 
+    # Author attribution for human_agent messages — NULL for bot/user messages (FR-DB-2)
+    # ON DELETE SET NULL preserves message history when admin accounts are deleted
+    author_user_id: Mapped[Optional[UUID]] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("admin_users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     # Timestamp (timezone-aware, server-set for consistency)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
@@ -733,6 +767,13 @@ class ConversationMessage(Base):
     conversation: Mapped["ConversationHistory"] = relationship(
         "ConversationHistory",
         back_populates="message_records",
+    )
+
+    # Relationship to the admin user who authored this message (only for role='human_agent')
+    author: Mapped[Optional["AdminUser"]] = relationship(
+        "AdminUser",
+        lazy="selectin",
+        foreign_keys=[author_user_id],
     )
 
     # Indexes

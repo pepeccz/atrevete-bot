@@ -402,6 +402,20 @@ class Settings(BaseSettings):
         description="Comma-separated list of allowed origins for CORS (e.g., 'http://localhost:3000,https://admin.domain.com')",
     )
 
+    # -------------------------------------------------------------------------
+    # Inbox / Meta Template Feature Flags
+    # Each flag controls whether a specific Meta template has been approved by
+    # Meta for outbound messaging outside the 24h customer-service window.
+    # Set to True ONLY after Meta approves the template on the developer portal.
+    # -------------------------------------------------------------------------
+    INBOX_TEMPLATE_REENGAGEMENT_APPROVED: bool = Field(
+        default=False,
+        description=(
+            "Set to true after Meta approves the re-engagement template for outbound messaging "
+            "outside the 24h customer-service window. Controls the template picker in the inbox."
+        ),
+    )
+
     @property
     def google_oauth_configured(self) -> bool:
         """True if Google OAuth2 credentials are configured (OAuth2 mode active).
