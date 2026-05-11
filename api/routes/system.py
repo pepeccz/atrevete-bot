@@ -17,7 +17,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from api.routes.admin import get_current_user, verify_token
+from api.dependencies.auth import require_permission
+from api.routes.admin import verify_token
 from database.models import AdminUser
 
 logger = logging.getLogger(__name__)
@@ -107,7 +108,7 @@ async def get_container_status(container_name: str) -> dict:
 
 @router.get("/services", response_model=ServicesResponse)
 async def list_services(
-    current_user: Annotated[AdminUser, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(require_permission("system:settings"))],
 ) -> ServicesResponse:
     """
     List all services with their current status.
@@ -243,7 +244,7 @@ async def stream_logs(
 @router.post("/{service}/restart", response_model=ServiceActionResponse)
 async def restart_service(
     service: str,
-    current_user: Annotated[AdminUser, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(require_permission("system:settings"))],
 ) -> ServiceActionResponse:
     """
     Restart a service container.
@@ -299,7 +300,7 @@ async def restart_service(
 @router.post("/{service}/stop", response_model=ServiceActionResponse)
 async def stop_service(
     service: str,
-    current_user: Annotated[AdminUser, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(require_permission("system:settings"))],
 ) -> ServiceActionResponse:
     """
     Stop a service container.
@@ -366,7 +367,7 @@ async def stop_service(
 
 @router.post("/gcal-sync/trigger", response_model=ServiceActionResponse)
 async def trigger_gcal_sync(
-    current_user: Annotated[AdminUser, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(require_permission("system:settings"))],
 ) -> ServiceActionResponse:
     """
     Manually trigger Google Calendar sync.
@@ -393,7 +394,7 @@ async def trigger_gcal_sync(
 
 @router.post("/cache/clear", response_model=ServiceActionResponse)
 async def clear_system_cache(
-    current_user: Annotated[AdminUser, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(require_permission("system:settings"))],
 ) -> ServiceActionResponse:
     """
     Clear all system caches.

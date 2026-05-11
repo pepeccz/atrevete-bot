@@ -19,6 +19,7 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.orm import selectinload
 from starlette.responses import RedirectResponse, StreamingResponse
 
+from api.dependencies.auth import require_permission
 from api.models.billing_schemas import (
     CurrentEstimateResponse,
     GenerateInvoiceRequest,
@@ -28,7 +29,6 @@ from api.models.billing_schemas import (
     StatusUpdateRequest,
     StripeStatusResponse,
 )
-from api.routes.admin import get_current_user
 from api.services.billing_service import BillingService
 from api.services.pdf_service import PdfService
 from api.services.stripe_service import StripeService
@@ -53,7 +53,7 @@ router = APIRouter(prefix="/api/billing", tags=["billing"])
     description="Returns paginated list of invoices, newest first. Admin only.",
 )
 async def list_invoices(
-    current_user: Annotated[AdminUser, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(require_permission("system:settings"))],
     page: int = 1,
     page_size: int = 12,
 ) -> InvoiceListResponse:
@@ -93,7 +93,7 @@ async def list_invoices(
 )
 async def get_invoice(
     invoice_id: UUID,
-    current_user: Annotated[AdminUser, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(require_permission("system:settings"))],
 ) -> InvoiceResponse:
     """Get a single invoice by ID including associated payments."""
     async with get_async_session() as session:
@@ -115,7 +115,7 @@ async def get_invoice(
 )
 async def download_invoice_pdf(
     invoice_id: UUID,
-    current_user: Annotated[AdminUser, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(require_permission("system:settings"))],
 ):
     """Download the PDF for a given invoice. Redirects to Stripe URL if available."""
     async with get_async_session() as session:
@@ -175,7 +175,7 @@ async def download_invoice_pdf(
 )
 async def generate_invoice(
     request_body: GenerateInvoiceRequest,
-    current_user: Annotated[AdminUser, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(require_permission("system:settings"))],
 ) -> InvoiceResponse:
     """Generate an invoice for the specified year/month. Returns 409 if already exists."""
     async with get_async_session() as session:
@@ -198,7 +198,7 @@ async def generate_invoice(
     description="Returns a running cost estimate for the current billing period. Admin only.",
 )
 async def get_current_estimate(
-    current_user: Annotated[AdminUser, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(require_permission("system:settings"))],
 ) -> CurrentEstimateResponse:
     """Get the current month's cost estimate based on token usage so far."""
     async with get_async_session() as session:
@@ -216,7 +216,7 @@ async def get_current_estimate(
 async def update_invoice_status(
     invoice_id: UUID,
     request_body: StatusUpdateRequest,
-    current_user: Annotated[AdminUser, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(require_permission("system:settings"))],
 ) -> InvoiceResponse:
     """Void an invoice via Stripe Invoicing API."""
     async with get_async_session() as session:
@@ -239,7 +239,7 @@ async def update_invoice_status(
     summary="Get billing fiscal details for both parties",
 )
 async def get_fiscal_details(
-    current_user: Annotated[AdminUser, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(require_permission("system:settings"))],
 ) -> dict:
     """Return fiscal details for invoices — client and provider."""
     settings = get_settings()
@@ -265,7 +265,7 @@ async def get_fiscal_details(
     description="Creates IVA TaxRate and attaches client NIF to Stripe Customer. Idempotent.",
 )
 async def setup_stripe_fiscal(
-    _: Annotated[AdminUser, Depends(get_current_user)],
+    _: Annotated[AdminUser, Depends(require_permission("system:settings"))],
 ) -> dict:
     """
     One-time setup:
@@ -322,7 +322,7 @@ async def setup_stripe_fiscal(
     description="Create a Stripe Checkout Session for SEPA Direct Debit mandate setup. Admin only.",
 )
 async def create_setup_session(
-    current_user: Annotated[AdminUser, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(require_permission("system:settings"))],
 ) -> SetupSessionResponse:
     """Create a Stripe Checkout Session for SEPA mandate configuration."""
     settings = get_settings()
@@ -360,7 +360,7 @@ async def create_setup_session(
     description="Returns the current Stripe/SEPA payment configuration status. Admin only.",
 )
 async def get_stripe_status(
-    current_user: Annotated[AdminUser, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(require_permission("system:settings"))],
 ) -> StripeStatusResponse:
     """Get SEPA Direct Debit configuration status from Stripe."""
     async with get_async_session() as session:

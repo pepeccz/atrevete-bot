@@ -36,6 +36,7 @@ import {
 } from "@/components/ui/sheet";
 import { useAuth } from "@/contexts/auth-context";
 import { useSidebar } from "@/contexts/sidebar-context";
+import { usePermission } from "@/hooks/use-permission";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -291,9 +292,12 @@ function SidebarContent({
   const { toggle } = useSidebar();
   const pathname = usePathname();
   const badgeCounts = useSidebarBadgeCounts(pathname);
+  const canAccessSettings = usePermission("system:settings");
 
+  // "Configuración del Salón" is admin-only (system:settings).
+  // "Conversaciones" and "Escalaciones" are shared (conversations:read — both roles).
   const configNav: NavItem[] = [
-    baseConfigNav[0],
+    ...(canAccessSettings ? [baseConfigNav[0]] : []),
     { ...baseConfigNav[1], badge: badgeCounts.conversations },
     { ...baseConfigNav[2], badge: badgeCounts.escalations },
   ];

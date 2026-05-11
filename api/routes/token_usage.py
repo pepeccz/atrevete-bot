@@ -8,18 +8,18 @@ Protected by admin authentication.
 import logging
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Annotated, Any
+from typing import Annotated
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import desc, select
 
+from api.dependencies.auth import require_permission
 from api.models.token_usage import (
     CurrentMonthUsageResponse,
     TokenPricingResponse,
     TokenUsageListResponse,
     TokenUsageResponse,
 )
-from api.routes.admin import get_current_user
 from database.connection import get_async_session
 from database.models import AdminUser, TokenUsage
 from shared.config import get_settings
@@ -41,7 +41,7 @@ router = APIRouter(prefix="/api/token-usage", tags=["token-usage"])
     description="Returns the last N months of token usage. Admin only.",
 )
 async def get_token_usage(
-    current_user: Annotated[AdminUser, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(require_permission("system:settings"))],
     months: int = 12,
 ):
     """
@@ -70,7 +70,7 @@ async def get_token_usage(
     description="Returns token usage for the current month with computed costs. Admin only.",
 )
 async def get_current_month_usage(
-    current_user: Annotated[AdminUser, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(require_permission("system:settings"))],
 ):
     """
     Get token usage for the current month.
@@ -130,7 +130,7 @@ async def get_current_month_usage(
     description="Returns the configured token pricing. Admin only.",
 )
 async def get_pricing(
-    current_user: Annotated[AdminUser, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(require_permission("system:settings"))],
 ):
     """
     Get current token pricing configuration.

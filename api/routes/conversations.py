@@ -12,14 +12,14 @@ from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-MADRID_TZ = ZoneInfo("Europe/Madrid")
-
-from api.routes.admin import get_current_user
+from api.dependencies.auth import require_permission
 from database.models import AdminUser
 from shared.archive_retrieval import (
     get_archived_conversation,
     list_archived_conversations,
 )
+
+MADRID_TZ = ZoneInfo("Europe/Madrid")
 
 logger = logging.getLogger(__name__)
 
@@ -29,7 +29,7 @@ router = APIRouter(prefix="/conversations", tags=["conversations"])
 @router.get("/{conversation_id}/history")
 async def get_conversation_history(
     conversation_id: str,
-    current_user: Annotated[AdminUser, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(require_permission("conversations:read"))],
     limit: Annotated[int, Query(ge=1, le=500)] = 100,
     offset: Annotated[int, Query(ge=0)] = 0,
 ):
@@ -95,7 +95,7 @@ async def get_conversation_history(
 
 @router.get("/")
 async def list_conversations(
-    current_user: Annotated[AdminUser, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(require_permission("conversations:read"))],
     customer_phone: Annotated[str | None, Query()] = None,
     start_date: Annotated[datetime | None, Query()] = None,
     end_date: Annotated[datetime | None, Query()] = None,

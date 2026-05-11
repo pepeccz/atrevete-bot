@@ -18,7 +18,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
-from api.routes.admin import get_current_user
+from api.dependencies.auth import require_permission
 from database.models import AdminUser
 from shared.settings_service import (
     get_settings_service,
@@ -101,7 +101,7 @@ class WorkerRestartResponse(BaseModel):
 
 @router.get("", response_model=SettingsByCategoryResponse)
 async def get_all_settings(
-    current_user: Annotated[AdminUser, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(require_permission("system:settings"))],
 ) -> SettingsByCategoryResponse:
     """
     Get all system settings grouped by category.
@@ -122,7 +122,7 @@ async def get_all_settings(
 
 @router.get("/history", response_model=HistoryResponse)
 async def get_settings_history(
-    current_user: Annotated[AdminUser, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(require_permission("system:settings"))],
     key: str | None = None,
     limit: int = 50,
     offset: int = 0,
@@ -144,7 +144,7 @@ async def get_settings_history(
 @router.get("/{key}", response_model=SettingResponse)
 async def get_setting(
     key: str,
-    current_user: Annotated[AdminUser, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(require_permission("system:settings"))],
 ) -> SettingResponse:
     """
     Get a single setting by key.
@@ -184,7 +184,7 @@ async def get_setting(
 async def update_setting(
     key: str,
     request: UpdateSettingRequest,
-    current_user: Annotated[AdminUser, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(require_permission("system:settings"))],
 ) -> SettingResponse:
     """
     Update a setting value.
@@ -236,7 +236,7 @@ async def update_setting(
 @router.post("/{key}/reset", response_model=SettingResponse)
 async def reset_setting_to_default(
     key: str,
-    current_user: Annotated[AdminUser, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(require_permission("system:settings"))],
 ) -> SettingResponse:
     """
     Reset a setting to its default value.
@@ -280,7 +280,7 @@ CONFIRMATION_WORKER_CONTAINER = "atrevete-confirmation-worker"
 
 @router.post("/restart-worker", response_model=WorkerRestartResponse)
 async def restart_confirmation_worker(
-    current_user: Annotated[AdminUser, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(require_permission("system:settings"))],
 ) -> WorkerRestartResponse:
     """
     Restart the confirmation worker container.

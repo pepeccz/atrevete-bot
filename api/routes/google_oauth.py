@@ -28,6 +28,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 
 from agent.services.google_oauth_service import (
     GoogleOAuthCSRFError,
@@ -37,14 +38,13 @@ from agent.services.google_oauth_service import (
     GoogleOAuthTokenRevokedError,
     PrimaryCalendarError,
 )
-from database.connection import get_async_session
-from database.models import AdminUser, Stylist
-from shared.config import get_settings
-from sqlalchemy import select
 
 # Re-use the auth dependency from admin router to keep the same auth mechanism.
 # Import it lazily-ish at module level (same file pattern as admin.py does for other imports).
-from api.routes.admin import get_current_user
+from api.dependencies.auth import require_permission
+from database.connection import get_async_session
+from database.models import AdminUser, Stylist
+from shared.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -138,7 +138,7 @@ async def _consume_csrf_state(state: str) -> tuple[bool, str | None]:
 
 @router.get("/status")
 async def google_connection_status(
-    current_user: Annotated[AdminUser, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(require_permission("system:settings"))],
 ) -> dict[str, Any]:
     """
     Return the current Google OAuth2 connection status.
@@ -156,7 +156,7 @@ async def google_connection_status(
 
 @router.get("/auth-url")
 async def generate_auth_url(
-    current_user: Annotated[AdminUser, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(require_permission("system:settings"))],
 ) -> dict[str, str]:
     """
     Generate a Google OAuth2 authorization URL.
@@ -282,7 +282,7 @@ async def google_oauth_callback(
 
 @router.get("/calendars")
 async def list_google_calendars(
-    current_user: Annotated[AdminUser, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(require_permission("system:settings"))],
 ) -> dict[str, list[dict]]:
     """
     List Google Calendars accessible from the connected account.
@@ -343,7 +343,7 @@ async def list_google_calendars(
 @router.post("/calendars", status_code=status.HTTP_201_CREATED)
 async def create_google_calendar(
     body: CreateCalendarRequest,
-    current_user: Annotated[AdminUser, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(require_permission("system:settings"))],
 ) -> CalendarResponse:
     """
     Create a new secondary Google Calendar owned by the connected account.
@@ -420,7 +420,7 @@ async def create_google_calendar(
 async def update_google_calendar(
     calendar_id: str,
     body: UpdateCalendarRequest,
-    current_user: Annotated[AdminUser, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(require_permission("system:settings"))],
 ) -> CalendarResponse:
     """
     Partially update a Google Calendar's name and/or description.
@@ -505,7 +505,7 @@ async def update_google_calendar(
 @router.delete("/calendars/{calendar_id}")
 async def delete_google_calendar(
     calendar_id: str,
-    current_user: Annotated[AdminUser, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(require_permission("system:settings"))],
 ) -> dict[str, Any]:
     """
     Delete a Google Calendar by ID.
@@ -594,7 +594,7 @@ async def delete_google_calendar(
 
 @router.delete("/disconnect")
 async def disconnect_google_account(
-    current_user: Annotated[AdminUser, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(require_permission("system:settings"))],
 ) -> dict[str, bool]:
     """
     Disconnect the Google account by deactivating and clearing all credentials.
