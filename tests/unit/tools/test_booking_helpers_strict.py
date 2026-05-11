@@ -321,3 +321,117 @@ async def test_strict_resolver_existing_wrapper_unchanged(db_session, unambiguou
     assert isinstance(unknown, list)
     # The 2-tuple signature is preserved — no 3-tuple leakage
     assert len(resolved_ids) == 1
+
+
+# ---------------------------------------------------------------------------
+# Task T2.1 RED tests — 4-tuple return with partial_resolved_ids
+# Refs: REQ-TL-3, design ADR-DR-2
+# These FAIL until T2.2 refactors _resolve_service_ids_strict to return 4-tuple.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_strict_resolver_returns_4_tuple(db_session, unambiguous_catalog):
+    """T2.1 RED: _resolve_service_ids_strict MUST return a 4-tuple.
+
+    The 4th element is partial_resolved_ids: list[str].
+    """
+    from agent.tools._booking_helpers import _resolve_service_ids_strict
+
+    result = await _resolve_service_ids_strict(db_session, [unambiguous_catalog])
+    assert isinstance(result, tuple), f"Expected tuple, got {type(result)}"
+    assert len(result) == 4, (
+        f"Expected 4-tuple (resolved_ids, unknown, ambiguous, partial_resolved_ids), "
+        f"got {len(result)}-tuple"
+    )
+
+    resolved_ids, unknown, ambiguous, partial_resolved_ids = result
+    assert isinstance(resolved_ids, list)
+    assert isinstance(unknown, list)
+    assert isinstance(ambiguous, list)
+    assert isinstance(partial_resolved_ids, list)
+
+
+@pytest.mark.asyncio
+async def test_strict_resolver_partial_resolved_ids_populated_on_mixed_input(
+    db_session, variant_ambiguous_catalog, unambiguous_catalog
+):
+    """T2.1 RED: when one service is ambiguous and one is clean, partial_resolved_ids
+    contains the UUID of the clean service.
+
+    Scenario A (REQ-TL-3): input [ambiguous_principal, clean_service] →
+      resolved_ids=[]  (nothing committed this turn)
+      ambiguous=[{axis='variant', ...}]
+      partial_resolved_ids=[<clean-service-uuid>]
+    """
+    from agent.tools._booking_helpers import _resolve_service_ids_strict
+
+    principal = variant_ambiguous_catalog["principal"]
+    # Input: one ambiguous principal + one unambiguous service
+    resolved_ids, unknown, ambiguous_descs, partial_resolved_ids = (
+        await _resolve_service_ids_strict(db_session, [principal, unambiguous_catalog])
+    )
+
+    # Nothing committed this turn when any ambiguity exists
+    assert resolved_ids == [], (
+        f"resolved_ids must be [] when any ambiguity exists, got: {resolved_ids}"
+    )
+
+    # Ambiguous descriptor for the principal
+    assert len(ambiguous_descs) == 1, (
+        f"Expected 1 ambiguous descriptor for '{principal}', got: {ambiguous_descs}"
+    )
+    assert ambiguous_descs[0]["axis"] == "variant"
+
+    # Clean service UUID ends up in partial_resolved_ids
+    assert len(partial_resolved_ids) == 1, (
+        f"Expected 1 partial_resolved_id for '{unambiguous_catalog}', "
+        f"got: {partial_resolved_ids}"
+    )
+    assert isinstance(partial_resolved_ids[0], str), "UUID must be a string"
+
+
+@pytest.mark.asyncio
+async def test_strict_resolver_partial_resolved_ids_empty_when_all_unambiguous(
+    db_session, unambiguous_catalog
+):
+    """T2.1 RED: when all services resolve cleanly, partial_resolved_ids is [].
+
+    No ambiguity → resolved_ids contains the UUID, partial_resolved_ids is empty.
+    This is the non-ambiguous branch — partial_resolved_ids only populated under ambiguity.
+    """
+    from agent.tools._booking_helpers import _resolve_service_ids_strict
+
+    resolved_ids, unknown, ambiguous_descs, partial_resolved_ids = (
+        await _resolve_service_ids_strict(db_session, [unambiguous_catalog])
+    )
+
+    assert ambiguous_descs == []
+    assert len(resolved_ids) == 1
+    assert partial_resolved_ids == [], (
+        f"partial_resolved_ids must be [] when all services resolve cleanly, "
+        f"got: {partial_resolved_ids}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_strict_resolver_partial_resolved_ids_empty_when_all_ambiguous(
+    db_session, variant_ambiguous_catalog
+):
+    """T2.1 RED: when all services are ambiguous, partial_resolved_ids is [].
+
+    Nothing resolved cleanly → both resolved_ids and partial_resolved_ids are [].
+    """
+    from agent.tools._booking_helpers import _resolve_service_ids_strict
+
+    principal = variant_ambiguous_catalog["principal"]
+    resolved_ids, unknown, ambiguous_descs, partial_resolved_ids = (
+        await _resolve_service_ids_strict(db_session, [principal])
+    )
+
+    assert resolved_ids == []
+    assert len(ambiguous_descs) == 1
+    assert partial_resolved_ids == [], (
+        f"partial_resolved_ids must be [] when nothing resolved cleanly, "
+        f"got: {partial_resolved_ids}"
+    )
