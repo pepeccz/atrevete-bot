@@ -5260,6 +5260,13 @@ async def get_conversation(
             "customer_id": str(customer_id) if customer_id else None,
             "customer_name": customer_name,
             "whatsapp_contact": whatsapp_contact,
+            # Redis-sourced conversations are live and have not gone through the
+            # archive path — their pause state lives on the future DB row, not
+            # here. Default to "bot active" so the panel renders the right state.
+            "paused_at": None,
+            "resumed_at": None,
+            "context_injected_at": None,
+            "atencion_automatica": True,
             "started_at": started_at,
             "ended_at": ended_at,
             "message_count": len(messages),
@@ -5309,6 +5316,16 @@ async def get_conversation(
             "phone": meta.get("sender_phone"),
         }
 
+        # Inbox state fields (PR-1 columns). The admin panel BotToggle and
+        # PausedBanner read these to render the correct state.
+        # atencion_automatica is derived from paused_at: a non-null paused_at
+        # without a more recent resumed_at means the bot is paused. It maps to
+        # Chatwoot's custom attribute of the same name, which our pause/resume
+        # service keeps in sync.
+        is_paused = conversation.paused_at is not None and (
+            conversation.resumed_at is None or conversation.resumed_at < conversation.paused_at
+        )
+
         return {
             "id": str(conversation.id),
             "conversation_id": conversation.conversation_id,
@@ -5319,6 +5336,16 @@ async def get_conversation(
                 else None
             ),
             "whatsapp_contact": whatsapp_contact,
+            "paused_at": (conversation.paused_at.isoformat() if conversation.paused_at else None),
+            "resumed_at": (
+                conversation.resumed_at.isoformat() if conversation.resumed_at else None
+            ),
+            "context_injected_at": (
+                conversation.context_injected_at.isoformat()
+                if conversation.context_injected_at
+                else None
+            ),
+            "atencion_automatica": not is_paused,
             "started_at": conversation.started_at.isoformat() if conversation.started_at else None,
             "ended_at": conversation.ended_at.isoformat() if conversation.ended_at else None,
             "message_count": conversation.message_count,
