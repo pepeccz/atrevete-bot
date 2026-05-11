@@ -18,7 +18,8 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
-from api.routes.admin import get_current_user
+from api.dependencies.auth import require_permission
+from database.models import AdminUser
 from shared.settings_service import (
     get_settings_service,
     SettingNotFoundError,
@@ -37,6 +38,7 @@ router = APIRouter(prefix="/api/admin/settings", tags=["settings"])
 
 class SettingResponse(BaseModel):
     """Response model for a single setting."""
+
     id: str
     key: str
     value: Any
@@ -55,17 +57,20 @@ class SettingResponse(BaseModel):
 
 class SettingsByCategoryResponse(BaseModel):
     """Response model for all settings grouped by category."""
+
     categories: dict[str, list[SettingResponse]]
 
 
 class UpdateSettingRequest(BaseModel):
     """Request model for updating a setting."""
+
     value: Any = Field(..., description="New value for the setting")
     reason: str | None = Field(None, description="Optional reason for the change")
 
 
 class HistoryEntryResponse(BaseModel):
     """Response model for a history entry."""
+
     id: str
     setting_key: str
     previous_value: Any | None
@@ -77,12 +82,14 @@ class HistoryEntryResponse(BaseModel):
 
 class HistoryResponse(BaseModel):
     """Response model for settings history."""
+
     entries: list[HistoryEntryResponse]
     total: int
 
 
 class WorkerRestartResponse(BaseModel):
     """Response model for worker restart."""
+
     success: bool
     message: str
 
@@ -94,7 +101,7 @@ class WorkerRestartResponse(BaseModel):
 
 @router.get("", response_model=SettingsByCategoryResponse)
 async def get_all_settings(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(require_permission("system:settings"))],
 ) -> SettingsByCategoryResponse:
     """
     Get all system settings grouped by category.
@@ -115,7 +122,7 @@ async def get_all_settings(
 
 @router.get("/history", response_model=HistoryResponse)
 async def get_settings_history(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(require_permission("system:settings"))],
     key: str | None = None,
     limit: int = 50,
     offset: int = 0,
@@ -137,7 +144,7 @@ async def get_settings_history(
 @router.get("/{key}", response_model=SettingResponse)
 async def get_setting(
     key: str,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(require_permission("system:settings"))],
 ) -> SettingResponse:
     """
     Get a single setting by key.
@@ -149,8 +156,7 @@ async def get_setting(
 
     if setting is None:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Setting not found: {key}"
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Setting not found: {key}"
         )
 
     # Convert to response format
@@ -178,7 +184,7 @@ async def get_setting(
 async def update_setting(
     key: str,
     request: UpdateSettingRequest,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(require_permission("system:settings"))],
 ) -> SettingResponse:
     """
     Update a setting value.
@@ -190,7 +196,7 @@ async def update_setting(
 
     try:
         # Get username from current user
-        username = current_user.get("username", "unknown")
+        username = current_user.username
 
         setting = await service.update(
             key=key,
@@ -221,20 +227,16 @@ async def update_setting(
 
     except SettingNotFoundError:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Setting not found: {key}"
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Setting not found: {key}"
         )
     except SettingValidationError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e)
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
 
 
 @router.post("/{key}/reset", response_model=SettingResponse)
 async def reset_setting_to_default(
     key: str,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(require_permission("system:settings"))],
 ) -> SettingResponse:
     """
     Reset a setting to its default value.
@@ -244,7 +246,7 @@ async def reset_setting_to_default(
     service = await get_settings_service()
 
     try:
-        username = current_user.get("username", "unknown")
+        username = current_user.username
         setting = await service.reset_to_default(key, changed_by=username)
 
         typed_value = service._convert_value(setting.value, setting.value_type)
@@ -268,8 +270,7 @@ async def reset_setting_to_default(
 
     except SettingNotFoundError:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Setting not found: {key}"
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"Setting not found: {key}"
         )
 
 
@@ -279,7 +280,7 @@ CONFIRMATION_WORKER_CONTAINER = "atrevete-confirmation-worker"
 
 @router.post("/restart-worker", response_model=WorkerRestartResponse)
 async def restart_confirmation_worker(
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[AdminUser, Depends(require_permission("system:settings"))],
 ) -> WorkerRestartResponse:
     """
     Restart the confirmation worker container.
@@ -290,9 +291,7 @@ async def restart_confirmation_worker(
     Uses Docker Engine API via unix socket. May take up to 30 seconds.
     """
     try:
-        logger.info(
-            f"Worker restart requested by {current_user.get('username', 'unknown')}"
-        )
+        logger.info(f"Worker restart requested by {current_user.username}")
 
         # Docker Engine API via unix socket (async)
         transport = httpx.AsyncHTTPTransport(uds=DOCKER_SOCKET)
@@ -305,37 +304,28 @@ async def restart_confirmation_worker(
         if response.status_code == 204:
             logger.info("Confirmation worker restarted successfully")
             return WorkerRestartResponse(
-                success=True,
-                message="Worker de confirmaciones reiniciado correctamente"
+                success=True, message="Worker de confirmaciones reiniciado correctamente"
             )
         elif response.status_code == 404:
             logger.error(f"Container not found: {CONFIRMATION_WORKER_CONTAINER}")
             return WorkerRestartResponse(
-                success=False,
-                message=f"Contenedor '{CONFIRMATION_WORKER_CONTAINER}' no encontrado"
+                success=False, message=f"Contenedor '{CONFIRMATION_WORKER_CONTAINER}' no encontrado"
             )
         else:
             logger.error(f"Docker API error: {response.status_code} - {response.text}")
             return WorkerRestartResponse(
-                success=False,
-                message=f"Error Docker API: {response.status_code}"
+                success=False, message=f"Error Docker API: {response.status_code}"
             )
 
     except httpx.ConnectError:
         logger.error("Cannot connect to Docker daemon")
         return WorkerRestartResponse(
             success=False,
-            message="No se puede conectar al Docker daemon. Verifica que el socket esté montado."
+            message="No se puede conectar al Docker daemon. Verifica que el socket esté montado.",
         )
     except httpx.TimeoutException:
         logger.error("Worker restart timed out")
-        return WorkerRestartResponse(
-            success=False,
-            message="Timeout al reiniciar worker (>60s)"
-        )
+        return WorkerRestartResponse(success=False, message="Timeout al reiniciar worker (>60s)")
     except Exception as e:
         logger.error(f"Worker restart error: {e}")
-        return WorkerRestartResponse(
-            success=False,
-            message=f"Error inesperado: {str(e)}"
-        )
+        return WorkerRestartResponse(success=False, message=f"Error inesperado: {str(e)}")

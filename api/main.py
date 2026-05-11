@@ -13,6 +13,7 @@ from api.middleware.origin_check import OriginCheckMiddleware
 from api.middleware.rate_limiting import RateLimitMiddleware
 from api.routes import admin, billing, chatwoot, conversations, google_oauth, system, token_usage
 from api.routes import settings as settings_routes
+from api.routes import users as users_routes
 from shared.config import get_settings
 from shared.logging_config import configure_logging
 from shared.startup_validator import StartupValidationError, validate_startup_config
@@ -45,7 +46,10 @@ app.add_middleware(
     allow_origins=origins,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Content-Type", "X-Requested-With"],  # Authorization removed (cookie-only transport)
+    allow_headers=[
+        "Content-Type",
+        "X-Requested-With",
+    ],  # Authorization removed (cookie-only transport)
 )
 
 # Include webhook routers
@@ -71,6 +75,9 @@ app.include_router(token_usage.router, tags=["token-usage"])
 
 # Include billing and payment router
 app.include_router(billing.router, tags=["billing"])
+
+# Include user CRUD router (admin-only: users:manage permission required)
+app.include_router(users_routes.router, prefix="/api/admin/users", tags=["users"])
 
 
 # =========================================================================

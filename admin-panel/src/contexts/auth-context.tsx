@@ -11,8 +11,10 @@ import { useRouter } from "next/navigation";
 import api from "@/lib/api";
 
 interface User {
+  id: string;
   username: string;
   role: string;
+  display_name?: string | null;
 }
 
 interface AuthContextType {

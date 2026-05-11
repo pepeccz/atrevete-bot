@@ -8,6 +8,7 @@ import { es } from "date-fns/locale";
 
 import { api } from "@/lib/api";
 import { Header } from "@/components/layout/header";
+import { RequirePermission } from "@/components/auth/require-permission";
 import { toast } from "sonner";
 import {
   Escalation,
@@ -217,16 +218,18 @@ export default function EscalationsPage() {
               Ver
             </Button>
             {row.original.status === "triggered" && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setResolveTarget(row.original);
-                  setResolveOpen(true);
-                }}
-              >
-                Resolver
-              </Button>
+              <RequirePermission action="escalations:resolve">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => {
+                    setResolveTarget(row.original);
+                    setResolveOpen(true);
+                  }}
+                >
+                  Resolver
+                </Button>
+              </RequirePermission>
             )}
           </div>
         ),

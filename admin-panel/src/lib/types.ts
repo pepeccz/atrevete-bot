@@ -774,3 +774,38 @@ export const ESCALATION_SOURCE_COLORS: Record<EscalationSource, string> = {
   auto_error: "text-red-600",
   fallback: "text-purple-500",
 };
+
+// ─── Admin Users ─────────────────────────────────────────────────────────────
+
+export type AdminUserRole = "admin" | "stylist";
+
+export interface AdminUser {
+  id: string;
+  username: string;
+  role: AdminUserRole;
+  is_active: boolean;
+  display_name: string | null;
+  last_login_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AdminUserListResponse {
+  items: AdminUser[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface AdminUserCreateRequest {
+  username: string;
+  password: string;
+  role: AdminUserRole;
+  display_name?: string | null;
+}
+
+export interface AdminUserUpdateRequest {
+  role?: AdminUserRole | null;
+  is_active?: boolean | null;
+  display_name?: string | null;
+}

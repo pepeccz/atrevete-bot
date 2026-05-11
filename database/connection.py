@@ -62,6 +62,20 @@ async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
             await session.close()
 
 
+async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    """
+    FastAPI dependency that yields a database session.
+
+    FastAPI's Depends() expects a plain async generator, not an
+    @asynccontextmanager-decorated function. Use this in route handlers:
+
+        async def my_route(session: AsyncSession = Depends(get_db)):
+            await session.execute(...)
+    """
+    async with get_async_session() as session:
+        yield session
+
+
 async def init_db() -> None:
     """
     Initialize database by creating all tables.

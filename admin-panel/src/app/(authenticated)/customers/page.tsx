@@ -58,6 +58,7 @@ import { toast } from "sonner";
 import api from "@/lib/api";
 import type { Customer } from "@/lib/types";
 import { EmptyState } from "@/components/shared/empty-state";
+import { RequirePermission } from "@/components/auth/require-permission";
 import { CustomerFormSchema, type CustomerFormValues } from "./customer-form.schema";
 
 // Customer form modal
@@ -363,15 +364,17 @@ export default function CustomersPage() {
                   </Button>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  <DropdownMenuItem
-                    onClick={() => {
-                      setCustomerToDelete(customer.id);
-                      setDeleteDialogOpen(true);
-                    }}
-                    className="text-destructive"
-                  >
-                    Eliminar
-                  </DropdownMenuItem>
+                  <RequirePermission action="customers:delete">
+                    <DropdownMenuItem
+                      onClick={() => {
+                        setCustomerToDelete(customer.id);
+                        setDeleteDialogOpen(true);
+                      }}
+                      className="text-destructive"
+                    >
+                      Eliminar
+                    </DropdownMenuItem>
+                  </RequirePermission>
                 </DropdownMenuContent>
               </DropdownMenu>
             </div>

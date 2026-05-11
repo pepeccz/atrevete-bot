@@ -89,7 +89,7 @@ class MyResponse(BaseModel):
 @router.post("/endpoint", response_model=MyResponse)
 async def my_endpoint(
     request: MyRequest,
-    session: AsyncSession = Depends(get_async_session),
+    session: AsyncSession = Depends(get_db),
 ) -> MyResponse:
     """Endpoint description."""
     # Business logic here
@@ -175,12 +175,12 @@ message_text, confidence = await transcription_service.transcribe_audio(wav_path
 ### Database Sessions
 
 ```python
-from database.connection import get_async_session
+from database.connection import get_db, get_async_session
 from sqlalchemy import select
 
 @router.get("/customers")
 async def list_customers(
-    session: AsyncSession = Depends(get_async_session),
+    session: AsyncSession = Depends(get_db),
 ):
     result = await session.execute(select(Customer))
     customers = result.scalars().all()
@@ -243,7 +243,7 @@ async def validation_exception_handler(request: Request, exc: ValidationError):
 
 1. **ALWAYS use `async def`** for route handlers
 2. **ALWAYS use Pydantic models** for request/response validation
-3. **ALWAYS use `Depends(get_async_session)`** for database access
+3. **ALWAYS use `Depends(get_db)`** for database access in route handlers. Use `async with get_async_session() as session:` only inside service-layer code (outside FastAPI's DI system).
 4. **ALWAYS validate file types** before processing
 5. **ALWAYS use timing-safe comparison** for tokens (`hmac.compare_digest`)
 6. **NEVER put business logic in routes** — use services
