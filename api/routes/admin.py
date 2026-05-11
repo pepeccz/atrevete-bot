@@ -5170,6 +5170,43 @@ async def get_conversation_live(
         return _NULL_BODY
 
 
+@router.get("/conversations/templates")
+async def _inbox_list_templates_early(
+    current_user: Annotated[AdminUser, Depends(require_permission("templates:send"))],
+) -> dict:
+    """Return the list of Meta templates (registered before {conversation_id} route).
+
+    This registration must appear BEFORE the GET /conversations/{conversation_id} route
+    to prevent FastAPI from matching 'templates' as a conversation_id path parameter.
+
+    Returns a dict instead of a typed model to avoid forward-reference resolution issues
+    at route registration time (the inbox models are imported at the end of admin.py).
+
+    Permissions: templates:send (admin + stylist).
+    """
+    from api.models.inbox import ParamDefResponse, TemplateDefResponse, TemplateListResponse
+    from api.services.template_catalog import get_templates
+
+    raw_templates = get_templates()
+    items = [
+        TemplateDefResponse(
+            name=t["name"],
+            display_name=t["display_name"],
+            status=t["status"],
+            params=[
+                ParamDefResponse(
+                    name=p["name"],
+                    label=p["label"],
+                    description=p.get("description", ""),
+                )
+                for p in t["params"]
+            ],
+        )
+        for t in raw_templates
+    ]
+    return TemplateListResponse(items=items).model_dump()
+
+
 @router.get("/conversations/{conversation_id}")
 async def get_conversation(
     conversation_id: str,
