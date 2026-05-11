@@ -78,8 +78,8 @@ def _patch_booking_helpers(
     from database.models import ServiceCategory
 
     resolve_service_ids = AsyncMock(return_value=(service_ids, unknown_names))
-    # _resolve_service_ids_strict returns 3-tuple: (resolved_ids, unknown, ambiguous=[])
-    resolve_service_ids_strict = AsyncMock(return_value=(service_ids, unknown_names, []))
+    # _resolve_service_ids_strict returns 4-tuple: (resolved_ids, unknown, ambiguous, partial)
+    resolve_service_ids_strict = AsyncMock(return_value=(service_ids, unknown_names, [], []))
     resolve_service_categories = AsyncMock(return_value={ServiceCategory.HAIRDRESSING})
     resolve_service_id_to_category_map = AsyncMock(return_value={})
     resolve_audience_variants = AsyncMock(return_value=("ok", None, []))

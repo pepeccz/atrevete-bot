@@ -52,7 +52,7 @@ def mock_helpers():
         ),
         patch(
             "agent.tools._booking_helpers._resolve_service_ids_strict",
-            new=AsyncMock(return_value=(["svc-uuid-001"], [], [])),
+            new=AsyncMock(return_value=(["svc-uuid-001"], [], [], [])),
         ),
         patch(
             "agent.tools._booking_helpers._resolve_audience_variants",

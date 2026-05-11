@@ -53,7 +53,7 @@ async def test_category_mix_gate_fires_for_mixed_services():
         ),
         patch(
             "agent.tools._booking_helpers._resolve_service_ids_strict",
-            new=AsyncMock(return_value=(["uuid-hair", "uuid-aesth"], [], [])),
+            new=AsyncMock(return_value=(["uuid-hair", "uuid-aesth"], [], [], [])),
         ),
         patch(
             "agent.tools._booking_helpers._resolve_audience_variants",
@@ -100,7 +100,7 @@ async def test_category_mix_gate_fires_even_with_audience_set():
         ),
         patch(
             "agent.tools._booking_helpers._resolve_service_ids_strict",
-            new=AsyncMock(return_value=(["uuid-hair", "uuid-aesth"], [], [])),
+            new=AsyncMock(return_value=(["uuid-hair", "uuid-aesth"], [], [], [])),
         ),
         patch(
             "agent.tools._booking_helpers._resolve_audience_variants",
@@ -145,7 +145,7 @@ async def test_category_mix_payload_has_required_keys():
         ),
         patch(
             "agent.tools._booking_helpers._resolve_service_ids_strict",
-            new=AsyncMock(return_value=(["uuid-hair", "uuid-aesth"], [], [])),
+            new=AsyncMock(return_value=(["uuid-hair", "uuid-aesth"], [], [], [])),
         ),
         patch(
             "agent.tools._booking_helpers._resolve_audience_variants",
@@ -193,7 +193,7 @@ async def test_single_category_hairdressing_does_not_trigger_mix_gate():
         ),
         patch(
             "agent.tools._booking_helpers._resolve_service_ids_strict",
-            new=AsyncMock(return_value=(["uuid-hair"], [], [])),
+            new=AsyncMock(return_value=(["uuid-hair"], [], [], [])),
         ),
         patch(
             "agent.tools._booking_helpers._resolve_audience_variants",
@@ -232,7 +232,7 @@ async def test_both_service_alongside_hair_does_not_trigger_mix_gate():
         ),
         patch(
             "agent.tools._booking_helpers._resolve_service_ids_strict",
-            new=AsyncMock(return_value=(["uuid-hair", "uuid-both"], [], [])),
+            new=AsyncMock(return_value=(["uuid-hair", "uuid-both"], [], [], [])),
         ),
         patch(
             "agent.tools._booking_helpers._resolve_audience_variants",

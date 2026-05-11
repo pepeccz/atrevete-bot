@@ -30,8 +30,8 @@ async def test_corte_strict_resolver_returns_ambiguous_axis_audience(db_with_see
     """_resolve_service_ids_strict("corte") → non-empty ambiguous descriptors, axis=audience."""
     from agent.tools._booking_helpers import _resolve_service_ids_strict
 
-    resolved_ids, unknown_names, ambiguous_descriptors = await _resolve_service_ids_strict(
-        db_with_seeds, ["corte"]
+    resolved_ids, unknown_names, ambiguous_descriptors, _partial = (
+        await _resolve_service_ids_strict(db_with_seeds, ["corte"])
     )
 
     assert len(ambiguous_descriptors) > 0, (
@@ -59,8 +59,8 @@ async def test_corte_strict_resolver_no_uuid_committed(db_with_seeds):
     """When 'corte' is ambiguous, resolved_ids must be empty (no UUID committed)."""
     from agent.tools._booking_helpers import _resolve_service_ids_strict
 
-    resolved_ids, unknown_names, ambiguous_descriptors = await _resolve_service_ids_strict(
-        db_with_seeds, ["corte"]
+    resolved_ids, unknown_names, ambiguous_descriptors, _partial = (
+        await _resolve_service_ids_strict(db_with_seeds, ["corte"])
     )
 
     # Ambiguous terms must not appear in resolved_ids (spec R2.3)
@@ -77,7 +77,7 @@ async def test_corte_candidates_include_cut_variants(db_with_seeds):
     """Candidates for 'corte' must include at least Corte de Mujer and Corte de Hombre."""
     from agent.tools._booking_helpers import _resolve_service_ids_strict
 
-    _, _, ambiguous_descriptors = await _resolve_service_ids_strict(db_with_seeds, ["corte"])
+    _, _, ambiguous_descriptors, _ = await _resolve_service_ids_strict(db_with_seeds, ["corte"])
 
     assert len(ambiguous_descriptors) > 0, "Expected ambiguous descriptor for 'corte'"
     candidates = ambiguous_descriptors[0]["candidates"]

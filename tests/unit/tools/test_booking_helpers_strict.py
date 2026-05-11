@@ -210,18 +210,19 @@ async def test_strict_resolver_is_importable():
 
 
 @pytest.mark.asyncio
-async def test_strict_resolver_returns_3_tuple(db_session, unambiguous_catalog):
-    """Task 2.4 RED: strict resolver returns (resolved_ids, unknown, descriptors)."""
+async def test_strict_resolver_returns_4_tuple_shape(db_session, unambiguous_catalog):
+    """Task 2.4 / T2.2: strict resolver returns (resolved_ids, unknown, descriptors, partial_ids)."""
     from agent.tools._booking_helpers import _resolve_service_ids_strict
 
     result = await _resolve_service_ids_strict(db_session, [unambiguous_catalog])
     assert isinstance(result, tuple)
-    assert len(result) == 3, f"Expected 3-tuple, got {len(result)}-tuple"
+    assert len(result) == 4, f"Expected 4-tuple, got {len(result)}-tuple"
 
-    resolved_ids, unknown, descriptors = result
+    resolved_ids, unknown, descriptors, partial_ids = result
     assert isinstance(resolved_ids, list)
     assert isinstance(unknown, list)
     assert isinstance(descriptors, list)
+    assert isinstance(partial_ids, list)
 
 
 @pytest.mark.asyncio
@@ -234,7 +235,7 @@ async def test_strict_resolver_audience_ambiguous_returns_descriptor(
     from agent.tools._booking_helpers import _resolve_service_ids_strict
 
     null_principal = audience_ambiguous_catalog["null_principal"]
-    resolved_ids, unknown, descriptors = await _resolve_service_ids_strict(
+    resolved_ids, unknown, descriptors, _partial = await _resolve_service_ids_strict(
         db_session, [null_principal]
     )
 
@@ -268,7 +269,7 @@ async def test_strict_resolver_variant_ambiguous_returns_descriptor(
     from agent.tools._booking_helpers import _resolve_service_ids_strict
 
     principal = variant_ambiguous_catalog["principal"]
-    resolved_ids, unknown, descriptors = await _resolve_service_ids_strict(
+    resolved_ids, unknown, descriptors, _partial = await _resolve_service_ids_strict(
         db_session, [principal]
     )
 
@@ -298,7 +299,7 @@ async def test_strict_resolver_unambiguous_returns_empty_descriptors(
     """Task 2.4 RED: unambiguous service returns empty descriptors list and resolved UUID."""
     from agent.tools._booking_helpers import _resolve_service_ids_strict
 
-    resolved_ids, unknown, descriptors = await _resolve_service_ids_strict(
+    resolved_ids, unknown, descriptors, partial_ids = await _resolve_service_ids_strict(
         db_session, [unambiguous_catalog]
     )
 
@@ -309,6 +310,9 @@ async def test_strict_resolver_unambiguous_returns_empty_descriptors(
         f"Expected 1 resolved UUID for unambiguous service, got: {resolved_ids}"
     )
     assert unknown == []
+    assert partial_ids == [], (
+        f"Expected partial_ids=[] for unambiguous service, got: {partial_ids}"
+    )
 
 
 @pytest.mark.asyncio
