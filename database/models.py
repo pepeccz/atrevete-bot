@@ -656,6 +656,15 @@ class ConversationHistory(Base):
         TIMESTAMP(timezone=True), nullable=True
     )
 
+    # Chatwoot can_reply mirror — captured from webhook conversation payload.
+    # Lets window_service answer "is the 24h reply window open?" without a
+    # round trip to Chatwoot. Treat as stale and fall back to message-timestamp
+    # computation when can_reply_captured_at is NULL or older than 24h.
+    can_reply: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    can_reply_captured_at: Mapped[Optional[datetime]] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+
     # Denormalized counters (updated by archiver on each sync)
     message_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 

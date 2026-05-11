@@ -97,6 +97,14 @@ async def upsert_conversation_history(
         if not parent.metadata_.get("sender_name") and sender_name:
             parent.metadata_ = {**parent.metadata_, "sender_name": sender_name}
 
+    # Mirror Chatwoot's can_reply (24h WhatsApp window indicator) on both new
+    # and updated rows. window_service falls back to message-timestamp
+    # computation when capture is missing or older than 24h.
+    if payload.conversation.can_reply is not None:
+        parent.can_reply = payload.conversation.can_reply
+        parent.can_reply_captured_at = now
+        await session.flush()
+
     # Insert user child idempotently
     if message_text:
         is_dup = False

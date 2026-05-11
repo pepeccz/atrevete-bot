@@ -528,6 +528,41 @@ Rollback: `alembic downgrade -1`. No checkpoint flush required. No in-flight con
 
 ---
 
+### Deploy Runbook (window-status chatwoot can_reply mirror)
+
+Additive migration only: adds `conversation_history.can_reply` (BOOLEAN NULL) and `conversation_history.can_reply_captured_at` (TIMESTAMPTZ NULL). The Chatwoot webhook handler now mirrors `payload.conversation.can_reply` on every inbound `message_created` event. `window_service.compute_window_open()` reads the cache first and falls back to the legacy `MAX(created_at) WHERE role='user'` only when the cache is missing or older than 24h.
+
+```bash
+# Step 1: Apply the migration (c6d7e8f9a0b1 → d7e8f9a0b1c2)
+docker compose -f /home/pepe/Proyectos/atrevete-bot/docker-compose.yml exec -T api alembic upgrade head
+
+# Step 2: Rebuild api (volume-less — baked code) to pick up the webhook capture
+# and the new window_service logic.
+docker compose -f /home/pepe/Proyectos/atrevete-bot/docker-compose.yml up -d --build api
+
+# Step 3 (optional): rebuild admin-panel only if you also changed UI client code.
+# This change is backend-only, so admin-panel does NOT need a rebuild.
+```
+
+Verification:
+
+```bash
+# Columns exist
+docker compose -f /home/pepe/Proyectos/atrevete-bot/docker-compose.yml exec -T postgres \
+  psql -U atrevete -d atrevete_db -c "\d conversation_history" | grep -E "can_reply"
+# expect: can_reply boolean | can_reply_captured_at timestamp with time zone
+
+# After the next inbound from a real customer, the row populates:
+docker compose -f /home/pepe/Proyectos/atrevete-bot/docker-compose.yml exec -T postgres \
+  psql -U atrevete -d atrevete_db -c \
+  "SELECT conversation_id, can_reply, can_reply_captured_at FROM conversation_history
+   WHERE can_reply_captured_at IS NOT NULL ORDER BY can_reply_captured_at DESC LIMIT 5;"
+```
+
+Rollback: `alembic downgrade -1`. No checkpoint flush. Existing conversations without populated cache transparently fall through to the legacy timestamp computation.
+
+---
+
 ### Deploy Runbook (conversaciones-inbox PR-2)
 
 7 new admin endpoints (`send-message`, `send-template`, `pause`, `resume`, `escalate`, `window-status`, `templates`), `resume_injection` service, and webhook gate refactor (persist-before-gate). **PR-1 migration must be applied first.** No new DB migration, no checkpoint flush required.
