@@ -11,7 +11,8 @@ export type AppointmentStatus =
   | "completed"
   | "cancelled"
   | "no_show";
-export type MessageRole = "user" | "assistant" | "system";
+/** Extended role set — includes human_agent added by the inbox migration (PR-1). */
+export type MessageRole = "user" | "assistant" | "system" | "human_agent";
 
 // Models
 export interface Stylist {
