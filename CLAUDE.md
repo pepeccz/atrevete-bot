@@ -377,6 +377,28 @@ No checkpoint flush required. Revision: `e9d1f2b8c7a4` (parent: `a7b8c9d0e1f2`).
 
 ---
 
+### Service Catalog Integrity Guard
+
+CI guard that asserts 6 structural invariants over the seeded `services` table. Introduced after the orphan-variant drift found at deploy 2026-05-11 (Engram obs #5260).
+
+**What it catches:** orphan variants (I1), dimension mismatch between variant and parent (I2), invalid audience value (I3), duplicate principals with same (name, dimension) (I4), variant with null parent_service_name (I5), dimension not present in principals (I6).
+
+**How to run locally:**
+```bash
+DATABASE_URL="postgresql+asyncpg://..." pytest tests/integration/test_service_catalog_integrity.py -v
+```
+
+**Files:**
+- `tests/integration/test_service_catalog_integrity.py` — 6 parametrized green-guard cases
+- `tests/integration/test_service_catalog_integrity_failures.py` — 3 synthetic violation injection cases
+- `tests/integration/_service_catalog_invariants.py` — pure SQL helper functions + `CHECKERS` registry
+
+**CI:** runs automatically via pytest discovery after `alembic upgrade head`; no workflow YAML change needed. Tests skip gracefully when Postgres is not reachable.
+
+**How to extend:** add `_check_invariant_7` in `_service_catalog_invariants.py`, register it in `CHECKERS`, and add a corresponding failure scenario in the failures file.
+
+---
+
 ### Running Services
 
 ```bash
