@@ -111,9 +111,7 @@ def _find_matching_check_availability(
                 continue
             s_stylist = s.get("stylist_id", "")
             stylist_match = (
-                stylist_id is None
-                or s_stylist is None
-                or str(s_stylist) == str(stylist_id)
+                stylist_id is None or s_stylist is None or str(s_stylist) == str(stylist_id)
             )
             if stylist_match:
                 return True
@@ -476,9 +474,7 @@ async def _update_booking_impl(
                 missing=missing,
                 next_step="stylist_required",
                 payload={
-                    "stylists": await _resolve_active_stylists(
-                        session, service_ids=resolved_ids
-                    ),
+                    "stylists": await _resolve_active_stylists(session, service_ids=resolved_ids),
                     "first_available_label": _first_available_label,
                 },
             ).model_dump_json()
@@ -642,30 +638,28 @@ async def _update_booking_impl(
             ).model_dump_json()
 
         resolved_stylist_id = collected.get("stylist_id")
-        validated = _find_matching_check_availability(
-            messages or [], slot_iso, resolved_stylist_id
-        )
+        validated = _find_matching_check_availability(messages or [], slot_iso, resolved_stylist_id)
 
         if not validated:
-                logger.info(
-                    "tool.response.partial",
-                    extra={
-                        "tool_name": "update_booking",
-                        "next_step": "pre_book_validation_required",
-                    },
-                )
-                return ToolResponse(
-                    status="partial",
-                    collected=collected,
-                    missing=[],
-                    next_step="pre_book_validation_required",
-                    payload={
-                        "hint": (
-                            "Llama a check_availability con slot_time exacto antes de book(). "
-                            f"Slot solicitado: {slot_iso}"
-                        ),
-                    },
-                ).model_dump_json()
+            logger.info(
+                "tool.response.partial",
+                extra={
+                    "tool_name": "update_booking",
+                    "next_step": "pre_book_validation_required",
+                },
+            )
+            return ToolResponse(
+                status="partial",
+                collected=collected,
+                missing=[],
+                next_step="pre_book_validation_required",
+                payload={
+                    "hint": (
+                        "Llama a check_availability con slot_time exacto antes de book(). "
+                        f"Slot solicitado: {slot_iso}"
+                    ),
+                },
+            ).model_dump_json()
         collected["pre_book_validated"] = True
         if slot_iso is not None:
             collected["slot_iso"] = slot_iso
