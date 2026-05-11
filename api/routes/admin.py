@@ -611,8 +611,16 @@ class LoginResponse(BaseModel):
 
 
 class UserResponse(BaseModel):
+    """Response for /auth/me — FR-AUTH-7.
+
+    Exposes id, username, role, display_name.
+    password_hash is never included (NFR-2).
+    """
+
+    id: str  # UUID serialised as string for JSON compat
     username: str
-    role: str = "admin"
+    role: str
+    display_name: str | None = None
 
 
 class StylistResponse(BaseModel):
@@ -1034,7 +1042,12 @@ async def get_me(
     Used by frontend to check session status on page refresh.
     Role is read from the DB row (FR-AUTH-3, FR-AUTH-7).
     """
-    return UserResponse(username=current_user.username, role=current_user.role)
+    return UserResponse(
+        id=str(current_user.id),
+        username=current_user.username,
+        role=current_user.role,
+        display_name=current_user.display_name,
+    )
 
 
 @router.post("/auth/logout")

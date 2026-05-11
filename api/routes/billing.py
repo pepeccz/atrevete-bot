@@ -265,7 +265,7 @@ async def get_fiscal_details(
     description="Creates IVA TaxRate and attaches client NIF to Stripe Customer. Idempotent.",
 )
 async def setup_stripe_fiscal(
-    current_user: dict = Depends(get_current_user),
+    _: Annotated[AdminUser, Depends(get_current_user)],
 ) -> dict:
     """
     One-time setup:
