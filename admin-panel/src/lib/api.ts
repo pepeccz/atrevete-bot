@@ -94,8 +94,12 @@ class ApiClient {
           const currentPath = window.location.pathname + window.location.search;
           if (currentPath !== "/login") {
             sessionStorage.setItem("returnTo", currentPath);
+            window.location.href = "/login";
           }
-          window.location.href = "/login";
+          // If already on /login, do NOT redirect again — a stale cookie
+          // would otherwise cause an infinite reload loop (getMe 401 → reload
+          // → mount AuthProvider → getMe 401 → reload …). The login page
+          // tolerates the 401 and renders the form.
         }
       }
 
