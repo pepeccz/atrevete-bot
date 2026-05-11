@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import UTC, datetime, timezone
+from datetime import UTC, datetime
 from typing import Annotated, Literal
 from zoneinfo import ZoneInfo
 
