@@ -165,7 +165,7 @@ export function ConversationList({
 
   if (collapsed) {
     return (
-      <div className="flex flex-col h-full border-r border-line items-center py-2 gap-1">
+      <div className="flex flex-col h-full border-r border-gold/40 bg-gold-soft/20 items-center py-2 gap-1">
         {/* Expand toggle */}
         {onToggleCollapsed && (
           <Button
@@ -237,7 +237,7 @@ export function ConversationList({
   }
 
   return (
-    <div className="flex flex-col h-full border-r border-line">
+    <div className="flex flex-col h-full border-r border-gold/40 bg-gold-soft/10">
       {/* Header with collapse toggle */}
       {onToggleCollapsed && (
         <div className="flex items-center justify-end px-2 pt-2">

@@ -75,13 +75,15 @@ export default function ConversationsPage() {
   const [activeWhatsappContact, setActiveWhatsappContact] = useState<
     import("@/lib/types").WhatsappContact | null
   >(null);
-  // Persisted collapse state for the left conversation list — matches the
-  // main nav rail UX. Reads localStorage on mount, writes on toggle.
+  // Persisted collapse state for the left conversation list and right customer
+  // card — matches the main nav rail UX. Both default to expanded; previous
+  // session preferences are restored from localStorage.
   const [listCollapsed, setListCollapsed] = useState<boolean>(false);
+  const [cardCollapsed, setCardCollapsed] = useState<boolean>(false);
   useEffect(() => {
     try {
-      const saved = localStorage.getItem("inbox.listCollapsed");
-      if (saved === "1") setListCollapsed(true);
+      if (localStorage.getItem("inbox.listCollapsed") === "1") setListCollapsed(true);
+      if (localStorage.getItem("inbox.cardCollapsed") === "1") setCardCollapsed(true);
     } catch {
       // localStorage may be unavailable (SSR, privacy mode) — silently ignore
     }
@@ -91,6 +93,17 @@ export default function ConversationsPage() {
       const next = !prev;
       try {
         localStorage.setItem("inbox.listCollapsed", next ? "1" : "0");
+      } catch {
+        // ignore
+      }
+      return next;
+    });
+  }, []);
+  const toggleCardCollapsed = useCallback(() => {
+    setCardCollapsed((prev) => {
+      const next = !prev;
+      try {
+        localStorage.setItem("inbox.cardCollapsed", next ? "1" : "0");
       } catch {
         // ignore
       }
@@ -193,11 +206,18 @@ export default function ConversationsPage() {
           )}
         </div>
 
-        {/* Right — customer card */}
-        <div className="w-72 flex-shrink-0 overflow-hidden">
+        {/* Right — customer card (collapsible icon rail) */}
+        <div
+          className={cn(
+            "flex-shrink-0 overflow-hidden transition-[width] duration-150",
+            cardCollapsed ? "w-12" : "w-72"
+          )}
+        >
           <CustomerCard
             customerId={activeCustomerId}
             whatsappContact={activeWhatsappContact}
+            collapsed={cardCollapsed}
+            onToggleCollapsed={toggleCardCollapsed}
           />
         </div>
       </div>
