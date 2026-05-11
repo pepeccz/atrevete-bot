@@ -170,7 +170,7 @@ class ApiClient {
     }
   }
 
-  async getMe(): Promise<{ username: string; role: string }> {
+  async getMe(): Promise<{ id: string; username: string; role: string; display_name?: string | null }> {
     return this.request("/api/admin/auth/me");
   }
 

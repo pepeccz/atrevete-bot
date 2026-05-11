@@ -74,7 +74,7 @@ const EMPTY_MEMORIES: CustomerMemories = {
   typical_services: null,
   typical_day_of_week: null,
   typical_time_of_day: null,
-  notes: null,
+  agent_notes: null,
   visit_count: null,
   last_visit_date: null,
   last_stylist_name: null,
