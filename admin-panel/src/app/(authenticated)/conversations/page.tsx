@@ -71,6 +71,9 @@ export default function ConversationsPage() {
   const [activeFilter, setActiveFilter] = useState<InboxFilter>(filterParam);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(convIdParam);
   const [activeCustomerId, setActiveCustomerId] = useState<string | null>(null);
+  const [activeWhatsappContact, setActiveWhatsappContact] = useState<
+    import("@/lib/types").WhatsappContact | null
+  >(null);
 
   // Sync URL → state when browser back/forward or external link changes params
   useEffect(() => {
@@ -78,23 +81,28 @@ export default function ConversationsPage() {
     setActiveConversationId(convIdParam);
   }, [filterParam, convIdParam]);
 
-  // Fetch customer_id for the active conversation to populate CustomerCard
+  // Fetch customer_id + whatsapp_contact for the active conversation to
+  // populate CustomerCard. whatsapp_contact is the fallback contact info
+  // shown when no Customer row is linked yet.
   useEffect(() => {
     if (!activeConversationId) {
       setActiveCustomerId(null);
+      setActiveWhatsappContact(null);
       return;
     }
     let cancelled = false;
     api
       .getConversation(activeConversationId)
       .then((conv: ConversationHistory) => {
-        if (!cancelled) {
-          const inbox = conv as unknown as ConversationHistoryInbox;
-          setActiveCustomerId(inbox.customer_id ?? null);
-        }
+        if (cancelled) return;
+        const inbox = conv as unknown as ConversationHistoryInbox;
+        setActiveCustomerId(inbox.customer_id ?? null);
+        setActiveWhatsappContact(conv.whatsapp_contact ?? null);
       })
       .catch(() => {
-        if (!cancelled) setActiveCustomerId(null);
+        if (cancelled) return;
+        setActiveCustomerId(null);
+        setActiveWhatsappContact(null);
       });
     return () => {
       cancelled = true;
@@ -157,7 +165,10 @@ export default function ConversationsPage() {
 
         {/* Right — customer card */}
         <div className="w-72 flex-shrink-0 overflow-hidden">
-          <CustomerCard customerId={activeCustomerId} />
+          <CustomerCard
+            customerId={activeCustomerId}
+            whatsappContact={activeWhatsappContact}
+          />
         </div>
       </div>
     </div>
