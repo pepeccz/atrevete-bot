@@ -13,6 +13,12 @@ Invariants covered:
     I4 — No duplicate principals by (name, dimension)
     I5 — Every variant has a non-null parent_service_name
     I6 — Every dimension is from the runtime-derived principal dimension set
+    I7 — No cross-dimension variant parenting (REQ-DR-4, disambiguation-resilience)
+
+Data-reclassification scenarios (disambiguation-resilience PR-1):
+    DR-1 — Corte de Flequillo is PRINCIPAL post-migration (REQ-DR-1)
+    DR-2 — Barba and Perilla are ADDON post-migration (REQ-DR-2)
+    DR-3 — Manicura de Hombre is PRINCIPAL with audience=adult_male (REQ-DR-3)
 
 Fixture isolation note: this module uses its own module-scoped TRUNCATE
 services CASCADE + seed_services(). It is independent of
@@ -131,3 +137,37 @@ async def test_service_catalog_invariant(seeded_services_session, invariant_id: 
     """
     violations = await CHECKERS[invariant_id](seeded_services_session)
     assert not violations, _format_violations(invariant_id, violations)
+
+
+# ---------------------------------------------------------------------------
+# Data-reclassification assertions — disambiguation-resilience PR-1
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio(loop_scope="module")
+async def test_dr1_corte_de_flequillo_is_principal(seeded_services_session) -> None:
+    """DR-1 (REQ-DR-1): Corte de Flequillo must be service_type=principal,
+    parent_service_name IS NULL, and audience IS NULL after disambiguation-resilience
+    migration + seed update.
+    """
+    result = await seeded_services_session.execute(
+        text("""
+            SELECT
+                metadata->>'service_type' AS service_type,
+                metadata->>'parent_service_name' AS parent_service_name,
+                audience
+            FROM services
+            WHERE name = 'Corte de Flequillo'
+        """)
+    )
+    row = result.fetchone()
+    assert row is not None, "Corte de Flequillo not found in seeded data"
+    assert row.service_type == "principal", (
+        f"Expected service_type='principal' for Corte de Flequillo, got '{row.service_type}'"
+    )
+    assert row.parent_service_name is None, (
+        f"Expected parent_service_name IS NULL for Corte de Flequillo, got '{row.parent_service_name}'"
+    )
+    assert row.audience is None, (
+        f"Expected audience IS NULL for Corte de Flequillo, got '{row.audience}'"
+    )
