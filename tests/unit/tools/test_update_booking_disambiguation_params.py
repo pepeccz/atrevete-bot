@@ -404,3 +404,221 @@ async def test_pre_resolved_service_ids_param_accepted():
     # Just assert we got a valid JSON response, not a crash
     data = parse_response(raw)
     assert "status" in data, f"Expected valid ToolResponse, got: {data}"
+
+
+# ---------------------------------------------------------------------------
+# T2.5 RED — pre_resolved_service_ids bypass + AR5 UUID validation guard
+# ---------------------------------------------------------------------------
+
+
+def _make_common_mocks_with_pre_resolved(
+    pre_resolved_uuids_active: list[str],
+    extra_strict_mock: AsyncMock | None = None,
+):
+    """Build mocks for _update_booking_impl with pre_resolved_service_ids bypass path.
+
+    The session mock is configured so that the UUID validation query
+    (select Service.id where id in pre_resolved_uuids AND is_active=True)
+    returns `pre_resolved_uuids_active` as valid active UUIDs.
+    """
+    from database.models import ServiceCategory
+
+    # Build a fake fetchall result for the active-UUID validation query.
+    # Each row is a 1-tuple (uuid_str,) per the design query shape.
+    validation_rows = [(uuid,) for uuid in pre_resolved_uuids_active]
+
+    fake_result = MagicMock()
+    fake_result.fetchall = MagicMock(return_value=validation_rows)
+
+    fake_session = AsyncMock()
+    fake_session.execute = AsyncMock(return_value=fake_result)
+
+    fake_cm = AsyncMock()
+    fake_cm.__aenter__ = AsyncMock(return_value=fake_session)
+    fake_cm.__aexit__ = AsyncMock(return_value=False)
+
+    strict_mock = extra_strict_mock or AsyncMock(
+        return_value=(
+            [],  # resolved_ids — empty (no name-based services passed)
+            [],  # unknown_names
+            [],  # ambiguous_descriptors
+            [],  # partial_resolved_ids
+        )
+    )
+
+    return {
+        "agent.tools._booking_helpers._resolve_service_ids": AsyncMock(
+            return_value=([str(FAKE_SERVICE_ID)], [])
+        ),
+        "agent.tools._booking_helpers._resolve_service_ids_strict": strict_mock,
+        "agent.tools._booking_helpers._resolve_service_categories": AsyncMock(
+            return_value={ServiceCategory.HAIRDRESSING}
+        ),
+        "agent.tools._booking_helpers._resolve_service_id_to_category_map": AsyncMock(
+            return_value={}
+        ),
+        "agent.tools._booking_helpers._resolve_audience_variants": AsyncMock(
+            return_value=("ok", None, [])
+        ),
+        "agent.tools._booking_helpers._resolve_stylist": AsyncMock(return_value=None),
+        "agent.tools._booking_helpers._resolve_active_stylists": AsyncMock(return_value=[]),
+        "agent.tools._booking_helpers._validate_full_name": MagicMock(return_value=None),
+        "database.connection.get_async_session": MagicMock(return_value=fake_cm),
+        "agent.tools._booking_validators.is_date_closed": AsyncMock(return_value=False),
+        "_fake_session": fake_session,
+    }
+
+
+@pytest.mark.asyncio
+async def test_pre_resolved_service_ids_valid_uuid_bypasses_resolution_and_merges():
+    """T2.5 RED: a valid active UUID in pre_resolved_service_ids is merged into collected.services.
+
+    REQ-TL-2 Scenario B: the UUID should appear in collected.services after the call.
+    _resolve_service_ids_strict MUST NOT be called for it (it bypasses name resolution).
+    """
+    from agent.tools.update_booking import _update_booking_impl
+
+    tinte_uuid = str(uuid4())
+    # AR5: session query returns tinte_uuid as active — it passes validation.
+    mocks = _make_common_mocks_with_pre_resolved([tinte_uuid])
+
+    with (
+        patch(
+            "agent.tools._booking_helpers._resolve_service_ids",
+            mocks["agent.tools._booking_helpers._resolve_service_ids"],
+        ),
+        patch(
+            "agent.tools._booking_helpers._resolve_service_ids_strict",
+            mocks["agent.tools._booking_helpers._resolve_service_ids_strict"],
+        ),
+        patch(
+            "agent.tools._booking_helpers._resolve_service_categories",
+            mocks["agent.tools._booking_helpers._resolve_service_categories"],
+        ),
+        patch(
+            "agent.tools._booking_helpers._resolve_service_id_to_category_map",
+            mocks["agent.tools._booking_helpers._resolve_service_id_to_category_map"],
+        ),
+        patch(
+            "agent.tools._booking_helpers._resolve_audience_variants",
+            mocks["agent.tools._booking_helpers._resolve_audience_variants"],
+        ),
+        patch(
+            "agent.tools._booking_helpers._resolve_stylist",
+            mocks["agent.tools._booking_helpers._resolve_stylist"],
+        ),
+        patch(
+            "agent.tools._booking_helpers._resolve_active_stylists",
+            mocks["agent.tools._booking_helpers._resolve_active_stylists"],
+        ),
+        patch(
+            "agent.tools._booking_helpers._validate_full_name",
+            mocks["agent.tools._booking_helpers._validate_full_name"],
+        ),
+        patch(
+            "database.connection.get_async_session",
+            mocks["database.connection.get_async_session"],
+        ),
+        patch(
+            "agent.tools._booking_validators.is_date_closed",
+            mocks["agent.tools._booking_validators.is_date_closed"],
+        ),
+    ):
+        raw = await _update_booking_impl(
+            services=[],  # no name-based services — pre_resolved carries the UUID
+            stylist_name=None,
+            no_preference_stylist=False,
+            date_iso=None,
+            date_text=None,
+            audience=None,
+            pre_resolved_service_ids=[tinte_uuid],
+        )
+
+    data = parse_response(raw)
+    # Must NOT be rejected due to "no services" — pre_resolved fills the services slot
+    assert (
+        data["status"] != "rejected" or data.get("next_step") != "service_required"
+    ), f"pre_resolved_service_ids must satisfy the services requirement, got: {data}"
+    # The pre-resolved UUID must appear in collected.services
+    service_ids = data.get("collected", {}).get("service_ids", [])
+    assert (
+        tinte_uuid in service_ids
+    ), f"Expected tinte_uuid {tinte_uuid} in collected.service_ids, got: {data}"
+
+
+@pytest.mark.asyncio
+async def test_pre_resolved_service_ids_invalid_uuid_rejected_with_error():
+    """T2.5 RED (AR5): UUID not in active catalog is rejected with explanatory error.
+
+    REQ-TL-2 + AR5: the active-UUID validation guard must reject stale/hallucinated UUIDs
+    and return status=rejected with next_step=service_required and an error message
+    containing the invalid UUID.
+    """
+    from agent.tools.update_booking import _update_booking_impl
+
+    bad_uuid = str(uuid4())
+    # AR5: session returns empty — no active service with this UUID
+    mocks = _make_common_mocks_with_pre_resolved([])  # empty = nothing active found
+
+    with (
+        patch(
+            "agent.tools._booking_helpers._resolve_service_ids",
+            mocks["agent.tools._booking_helpers._resolve_service_ids"],
+        ),
+        patch(
+            "agent.tools._booking_helpers._resolve_service_ids_strict",
+            mocks["agent.tools._booking_helpers._resolve_service_ids_strict"],
+        ),
+        patch(
+            "agent.tools._booking_helpers._resolve_service_categories",
+            mocks["agent.tools._booking_helpers._resolve_service_categories"],
+        ),
+        patch(
+            "agent.tools._booking_helpers._resolve_service_id_to_category_map",
+            mocks["agent.tools._booking_helpers._resolve_service_id_to_category_map"],
+        ),
+        patch(
+            "agent.tools._booking_helpers._resolve_audience_variants",
+            mocks["agent.tools._booking_helpers._resolve_audience_variants"],
+        ),
+        patch(
+            "agent.tools._booking_helpers._resolve_stylist",
+            mocks["agent.tools._booking_helpers._resolve_stylist"],
+        ),
+        patch(
+            "agent.tools._booking_helpers._resolve_active_stylists",
+            mocks["agent.tools._booking_helpers._resolve_active_stylists"],
+        ),
+        patch(
+            "agent.tools._booking_helpers._validate_full_name",
+            mocks["agent.tools._booking_helpers._validate_full_name"],
+        ),
+        patch(
+            "database.connection.get_async_session",
+            mocks["database.connection.get_async_session"],
+        ),
+        patch(
+            "agent.tools._booking_validators.is_date_closed",
+            mocks["agent.tools._booking_validators.is_date_closed"],
+        ),
+    ):
+        raw = await _update_booking_impl(
+            services=[],
+            stylist_name=None,
+            no_preference_stylist=False,
+            date_iso=None,
+            date_text=None,
+            audience=None,
+            pre_resolved_service_ids=[bad_uuid],
+        )
+
+    data = parse_response(raw)
+    assert data["status"] == "rejected", f"Expected status=rejected for invalid UUID, got: {data}"
+    assert (
+        data.get("next_step") == "service_required"
+    ), f"Expected next_step=service_required for invalid UUID, got: {data}"
+    # Error message must mention the invalid UUID
+    errors_text = " ".join(data.get("errors", []))
+    assert (
+        bad_uuid in errors_text
+    ), f"Expected invalid UUID {bad_uuid} in error message, got errors: {data.get('errors')}"
