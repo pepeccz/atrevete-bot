@@ -1,7 +1,11 @@
 """
 CI guard: assert zero voseo-form hits in production Python files.
 
-Pattern covers the 7 confirmed Argentine/Rioplatense voseo verb forms.
+Pattern covers the most common Argentine/Rioplatense voseo verb forms emitted
+in customer-facing strings. Both present-indicative voseo (-és, -ás) and
+voseo imperatives (-á, -í) are matched explicitly to avoid the false-positive
+explosion of a generic accented-suffix pattern.
+
 `sos` is intentionally excluded — word-boundary matching alone is insufficient
 to avoid false positives in common Spanish compound identifiers.
 
@@ -15,7 +19,14 @@ import pathlib
 import re
 
 VOSEO_PATTERN = re.compile(
-    r"\b(podés|querés|elegí|decime|contame|tenés|mostrá)\b",
+    r"\b("
+    # Present-indicative voseo
+    r"podés|querés|tenés|sabés|hacés|venís|comés|vivís|"
+    # Voseo imperatives (accent on final vowel distinguishes from castellano)
+    r"elegí|decime|contame|mostrá|enviá|escribí|"
+    r"andá|mirá|dejá|fijate|tomá|hacé|vení|pasá|esperá|"
+    r"buscá|llamá|probá|escuchá|dejame|olvidá|abrí|pedí|volvé|repetí"
+    r")\b",
     re.IGNORECASE,
 )
 SCAN_DIRS = ["agent", "api", "database", "shared"]
