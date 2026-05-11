@@ -1083,7 +1083,7 @@ class ApiClient {
     if (params?.limit != null) query.set("limit", String(params.limit));
     if (params?.offset != null) query.set("offset", String(params.offset));
     const qs = query.toString();
-    return this.request<AdminUserListResponse>(`/api/admin/users${qs ? `?${qs}` : ""}`);
+    return this.request<AdminUserListResponse>(`/api/admin/users/${qs ? `?${qs}` : ""}`);
   }
 
   async getUser(id: string): Promise<AdminUser> {
@@ -1091,7 +1091,7 @@ class ApiClient {
   }
 
   async createUser(data: AdminUserCreateRequest): Promise<AdminUser> {
-    return this.request<AdminUser>("/api/admin/users", {
+    return this.request<AdminUser>("/api/admin/users/", {
       method: "POST",
       body: JSON.stringify(data),
     });
