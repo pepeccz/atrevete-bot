@@ -219,9 +219,9 @@ async def test_list_users_returns_list():
 
     mock_session.execute = AsyncMock(side_effect=[count_result, list_result])
 
-    from database.connection import get_async_session
+    from database.connection import get_db
 
-    app.dependency_overrides[get_async_session] = lambda: mock_session
+    app.dependency_overrides[get_db] = lambda: mock_session
 
     client = TestClient(app, raise_server_exceptions=True)
     response = client.get("/api/admin/users")
@@ -249,9 +249,9 @@ async def test_list_users_pagination_params():
 
     mock_session.execute = AsyncMock(side_effect=[count_result, list_result])
 
-    from database.connection import get_async_session
+    from database.connection import get_db
 
-    app.dependency_overrides[get_async_session] = lambda: mock_session
+    app.dependency_overrides[get_db] = lambda: mock_session
 
     client = TestClient(app, raise_server_exceptions=True)
     response = client.get("/api/admin/users?limit=10&offset=5")
@@ -277,9 +277,9 @@ async def test_get_user_returns_user_response():
     mock_result.scalar_one_or_none.return_value = target_user
     mock_session.execute = AsyncMock(return_value=mock_result)
 
-    from database.connection import get_async_session
+    from database.connection import get_db
 
-    app.dependency_overrides[get_async_session] = lambda: mock_session
+    app.dependency_overrides[get_db] = lambda: mock_session
 
     client = TestClient(app, raise_server_exceptions=True)
     response = client.get(f"/api/admin/users/{target_id}")
@@ -302,9 +302,9 @@ async def test_get_user_returns_404_if_not_found():
     mock_result.scalar_one_or_none.return_value = None
     mock_session.execute = AsyncMock(return_value=mock_result)
 
-    from database.connection import get_async_session
+    from database.connection import get_db
 
-    app.dependency_overrides[get_async_session] = lambda: mock_session
+    app.dependency_overrides[get_db] = lambda: mock_session
 
     client = TestClient(app, raise_server_exceptions=True)
     response = client.get(f"/api/admin/users/{missing_id}")
@@ -346,9 +346,9 @@ async def test_create_user_returns_201():
 
     mock_session.refresh = AsyncMock(side_effect=_populate_on_refresh)
 
-    from database.connection import get_async_session
+    from database.connection import get_db
 
-    app.dependency_overrides[get_async_session] = lambda: mock_session
+    app.dependency_overrides[get_db] = lambda: mock_session
 
     payload = {
         "username": "newuser",
@@ -381,9 +381,9 @@ async def test_create_user_conflicts_on_duplicate_username():
     unique_result.scalar_one_or_none.return_value = existing_user
     mock_session.execute = AsyncMock(return_value=unique_result)
 
-    from database.connection import get_async_session
+    from database.connection import get_db
 
-    app.dependency_overrides[get_async_session] = lambda: mock_session
+    app.dependency_overrides[get_db] = lambda: mock_session
 
     payload = {
         "username": "existinguser",
@@ -402,10 +402,10 @@ async def test_create_user_invalid_body_returns_422():
     admin_user = _make_admin_user()
     app = _make_test_app(admin_user)
 
-    from database.connection import get_async_session
+    from database.connection import get_db
 
     mock_session = AsyncMock()
-    app.dependency_overrides[get_async_session] = lambda: mock_session
+    app.dependency_overrides[get_db] = lambda: mock_session
 
     client = TestClient(app, raise_server_exceptions=True)
     response = client.post("/api/admin/users", json={"username": "x"})  # missing password + role
@@ -433,9 +433,9 @@ async def test_patch_user_updates_role():
     mock_session.commit = AsyncMock()
     mock_session.refresh = AsyncMock()
 
-    from database.connection import get_async_session
+    from database.connection import get_db
 
-    app.dependency_overrides[get_async_session] = lambda: mock_session
+    app.dependency_overrides[get_db] = lambda: mock_session
 
     client = TestClient(app, raise_server_exceptions=True)
     response = client.patch(f"/api/admin/users/{target_id}", json={"role": "admin"})
@@ -456,9 +456,9 @@ async def test_patch_user_returns_404_if_not_found():
     mock_result.scalar_one_or_none.return_value = None
     mock_session.execute = AsyncMock(return_value=mock_result)
 
-    from database.connection import get_async_session
+    from database.connection import get_db
 
-    app.dependency_overrides[get_async_session] = lambda: mock_session
+    app.dependency_overrides[get_db] = lambda: mock_session
 
     client = TestClient(app, raise_server_exceptions=True)
     response = client.patch(f"/api/admin/users/{missing_id}", json={"role": "admin"})
@@ -480,9 +480,9 @@ async def test_self_deactivation_guard_returns_400():
     mock_result.scalar_one_or_none.return_value = admin_user
     mock_session.execute = AsyncMock(return_value=mock_result)
 
-    from database.connection import get_async_session
+    from database.connection import get_db
 
-    app.dependency_overrides[get_async_session] = lambda: mock_session
+    app.dependency_overrides[get_db] = lambda: mock_session
 
     client = TestClient(app, raise_server_exceptions=True)
     response = client.patch(f"/api/admin/users/{admin_id}", json={"is_active": False})
@@ -509,9 +509,9 @@ async def test_self_deactivation_guard_does_not_trigger_for_other_user():
     mock_session.commit = AsyncMock()
     mock_session.refresh = AsyncMock()
 
-    from database.connection import get_async_session
+    from database.connection import get_db
 
-    app.dependency_overrides[get_async_session] = lambda: mock_session
+    app.dependency_overrides[get_db] = lambda: mock_session
 
     client = TestClient(app, raise_server_exceptions=True)
     response = client.patch(f"/api/admin/users/{target_id}", json={"is_active": False})
@@ -538,9 +538,9 @@ async def test_password_reset_returns_204():
     mock_session.execute = AsyncMock(return_value=mock_result)
     mock_session.commit = AsyncMock()
 
-    from database.connection import get_async_session
+    from database.connection import get_db
 
-    app.dependency_overrides[get_async_session] = lambda: mock_session
+    app.dependency_overrides[get_db] = lambda: mock_session
 
     with patch("api.routes.users.hash_password", return_value="$2b$12$newhashedfake"):
         client = TestClient(app, raise_server_exceptions=True)
@@ -564,9 +564,9 @@ async def test_password_reset_returns_404_if_user_not_found():
     mock_result.scalar_one_or_none.return_value = None
     mock_session.execute = AsyncMock(return_value=mock_result)
 
-    from database.connection import get_async_session
+    from database.connection import get_db
 
-    app.dependency_overrides[get_async_session] = lambda: mock_session
+    app.dependency_overrides[get_db] = lambda: mock_session
 
     client = TestClient(app, raise_server_exceptions=True)
     response = client.post(
@@ -584,10 +584,10 @@ async def test_password_reset_invalid_body_returns_422():
 
     target_id = uuid4()
 
-    from database.connection import get_async_session
+    from database.connection import get_db
 
     mock_session = AsyncMock()
-    app.dependency_overrides[get_async_session] = lambda: mock_session
+    app.dependency_overrides[get_db] = lambda: mock_session
 
     client = TestClient(app, raise_server_exceptions=True)
     response = client.post(
@@ -661,9 +661,9 @@ async def test_list_users_returns_wrapper_shape():
 
     mock_session.execute = AsyncMock(side_effect=[count_result, list_result])
 
-    from database.connection import get_async_session
+    from database.connection import get_db
 
-    app.dependency_overrides[get_async_session] = lambda: mock_session
+    app.dependency_overrides[get_db] = lambda: mock_session
 
     client = TestClient(app, raise_server_exceptions=True)
     response = client.get("/api/admin/users?limit=10&offset=0")

@@ -89,7 +89,7 @@ async def test_login_db_first_success_updates_last_login_at():
         patch("api.routes.admin.verify_password", return_value=True),
         patch("api.routes.admin.create_access_token", return_value=("jwt-token", "jti-1")),
         patch("api.routes.admin.get_settings") as mock_settings,
-        patch("api.routes.admin.get_async_session", return_value=session),
+        patch("api.routes.admin.get_db", return_value=session),
     ):
         mock_settings.return_value.ADMIN_JWT_COOKIE_SECURE = False
         request = LoginRequest(username="admin", password="secret")

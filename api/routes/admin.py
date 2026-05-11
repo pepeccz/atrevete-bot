@@ -44,7 +44,7 @@ from api.services.dashboard_kpis import (
     _new_customers_last_7d,
     _occupation_today,
 )
-from database.connection import get_async_session
+from database.connection import get_async_session, get_db
 from database.models import (
     AdminUser,
     Appointment,
@@ -961,7 +961,7 @@ class OverlapCheckResponse(BaseModel):
 async def login(
     request: LoginRequest,
     response: Response,
-    session: AsyncSession = Depends(get_async_session),
+    session: AsyncSession = Depends(get_db),
 ):
     """
     Authenticate admin user and return JWT token.

@@ -35,7 +35,7 @@ from api.models.users import (
     UserResponse,
     UserUpdateRequest,
 )
-from database.connection import get_async_session
+from database.connection import get_db
 from database.models import AdminUser
 from shared.security import hash_password
 
@@ -51,7 +51,7 @@ router = APIRouter()
 @router.get("/", response_model=UserListResponse)
 async def list_users(
     current_user: Annotated[AdminUser, Depends(require_permission("users:manage"))],
-    session: AsyncSession = Depends(get_async_session),
+    session: AsyncSession = Depends(get_db),
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ) -> UserListResponse:
@@ -85,7 +85,7 @@ async def list_users(
 async def get_user(
     user_id: UUID,
     current_user: Annotated[AdminUser, Depends(require_permission("users:manage"))],
-    session: AsyncSession = Depends(get_async_session),
+    session: AsyncSession = Depends(get_db),
 ) -> UserResponse:
     """
     Get a single user by UUID.
@@ -109,7 +109,7 @@ async def get_user(
 async def create_user(
     body: UserCreateRequest,
     current_user: Annotated[AdminUser, Depends(require_permission("users:manage"))],
-    session: AsyncSession = Depends(get_async_session),
+    session: AsyncSession = Depends(get_db),
 ) -> UserResponse:
     """
     Create a new admin/stylist user.
@@ -155,7 +155,7 @@ async def update_user(
     user_id: UUID,
     body: UserUpdateRequest,
     current_user: Annotated[AdminUser, Depends(require_permission("users:manage"))],
-    session: AsyncSession = Depends(get_async_session),
+    session: AsyncSession = Depends(get_db),
 ) -> UserResponse:
     """
     Update a user's role, is_active, or display_name.
@@ -205,7 +205,7 @@ async def reset_password(
     user_id: UUID,
     body: PasswordResetRequest,
     current_user: Annotated[AdminUser, Depends(require_permission("users:manage"))],
-    session: AsyncSession = Depends(get_async_session),
+    session: AsyncSession = Depends(get_db),
 ) -> None:
     """
     Reset another user's password (admin-managed reset, not self-service).

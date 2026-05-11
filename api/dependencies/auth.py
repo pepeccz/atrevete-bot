@@ -35,7 +35,7 @@ from jose import JWTError, jwt
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database.connection import get_async_session
+from database.connection import get_db
 from database.models import AdminUser
 from shared.config import get_settings
 from shared.permissions import has_permission
@@ -96,7 +96,7 @@ async def check_token_blacklist(jti: str) -> bool:
 
 async def get_current_user(
     admin_token: Annotated[str | None, Cookie()] = None,
-    session: AsyncSession = Depends(get_async_session),
+    session: AsyncSession = Depends(get_db),
 ) -> AdminUser:
     """
     FastAPI dependency: decode JWT cookie and return AdminUser from DB.
