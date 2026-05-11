@@ -102,10 +102,12 @@ HAIRDRESSING_SERVICES = [
         "duration_minutes": 15,
         "description": "Recorte y modelado del flequillo. Sin lavado ni secado, ideal para un retoque rápido (15 min)",
         "audience": None,
+        # disambiguation-resilience: reclassified from variant→principal (REQ-DR-1)
+        # Previously a child of 'Corte de Mujer'; now an independent quick-trim principal.
         "metadata_": {
-            "service_type": "variant",
+            "service_type": "principal",
             "dimension": "cut",
-            "parent_service_name": "Corte de Mujer",
+            "parent_service_name": None,
         },
     },
     {
