@@ -141,7 +141,7 @@ class ConversationInboxService:
             )
 
         # Send via Chatwoot — conversation_id from Chatwoot is an int
-        cw_conv_id = int(conversation_id)
+        cw_conv_id = int(history.conversation_id)
         success = await self._chatwoot.send_message(
             customer_phone="",  # not needed when conversation_id is provided
             message=text,
@@ -216,7 +216,7 @@ class ConversationInboxService:
         rendered_body = render_body(template_name, params)
 
         history = await self._get_history(conversation_id)
-        cw_conv_id = int(conversation_id)
+        cw_conv_id = int(history.conversation_id)
 
         # Chatwoot template endpoint via send_template_message
         # body_params uses positional keys matching the template param order
@@ -293,7 +293,7 @@ class ConversationInboxService:
         if history.paused_at is not None and history.resumed_at is None:
             raise ValueError(f"Conversation '{conversation_id}' is already paused.")
 
-        cw_conv_id = int(conversation_id)
+        cw_conv_id = int(history.conversation_id)
         try:
             await self._chatwoot.update_conversation_attributes(
                 conversation_id=cw_conv_id,
@@ -313,7 +313,7 @@ class ConversationInboxService:
             customer_phone = history.metadata_.get("sender_phone", "") if history.metadata_ else ""
             escalation = Escalation(
                 id=uuid4(),
-                conversation_id=conversation_id,
+                conversation_id=history.conversation_id,
                 customer_id=history.customer_id,
                 customer_phone=customer_phone,
                 reason="Manual takeover by admin/stylist",
@@ -374,7 +374,7 @@ class ConversationInboxService:
         if history.paused_at is None:
             raise ValueError(f"Conversation '{conversation_id}' is not currently paused.")
 
-        cw_conv_id = int(conversation_id)
+        cw_conv_id = int(history.conversation_id)
         try:
             await self._chatwoot.update_conversation_attributes(
                 conversation_id=cw_conv_id,
@@ -392,7 +392,7 @@ class ConversationInboxService:
         # Auto-resolve any open Escalation for this conversation
         escalation_result = await self._session.execute(
             select(Escalation).where(
-                Escalation.conversation_id == conversation_id,
+                Escalation.conversation_id == history.conversation_id,
                 Escalation.status == EscalationStatus.TRIGGERED,
             )
         )
@@ -404,15 +404,17 @@ class ConversationInboxService:
 
         await self._session.commit()
 
-        # Set pending injection flag in Redis (TTL 600s)
+        # Set pending injection flag in Redis (TTL 600s). Must key by the
+        # Chatwoot string id since resume_injection.maybe_inject_pending_context
+        # is invoked from the webhook with payload.conversation.id (Chatwoot int).
         if redis_client is not None:
             try:
-                injection_key = f"pending_injection:v2:{conversation_id}"
+                injection_key = f"pending_injection:v2:{history.conversation_id}"
                 await redis_client.set(injection_key, "1", ex=PENDING_INJECTION_TTL_SECONDS)
                 logger.info(
                     "Pending injection flag set",
                     extra={
-                        "conversation_id": conversation_id,
+                        "conversation_id": history.conversation_id,
                         "ttl_seconds": PENDING_INJECTION_TTL_SECONDS,
                     },
                 )
@@ -420,7 +422,7 @@ class ConversationInboxService:
                 logger.warning(
                     "Failed to set pending_injection Redis flag: %s — injection will not occur",
                     exc,
-                    extra={"conversation_id": conversation_id},
+                    extra={"conversation_id": history.conversation_id},
                 )
 
         logger.info(
@@ -467,7 +469,7 @@ class ConversationInboxService:
 
         escalation = Escalation(
             id=uuid4(),
-            conversation_id=conversation_id,
+            conversation_id=history.conversation_id,
             customer_id=history.customer_id,
             customer_phone=customer_phone,
             reason=reason,
