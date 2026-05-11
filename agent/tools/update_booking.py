@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 from typing import Annotated, Literal
 from zoneinfo import ZoneInfo
 
@@ -62,7 +62,7 @@ def _parse_iso_to_utc(s: str) -> datetime | None:
             extra={"slot_iso": s},
         )
         return None
-    return dt.astimezone(timezone.utc)
+    return dt.astimezone(UTC)
 
 
 def _find_matching_check_availability(
@@ -233,6 +233,7 @@ async def _update_booking_impl(
     pre_resolved_service_ids: list[str] | None = None,
     messages: list | None = None,
 ) -> str:
+    from agent.booking.resolvers.time_resolver import MIN_BOOKING_DAYS
     from agent.tools._booking_helpers import (
         _resolve_active_stylists,
         _resolve_audience_variants,
@@ -243,7 +244,6 @@ async def _update_booking_impl(
         _resolve_stylist,
         _validate_full_name,
     )
-    from agent.booking.resolvers.time_resolver import MIN_BOOKING_DAYS
     from database.connection import get_async_session
 
     async with get_async_session() as session:
@@ -357,7 +357,7 @@ async def _update_booking_impl(
             _hair_services: list[str] = []
             _aesth_services: list[str] = []
             _both_services: list[str] = []
-            for _svc_name, _svc_id in zip(services, resolved_ids):
+            for _svc_name, _svc_id in zip(services, resolved_ids, strict=False):
                 _cat = _id_to_cat.get(_svc_id)
                 if _cat == _SC.HAIRDRESSING:
                     _hair_services.append(_svc_name)

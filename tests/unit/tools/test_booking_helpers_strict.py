@@ -18,6 +18,7 @@ Tests FAIL before Task 2.5 implements _resolve_service_ids_strict.
 
 Refs: design §2 Slice 2, spec R2.1-R2.3, task 2.4/2.5
 """
+
 from __future__ import annotations
 
 import pytest
@@ -26,6 +27,7 @@ import pytest
 async def _db_available() -> bool:
     try:
         from sqlalchemy import text
+
         from database.connection import get_async_session
 
         async with get_async_session() as session:
@@ -53,12 +55,14 @@ async def audience_ambiguous_catalog(db_session):
     null-audience principal name, triggering the audience gate.
     """
     from uuid import uuid4
+
     from sqlalchemy import delete
+
     from database.models import Service, ServiceCategory
 
     dim = "corte_strict_dim"
     services = [
-        ("Corte Strict Test", None),          # null-audience → ambiguous
+        ("Corte Strict Test", None),  # null-audience → ambiguous
         ("Corte Dama Strict Test", "adult_female"),
         ("Corte Caballero Strict Test", "adult_male"),
         ("Corte Niña Strict Test", "child_female"),
@@ -103,7 +107,9 @@ async def variant_ambiguous_catalog(db_session):
     has variants (zones) and the variant gate fires.
     """
     from uuid import uuid4
+
     from sqlalchemy import delete
+
     from database.models import Service, ServiceCategory
 
     parent_name = "Depilación Strict Test"
@@ -166,7 +172,9 @@ async def variant_ambiguous_catalog(db_session):
 async def unambiguous_catalog(db_session):
     """Seed a single unambiguous service 'Manicura Strict Test' with no peers."""
     from uuid import uuid4
+
     from sqlalchemy import delete
+
     from database.models import Service, ServiceCategory
 
     name = "Manicura Strict Test"
@@ -239,9 +247,9 @@ async def test_strict_resolver_audience_ambiguous_returns_descriptor(
         db_session, [null_principal]
     )
 
-    assert len(descriptors) == 1, (
-        f"Expected 1 ambiguous descriptor for '{null_principal}', got {len(descriptors)}: {descriptors}"
-    )
+    assert (
+        len(descriptors) == 1
+    ), f"Expected 1 ambiguous descriptor for '{null_principal}', got {len(descriptors)}: {descriptors}"
     desc = descriptors[0]
 
     # Shape validation
@@ -254,9 +262,9 @@ async def test_strict_resolver_audience_ambiguous_returns_descriptor(
     assert desc["question_hint"] == "audience_required"
 
     # UUID must NOT be in resolved_ids when ambiguous
-    assert len(resolved_ids) == 0, (
-        f"Ambiguous service must not commit a UUID, got resolved_ids={resolved_ids}"
-    )
+    assert (
+        len(resolved_ids) == 0
+    ), f"Ambiguous service must not commit a UUID, got resolved_ids={resolved_ids}"
 
 
 @pytest.mark.asyncio
@@ -273,9 +281,9 @@ async def test_strict_resolver_variant_ambiguous_returns_descriptor(
         db_session, [principal]
     )
 
-    assert len(descriptors) == 1, (
-        f"Expected 1 ambiguous descriptor for '{principal}', got {len(descriptors)}: {descriptors}"
-    )
+    assert (
+        len(descriptors) == 1
+    ), f"Expected 1 ambiguous descriptor for '{principal}', got {len(descriptors)}: {descriptors}"
     desc = descriptors[0]
 
     assert desc["status"] == "ambiguous"
@@ -287,9 +295,9 @@ async def test_strict_resolver_variant_ambiguous_returns_descriptor(
     assert desc["question_hint"] == "variant_required"
 
     # UUID must NOT be in resolved_ids when ambiguous
-    assert len(resolved_ids) == 0, (
-        f"Ambiguous service must not commit a UUID, got resolved_ids={resolved_ids}"
-    )
+    assert (
+        len(resolved_ids) == 0
+    ), f"Ambiguous service must not commit a UUID, got resolved_ids={resolved_ids}"
 
 
 @pytest.mark.asyncio
@@ -303,16 +311,14 @@ async def test_strict_resolver_unambiguous_returns_empty_descriptors(
         db_session, [unambiguous_catalog]
     )
 
-    assert descriptors == [], (
-        f"Expected empty descriptors for unambiguous service, got: {descriptors}"
-    )
-    assert len(resolved_ids) == 1, (
-        f"Expected 1 resolved UUID for unambiguous service, got: {resolved_ids}"
-    )
+    assert (
+        descriptors == []
+    ), f"Expected empty descriptors for unambiguous service, got: {descriptors}"
+    assert (
+        len(resolved_ids) == 1
+    ), f"Expected 1 resolved UUID for unambiguous service, got: {resolved_ids}"
     assert unknown == []
-    assert partial_ids == [], (
-        f"Expected partial_ids=[] for unambiguous service, got: {partial_ids}"
-    )
+    assert partial_ids == [], f"Expected partial_ids=[] for unambiguous service, got: {partial_ids}"
 
 
 @pytest.mark.asyncio
@@ -377,14 +383,14 @@ async def test_strict_resolver_partial_resolved_ids_populated_on_mixed_input(
     )
 
     # Nothing committed this turn when any ambiguity exists
-    assert resolved_ids == [], (
-        f"resolved_ids must be [] when any ambiguity exists, got: {resolved_ids}"
-    )
+    assert (
+        resolved_ids == []
+    ), f"resolved_ids must be [] when any ambiguity exists, got: {resolved_ids}"
 
     # Ambiguous descriptor for the principal
-    assert len(ambiguous_descs) == 1, (
-        f"Expected 1 ambiguous descriptor for '{principal}', got: {ambiguous_descs}"
-    )
+    assert (
+        len(ambiguous_descs) == 1
+    ), f"Expected 1 ambiguous descriptor for '{principal}', got: {ambiguous_descs}"
     assert ambiguous_descs[0]["axis"] == "variant"
 
     # Clean service UUID ends up in partial_resolved_ids

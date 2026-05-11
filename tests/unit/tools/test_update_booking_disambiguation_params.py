@@ -176,9 +176,9 @@ async def test_variant_resolved_false_preserves_variant_required():
         f"Expected status=ambiguous when variant_resolved=False and service has variants, "
         f"got: {data}"
     )
-    assert data["next_step"] == "variant_required", (
-        f"Expected next_step=variant_required, got: {data}"
-    )
+    assert (
+        data["next_step"] == "variant_required"
+    ), f"Expected next_step=variant_required, got: {data}"
 
 
 @pytest.mark.asyncio
@@ -251,12 +251,12 @@ async def test_variant_resolved_true_bypasses_variant_gate():
         )
 
     data = parse_response(raw)
-    assert data["status"] != "ambiguous", (
-        f"Expected status != ambiguous when variant_resolved=True, got: {data}"
-    )
-    assert data.get("next_step") != "variant_required", (
-        f"Expected next_step != variant_required when variant_resolved=True, got: {data}"
-    )
+    assert (
+        data["status"] != "ambiguous"
+    ), f"Expected status != ambiguous when variant_resolved=True, got: {data}"
+    assert (
+        data.get("next_step") != "variant_required"
+    ), f"Expected next_step != variant_required when variant_resolved=True, got: {data}"
 
 
 @pytest.mark.asyncio
@@ -322,9 +322,9 @@ async def test_variant_resolved_default_is_false():
         )
 
     data = parse_response(raw)
-    assert data["status"] == "ambiguous", (
-        f"Omitting variant_resolved must behave like False (gate fires), got: {data}"
-    )
+    assert (
+        data["status"] == "ambiguous"
+    ), f"Omitting variant_resolved must behave like False (gate fires), got: {data}"
     assert data["next_step"] == "variant_required"
 
 
