@@ -12,6 +12,8 @@ TDD transitions documented per task:
 - Task 1.3: I1 GREEN, I4/I6 still RED
 - Task 1.4: I1+I4 GREEN, I6 still RED
 - Task 1.6: all 3 GREEN
+- disambiguation-resilience T1.7: I7 RED — checker not yet implemented
+- disambiguation-resilience T1.8: I7 GREEN
 """
 
 import socket
@@ -234,3 +236,89 @@ async def test_failure_dimension_drift_i6(session_with_dimension_drift) -> None:
             assert (
                 "unknown_dim" in v.detail
             ), f"Expected detail to mention 'unknown_dim', got: {v.detail!r}"
+
+
+# ---------------------------------------------------------------------------
+# Fixture for I7 failure: inject cross-dimension variant (REQ-TE-4)
+# ---------------------------------------------------------------------------
+
+
+@pytest_asyncio.fixture()
+async def session_with_cross_dimension_variant() -> AsyncGenerator:
+    """Insert a variant with dimension='color' parented under a 'cut' principal.
+
+    This is the historical violation pattern that Barba/Perilla/Flequillo
+    exhibited before disambiguation-resilience (disambiguation-resilience PR-1).
+    """
+    if not _postgres_reachable():
+        pytest.skip("Postgres not reachable")
+
+    await _truncate_and_seed()
+
+    # Find a principal with dimension='cut' to use as the cross-dimension parent
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(text("""
+                SELECT name FROM services
+                WHERE metadata->>'service_type' = 'principal'
+                  AND metadata->>'dimension' = 'cut'
+                LIMIT 1
+                """))
+        row = result.fetchone()
+        assert row is not None, "No principal with dimension='cut' found in seeded data"
+        cut_principal_name = row.name
+
+    async with AsyncSessionLocal() as session:
+        await session.execute(
+            text("""
+                INSERT INTO services (id, name, category, duration_minutes, is_active, audience, metadata)
+                VALUES (
+                    :id, :name, 'HAIRDRESSING', 30, true, null,
+                    :meta::jsonb
+                )
+                """),
+            {
+                "id": _random_uuid(),
+                "name": "SyntheticCrossDimVariant_I7",
+                # dimension='color' but parent is a 'cut' principal — this is the violation
+                "meta": (
+                    '{"service_type": "variant", "dimension": "color", '
+                    f'"parent_service_name": "{cut_principal_name}"}}'
+                ),
+            },
+        )
+        await session.commit()
+
+    async with AsyncSessionLocal() as session:
+        yield session
+
+    async with AsyncSessionLocal() as session:
+        await session.execute(text("TRUNCATE services CASCADE"))
+        await session.commit()
+
+
+# ---------------------------------------------------------------------------
+# I7 failure test
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_failure_cross_dimension_variant_i7(
+    session_with_cross_dimension_variant,
+) -> None:
+    """I7: helper detects a variant whose dimension differs from its parent principal.
+
+    RED state during disambiguation-resilience T1.7: CHECKERS does not yet have 'I7',
+    so this test raises KeyError. Goes GREEN after T1.8 adds _check_invariant_7.
+    """
+    violations = await CHECKERS["I7"](session_with_cross_dimension_variant)
+
+    assert violations, "Expected at least one I7 violation but got none"
+    names = [v.service_name for v in violations]
+    assert (
+        "SyntheticCrossDimVariant_I7" in names
+    ), f"Expected 'SyntheticCrossDimVariant_I7' in violations, got: {names}"
+    for v in violations:
+        if v.service_name == "SyntheticCrossDimVariant_I7":
+            assert (
+                "color" in v.detail or "cut" in v.detail
+            ), f"Expected detail to mention dimension mismatch, got: {v.detail!r}"

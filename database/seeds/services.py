@@ -102,10 +102,12 @@ HAIRDRESSING_SERVICES = [
         "duration_minutes": 15,
         "description": "Recorte y modelado del flequillo. Sin lavado ni secado, ideal para un retoque rápido (15 min)",
         "audience": None,
+        # disambiguation-resilience: reclassified from variant→principal (REQ-DR-1)
+        # Previously a child of 'Corte de Mujer'; now an independent quick-trim principal.
         "metadata_": {
-            "service_type": "variant",
+            "service_type": "principal",
             "dimension": "cut",
-            "parent_service_name": "Corte de Mujer",
+            "parent_service_name": None,
         },
     },
     {
@@ -114,10 +116,12 @@ HAIRDRESSING_SERVICES = [
         "duration_minutes": 10,
         "description": "Perfilado de patillas con navaja. Acabado preciso para un look prolijo (10 min)",
         "audience": "adult_male",
+        # disambiguation-resilience: reclassified from variant→addon (REQ-DR-2)
+        # Previously a child of 'Corte de Hombre'; now a standalone addon grooming service.
         "metadata_": {
-            "service_type": "variant",
+            "service_type": "addon",
             "dimension": "cut",
-            "parent_service_name": "Corte de Hombre",
+            "parent_service_name": None,
         },
     },
     {
@@ -310,10 +314,12 @@ HAIRDRESSING_SERVICES = [
         "duration_minutes": 15,
         "description": "Arreglo, perfilado y modelado de barba para un acabado limpio y definido (15 min)",
         "audience": "adult_male",
+        # disambiguation-resilience: reclassified from variant→addon (REQ-DR-2)
+        # Previously a child of 'Corte de Hombre'; now a standalone addon grooming service.
         "metadata_": {
-            "service_type": "variant",
+            "service_type": "addon",
             "dimension": "cut",
-            "parent_service_name": "Corte de Hombre",
+            "parent_service_name": None,
         },
     },
     {
@@ -942,10 +948,13 @@ AESTHETICS_SERVICES = [
         "duration_minutes": 30,
         "description": "Manicura específica para caballeros: limado, arreglo de cutículas e hidratación. Sin esmalte (30 min)",
         "audience": "adult_male",
+        # disambiguation-resilience: reclassified from variant→principal (REQ-DR-3)
+        # Previously a child of 'Manicura'; now an independent principal with audience=adult_male.
+        # Audience-axis disambiguation fires between Manicura (adult_female) and this principal.
         "metadata_": {
-            "service_type": "variant",
+            "service_type": "principal",
             "dimension": "manicure",
-            "parent_service_name": "Manicura",
+            "parent_service_name": None,
         },
     },
     {
@@ -989,7 +998,8 @@ ALL_SERVICES = HAIRDRESSING_SERVICES + AESTHETICS_SERVICES
 #
 # HAIRDRESSING:
 #   - cut         → Corte de Mujer / Corte de Hombre / Corte de Niño / Corte de Niña / Corte de Bebé
-#                   (variants: Corte de Flequillo, Perilla, Barba)
+#                   + Corte de Flequillo [PRINCIPAL — disambiguation-resilience REQ-DR-1]
+#                   (addons: Barba, Perilla — reclassified from variant, REQ-DR-2)
 #   - color       → Tinte / Color para Hombre
 #                   (variants: Tinte Extra; addons: Tratamiento Precolor, Prepigmentar)
 #   - highlights  → Mechas
@@ -1005,9 +1015,9 @@ ALL_SERVICES = HAIRDRESSING_SERVICES + AESTHETICS_SERVICES
 #                            Infoactivo Fuerza, Infoactivo Sensitivo)
 #
 # AESTHETICS:
-#   - manicure        → Manicura
-#                       (variants: Manicura Permanente, Manicura Permanente con Tratamiento,
-#                                  Manicura de Hombre; addons: Retirada de Esmalte Permanente)
+#   - manicure        → Manicura / Manicura de Hombre [PRINCIPAL audience=adult_male — REQ-DR-3]
+#                       (variants: Manicura Permanente, Manicura Permanente con Tratamiento;
+#                        addons: Retirada de Esmalte Permanente)
 #   - pedicure        → Pedicura
 #                       (variants: Pedicura Permanente, Pedicura Permanente con Tratamiento)
 #   - facial          → Tratamiento Facial
