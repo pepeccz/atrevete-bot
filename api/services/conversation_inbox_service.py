@@ -25,8 +25,9 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from api.services.template_catalog import get_template_def, is_approved, render_body
 from api.services.window_service import compute_window_open
@@ -35,6 +36,8 @@ from database.models import (
     ConversationHistory,
     ConversationMessage,
     ConversationMessageRole,
+    ConversationNote,
+    Customer,
     Escalation,
     EscalationSource,
     EscalationStatus,
@@ -492,3 +495,111 @@ class ConversationInboxService:
         )
 
         return {"escalation_id": escalation.id}
+
+
+# ─── Sidebar aggregate ────────────────────────────────────────────────────────
+
+
+async def build_sidebar(conversation_id: UUID, session: AsyncSession) -> dict:
+    """Return a sidebar aggregate for a conversation.
+
+    Design goal: single composed SQL (one ``session.execute`` call) for the
+    customer + escalation + notes-count slice; a second select for the notes
+    list.  This keeps the query straightforward without resorting to complex
+    SQLAlchemy hybrid constructs that would be harder to read and maintain.
+
+    The two round-trips are:
+    1. Fetch ConversationHistory + Customer (selectinload) + active Escalation
+       (subquery) + customer-wide notes count (scalar subquery).
+    2. Fetch ConversationNote rows for this conversation (ordered DESC).
+
+    Args:
+        conversation_id: ConversationHistory.id (UUID).
+        session: Active async SQLAlchemy session (read-only, no commit needed).
+
+    Returns:
+        dict with keys: customer, notes, active_escalation.
+
+    Raises:
+        LookupError: when the conversation does not exist.
+    """
+    # ── Round-trip 1: conversation + customer ──────────────────────────────
+    result = await session.execute(
+        select(ConversationHistory)
+        .where(ConversationHistory.id == conversation_id)
+        .options(selectinload(ConversationHistory.customer))
+    )
+    conv: ConversationHistory | None = result.scalar_one_or_none()
+    if conv is None:
+        raise LookupError("Conversación no encontrada.")
+
+    customer_dto: dict | None = None
+    if conv.customer is not None:
+        cust: Customer = conv.customer
+
+        # Customer-wide notes count (all conversations for this customer)
+        count_result = await session.execute(
+            select(func.count(ConversationNote.id))
+            .join(
+                ConversationHistory,
+                ConversationHistory.id == ConversationNote.conversation_history_id,
+            )
+            .where(ConversationHistory.customer_id == cust.id)
+        )
+        notes_count: int = count_result.scalar_one() or 0
+
+        customer_dto = {
+            "id": str(cust.id),
+            "name": f"{cust.first_name} {cust.last_name or ''}".strip(),
+            "phone": cust.phone,
+            "customer_notes_count": notes_count,
+        }
+
+    # ── Active escalation for this conversation ────────────────────────────
+    esc_result = await session.execute(
+        select(Escalation)
+        .where(
+            Escalation.conversation_id == conv.conversation_id,
+            Escalation.status == EscalationStatus.TRIGGERED,
+        )
+        .order_by(Escalation.triggered_at.desc())
+        .limit(1)
+    )
+    escalation: Escalation | None = esc_result.scalar_one_or_none()
+
+    escalation_dto: dict | None = None
+    if escalation is not None:
+        escalation_dto = {
+            "id": str(escalation.id),
+            "reason": escalation.reason,
+            "triggered_at": escalation.triggered_at.isoformat(),
+        }
+
+    # ── Round-trip 2: notes for this conversation ──────────────────────────
+    notes_result = await session.execute(
+        select(ConversationNote)
+        .where(ConversationNote.conversation_history_id == conversation_id)
+        .order_by(ConversationNote.created_at.desc())
+        .options(selectinload(ConversationNote.author))
+    )
+    notes = list(notes_result.scalars().all())
+
+    def _note_dto(n: ConversationNote) -> dict:
+        if n.author is not None:
+            author_name = n.author.display_name or n.author.username
+        else:
+            author_name = "Cuenta eliminada"
+        return {
+            "id": str(n.id),
+            "content": n.content,
+            "author_user_id": str(n.author_user_id) if n.author_user_id else None,
+            "author_name": author_name,
+            "created_at": n.created_at.isoformat(),
+            "updated_at": n.updated_at.isoformat(),
+        }
+
+    return {
+        "customer": customer_dto,
+        "notes": [_note_dto(n) for n in notes],
+        "active_escalation": escalation_dto,
+    }

@@ -850,6 +850,42 @@ export interface ConversationHistoryInbox extends ConversationHistory {
 
 export type InboxFilter = "all" | "bot_on" | "bot_off" | "escalated" | "unread";
 
+// ─── Conversation notes (PR-2) ────────────────────────────────────────────────
+
+export interface ConversationNote {
+  id: string;
+  content: string;
+  author_user_id: string | null;
+  author_name: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface NoteListResponse {
+  items: ConversationNote[];
+}
+
+// ─── Sidebar aggregate (PR-2) ─────────────────────────────────────────────────
+
+export interface SidebarCustomer {
+  id: string;
+  name: string;
+  phone: string;
+  customer_notes_count: number;
+}
+
+export interface SidebarEscalation {
+  id: string;
+  reason: string;
+  triggered_at: string;
+}
+
+export interface SidebarResponse {
+  customer: SidebarCustomer | null;
+  notes: ConversationNote[];
+  active_escalation: SidebarEscalation | null;
+}
+
 // Inbox API request/response shapes (mirrors api/models/inbox.py from PR-2).
 
 export interface InboxMessageResponse {

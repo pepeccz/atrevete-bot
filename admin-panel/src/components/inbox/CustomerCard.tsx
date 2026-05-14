@@ -1,15 +1,20 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   User,
   Phone,
   Calendar,
   Loader2,
   ChevronRight,
+  ChevronDown,
   MessageCircle,
   PanelRightClose,
   PanelRightOpen,
+  Pencil,
+  Trash2,
+  Plus,
+  StickyNote,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -17,6 +22,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { formatDate } from "@/components/shared/format-utils";
 import api from "@/lib/api";
+import { useNotes } from "@/hooks/useNotes";
 import type {
   CustomerDetail,
   CustomerAppointment,
@@ -30,6 +36,11 @@ interface CustomerCardProps {
    * ``whatsappContact`` carries any info; otherwise an empty placeholder.
    */
   customerId: string | null;
+  /**
+   * ConversationHistory UUID — used to load operator notes for this
+   * conversation via useNotes hook. PR-2, REQ-4.
+   */
+  conversationId?: string | null;
   /**
    * Fallback contact info from the inbound webhook (Chatwoot sender). Shown
    * when ``customerId`` is null. Either field may be null for very old
@@ -51,6 +62,7 @@ interface CustomerCardProps {
  */
 export function CustomerCard({
   customerId,
+  conversationId = null,
   whatsappContact,
   collapsed = false,
   onToggleCollapsed,
@@ -58,6 +70,17 @@ export function CustomerCard({
   const [customer, setCustomer] = useState<CustomerDetail | null>(null);
   const [appointments, setAppointments] = useState<CustomerAppointment[]>([]);
   const [loading, setLoading] = useState(false);
+
+  // Notes panel state (PR-2)
+  const [notesOpen, setNotesOpen] = useState(false);
+  const [newNoteContent, setNewNoteContent] = useState("");
+  const [addingNote, setAddingNote] = useState(false);
+  const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
+  const [editContent, setEditContent] = useState("");
+  const { notes, addNote, editNote, removeNote } = useNotes(
+    notesOpen ? conversationId : null
+  );
+  const newNoteRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     if (!customerId) {
@@ -294,6 +317,154 @@ export function CustomerCard({
                 <p className="text-sm text-foreground/80 whitespace-pre-wrap">
                   {customer.memories.agent_notes}
                 </p>
+              </div>
+            </>
+          )}
+
+          {/* Operator notes panel (PR-2) */}
+          {conversationId && (
+            <>
+              <Separator />
+              <div className="space-y-2">
+                <button
+                  type="button"
+                  className="flex items-center gap-1.5 w-full text-left"
+                  onClick={() => setNotesOpen((o) => !o)}
+                >
+                  <StickyNote className="h-3.5 w-3.5 text-muted-foreground" />
+                  <p className="text-[11px] font-bold tracking-widest text-muted-foreground uppercase flex-1">
+                    Notas
+                  </p>
+                  <ChevronDown
+                    className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${
+                      notesOpen ? "rotate-180" : ""
+                    }`}
+                  />
+                </button>
+                {notesOpen && (
+                  <div className="space-y-2 pt-1">
+                    {notes.length === 0 && (
+                      <p className="text-xs text-muted-foreground">
+                        Sin notas todavía.
+                      </p>
+                    )}
+                    {notes.map((note) => (
+                      <div
+                        key={note.id}
+                        className="text-xs rounded-md border border-line p-2 bg-muted/30 space-y-1"
+                      >
+                        {editingNoteId === note.id ? (
+                          <div className="space-y-1">
+                            <textarea
+                              className="w-full text-xs border rounded p-1 resize-none"
+                              rows={3}
+                              value={editContent}
+                              onChange={(e) => setEditContent(e.target.value)}
+                            />
+                            <div className="flex gap-1">
+                              <Button
+                                variant="default"
+                                size="sm"
+                                className="h-6 text-xs px-2"
+                                onClick={async () => {
+                                  await editNote(note.id, editContent);
+                                  setEditingNoteId(null);
+                                }}
+                              >
+                                Guardar
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-6 text-xs px-2"
+                                onClick={() => setEditingNoteId(null)}
+                              >
+                                Cancelar
+                              </Button>
+                            </div>
+                          </div>
+                        ) : (
+                          <>
+                            <p className="whitespace-pre-wrap">{note.content}</p>
+                            <div className="flex items-center justify-between gap-1 text-[10px] text-muted-foreground">
+                              <span>{note.author_name}</span>
+                              <div className="flex gap-1">
+                                <button
+                                  type="button"
+                                  title="Editar"
+                                  onClick={() => {
+                                    setEditingNoteId(note.id);
+                                    setEditContent(note.content);
+                                  }}
+                                >
+                                  <Pencil className="h-3 w-3" />
+                                </button>
+                                <button
+                                  type="button"
+                                  title="Eliminar"
+                                  onClick={() => removeNote(note.id)}
+                                >
+                                  <Trash2 className="h-3 w-3 text-destructive" />
+                                </button>
+                              </div>
+                            </div>
+                          </>
+                        )}
+                      </div>
+                    ))}
+
+                    {/* Add note input */}
+                    {addingNote ? (
+                      <div className="space-y-1">
+                        <textarea
+                          ref={newNoteRef}
+                          className="w-full text-xs border rounded p-1 resize-none"
+                          rows={3}
+                          placeholder="Escribe una nota..."
+                          value={newNoteContent}
+                          onChange={(e) => setNewNoteContent(e.target.value)}
+                          autoFocus
+                        />
+                        <div className="flex gap-1">
+                          <Button
+                            variant="default"
+                            size="sm"
+                            className="h-6 text-xs px-2"
+                            disabled={!newNoteContent.trim()}
+                            onClick={async () => {
+                              await addNote(newNoteContent);
+                              setNewNoteContent("");
+                              setAddingNote(false);
+                            }}
+                          >
+                            Agregar
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-6 text-xs px-2"
+                            onClick={() => {
+                              setAddingNote(false);
+                              setNewNoteContent("");
+                            }}
+                          >
+                            Cancelar
+                          </Button>
+                        </div>
+                      </div>
+                    ) : (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-6 text-xs px-2 w-full justify-start gap-1"
+                        onClick={() => setAddingNote(true)}
+                      >
+                        <Plus className="h-3 w-3" />
+                        Añadir nota
+                      </Button>
+                    )}
+                  </div>
+                )}
               </div>
             </>
           )}

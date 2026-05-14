@@ -4989,6 +4989,7 @@ async def list_conversations(
     page: int = 1,
     page_size: int = 50,
     customer_id: UUID | None = None,
+    q: str | None = Query(default=None, description="Search term: customer name, phone, or message content."),
 ):
     """
     List conversation history (read-only).
@@ -4999,7 +5000,31 @@ async def list_conversations(
 
     Redis-only conversations are shown as "active" with live message counts.
     Conversations already in DB are shown from DB (more complete metadata).
+    When ``q`` is non-empty, results are filtered via global_search_service
+    (trigram ILIKE on customer name, phone, and message content).
     """
+    # --- Global search shortcut ---
+    if q and q.strip():
+        from api.services.global_search_service import search_conversations
+
+        try:
+            async with get_async_session() as session:
+                items = await search_conversations(q=q, session=session, limit=page_size * page)
+        except Exception as exc:
+            logger.error("Global search error: %s", exc, exc_info=True)
+            raise HTTPException(status_code=500, detail="Error al buscar conversaciones.")
+
+        total = len(items)
+        offset = (page - 1) * page_size
+        page_items = items[offset : offset + page_size]
+        return {
+            "items": page_items,
+            "total": total,
+            "page": page,
+            "page_size": page_size,
+            "has_more": (offset + page_size) < total,
+        }
+
     import json
     import pickle
 
@@ -6413,17 +6438,24 @@ async def resolve_escalation(
 # =============================================================================
 
 from api.models.inbox import (  # noqa: E402
+    ConversationNoteDTO,
     EscalateRequest,
     EscalateResponse,
     MarkReadRequest,
     MarkReadResponse,
     MessageDetailDTO,
     MessageResponse,
+    NoteCreate,
+    NoteListResponse,
+    NoteUpdate,
     PauseRequest,
     PauseResponse,
     ResumeResponse,
     SendMessageRequest,
     SendTemplateRequest,
+    SidebarCustomer,
+    SidebarEscalation,
+    SidebarResponse,
     TemplateListResponse,
     WindowStatusResponse,
 )
@@ -6762,3 +6794,216 @@ async def inbox_mark_read(
         await session.commit()
 
     return MarkReadResponse(marked=count)
+
+
+# =============================================================================
+# PR-2: conversation notes endpoints
+# =============================================================================
+
+
+@router.get("/conversations/{conversation_id}/notes")
+async def inbox_list_notes(
+    conversation_id: str,
+    current_user: Annotated[AdminUser, Depends(require_permission("conversations:read"))],
+) -> dict:
+    """List operator notes for a conversation, ordered by created_at DESC.
+
+    Returns HTTP 404 with Spanish detail when the conversation does not exist.
+    Permissions: conversations:read.
+    """
+    from api.services.conversation_notes_service import list_notes
+    from uuid import UUID as _UUID
+
+    try:
+        conv_uuid = _UUID(conversation_id)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Formato de ID de conversación inválido.")
+
+    async with get_async_session() as session:
+        result = await session.execute(
+            select(ConversationHistory).where(ConversationHistory.id == conv_uuid)
+        )
+        if result.scalar_one_or_none() is None:
+            raise HTTPException(status_code=404, detail="Conversación no encontrada.")
+
+        note_dicts = await list_notes(conv_uuid, session)
+
+    items = [ConversationNoteDTO(**d) for d in note_dicts]
+    return NoteListResponse(items=items).model_dump()
+
+
+@router.post("/conversations/{conversation_id}/notes", status_code=201)
+async def inbox_create_note(
+    conversation_id: str,
+    body: NoteCreate,
+    current_user: Annotated[AdminUser, Depends(require_permission("conversations:read"))],
+) -> dict:
+    """Create a new operator note for a conversation.
+
+    Returns HTTP 201 with the created note.  HTTP 404 when the conversation
+    does not exist.  HTTP 422 when content is empty.
+    Permissions: conversations:read (any authenticated user may create notes).
+    """
+    from api.services.conversation_notes_service import create_note
+    from uuid import UUID as _UUID
+
+    try:
+        conv_uuid = _UUID(conversation_id)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Formato de ID de conversación inválido.")
+
+    async with get_async_session() as session:
+        try:
+            note_dict = await create_note(
+                conversation_id=conv_uuid,
+                author_user_id=current_user.id,
+                content=body.content,
+                session=session,
+            )
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return ConversationNoteDTO(**note_dict).model_dump()
+
+
+@router.patch("/conversations/notes/{note_id}")
+async def inbox_update_note(
+    note_id: str,
+    body: NoteUpdate,
+    current_user: Annotated[AdminUser, Depends(require_permission("conversations:read"))],
+) -> dict:
+    """Update the content of an existing note.
+
+    Only the original author may update.  HTTP 403 for other users.
+    Permissions: conversations:read.
+    """
+    from api.services.conversation_notes_service import update_note
+    from uuid import UUID as _UUID
+
+    try:
+        note_uuid = _UUID(note_id)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Formato de ID de nota inválido.")
+
+    async with get_async_session() as session:
+        try:
+            note_dict = await update_note(
+                note_id=note_uuid,
+                content=body.content,
+                author_user_id=current_user.id,
+                session=session,
+            )
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    return ConversationNoteDTO(**note_dict).model_dump()
+
+
+@router.delete("/conversations/notes/{note_id}")
+async def inbox_delete_note(
+    note_id: str,
+    current_user: Annotated[AdminUser, Depends(require_permission("conversations:read"))],
+    response: Response,
+) -> dict:
+    """Delete a note.
+
+    The original author or any admin-role user may delete.
+    HTTP 204 on success, HTTP 403 for unauthorized users.
+    Permissions: conversations:read.
+    """
+    from api.services.conversation_notes_service import delete_note
+    from uuid import UUID as _UUID
+
+    try:
+        note_uuid = _UUID(note_id)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Formato de ID de nota inválido.")
+
+    is_admin = getattr(current_user, "role", "") == "admin"
+
+    async with get_async_session() as session:
+        try:
+            await delete_note(
+                note_id=note_uuid,
+                author_user_id=current_user.id,
+                is_admin=is_admin,
+                session=session,
+            )
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    response.status_code = status.HTTP_204_NO_CONTENT
+    return {}
+
+
+# =============================================================================
+# PR-2: sidebar aggregate endpoint
+# =============================================================================
+
+
+@router.get("/conversations/{conversation_id}/sidebar")
+async def inbox_get_sidebar(
+    conversation_id: str,
+    current_user: Annotated[AdminUser, Depends(require_permission("conversations:read"))],
+) -> dict:
+    """Return a sidebar aggregate for a conversation in a single DB round-trip.
+
+    Response includes:
+    - customer summary (id, name, phone, customer_notes_count across ALL their conversations)
+    - notes for this specific conversation (ordered created_at DESC)
+    - active escalation (if any)
+
+    HTTP 404 when the conversation does not exist.
+    Permissions: conversations:read.
+    """
+    from api.services.conversation_inbox_service import build_sidebar
+    from uuid import UUID as _UUID
+
+    try:
+        conv_uuid = _UUID(conversation_id)
+    except (ValueError, TypeError) as err:
+        raise HTTPException(status_code=400, detail="Formato de ID de conversación inválido.") from err
+
+    async with get_async_session() as session:
+        try:
+            data = await build_sidebar(conv_uuid, session)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    # Shape into response model
+    customer_dto: SidebarCustomer | None = None
+    if data["customer"]:
+        c = data["customer"]
+        customer_dto = SidebarCustomer(
+            id=c["id"],
+            name=c["name"],
+            phone=c["phone"],
+            customer_notes_count=c["customer_notes_count"],
+        )
+
+    escalation_dto: SidebarEscalation | None = None
+    if data["active_escalation"]:
+        e = data["active_escalation"]
+        escalation_dto = SidebarEscalation(
+            id=e["id"],
+            reason=e["reason"],
+            triggered_at=e["triggered_at"],
+        )
+
+    notes_dtos = [ConversationNoteDTO(**n) for n in data["notes"]]
+
+    return SidebarResponse(
+        customer=customer_dto,
+        notes=notes_dtos,
+        active_escalation=escalation_dto,
+    ).model_dump()
+
+

@@ -211,3 +211,67 @@ class MessageDetailDTO(BaseModel):
     author_type: str | None = None
     read_at: datetime | None = None
     delivery_failed: bool = False
+
+
+# ---------------------------------------------------------------------------
+# conversation notes (PR-2)
+# ---------------------------------------------------------------------------
+
+
+class NoteCreate(BaseModel):
+    """Body for POST /{conversation_id}/notes."""
+
+    content: str = Field(min_length=1, max_length=4000, description="Note body.")
+
+
+class NoteUpdate(BaseModel):
+    """Body for PATCH /notes/{note_id}."""
+
+    content: str = Field(min_length=1, max_length=4000, description="Updated note body.")
+
+
+class ConversationNoteDTO(BaseModel):
+    """Single note as returned by GET/POST/PATCH note endpoints."""
+
+    id: str
+    content: str
+    author_user_id: str | None = None
+    author_name: str
+    created_at: str
+    updated_at: str
+
+
+class NoteListResponse(BaseModel):
+    """Response for GET /{conversation_id}/notes."""
+
+    items: list[ConversationNoteDTO]
+
+
+# ---------------------------------------------------------------------------
+# sidebar aggregate (PR-2)
+# ---------------------------------------------------------------------------
+
+
+class SidebarCustomer(BaseModel):
+    """Customer summary within the sidebar response."""
+
+    id: str
+    name: str
+    phone: str
+    customer_notes_count: int
+
+
+class SidebarEscalation(BaseModel):
+    """Active escalation summary within the sidebar response."""
+
+    id: str
+    reason: str
+    triggered_at: str
+
+
+class SidebarResponse(BaseModel):
+    """Response for GET /{conversation_id}/sidebar."""
+
+    customer: SidebarCustomer | None = None
+    notes: list[ConversationNoteDTO] = Field(default_factory=list)
+    active_escalation: SidebarEscalation | None = None

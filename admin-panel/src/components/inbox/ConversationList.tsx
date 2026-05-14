@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   MessageSquare,
   Bot,
@@ -10,11 +10,15 @@ import {
   Mail,
   PanelLeftClose,
   PanelLeftOpen,
+  Search,
+  X,
+  Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { useConversationPolling } from "@/hooks/useConversationPolling";
+import { useSearch } from "@/hooks/useSearch";
 import { formatDate } from "@/components/shared/format-utils";
 import api from "@/lib/api";
 import type { InboxFilter, ConversationHistoryInbox } from "@/lib/types";
@@ -152,6 +156,29 @@ export function ConversationList({
   const [conversations, setConversations] = useState<ConversationHistory[]>([]);
   const [loading, setLoading] = useState(true);
 
+  // PR-2: search state
+  const [searchQuery, setSearchQuery] = useState("");
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const {
+    results: searchResults,
+    loading: searchLoading,
+    clear: clearSearch,
+  } = useSearch(searchQuery);
+
+  const isSearching = searchQuery.trim().length > 0;
+
+  // ESC clears search
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && isSearching) {
+        setSearchQuery("");
+        clearSearch();
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [isSearching, clearSearch]);
+
   const fetchList = useCallback(async () => {
     try {
       const res = await api.list<ConversationHistory>("conversations", { page_size: 100 });
@@ -172,7 +199,10 @@ export function ConversationList({
     enabled: true,
   });
 
-  const filtered = conversations.filter((c) => matchesFilter(c, activeFilter));
+  // When search is active, show search results; otherwise use the filtered list.
+  const displayList: ConversationHistory[] = isSearching
+    ? (searchResults as unknown as ConversationHistory[])
+    : conversations.filter((c) => matchesFilter(c, activeFilter));
 
   if (collapsed) {
     return (
@@ -287,19 +317,51 @@ export function ConversationList({
         })}
       </div>
 
+      {/* PR-2: Search input */}
+      <div className="px-2 py-1.5 border-b border-line">
+        <div className="relative flex items-center">
+          <Search className="absolute left-2 h-3.5 w-3.5 text-muted-foreground pointer-events-none" />
+          <input
+            ref={searchInputRef}
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Buscar..."
+            className="w-full pl-7 pr-7 py-1 text-xs rounded-md border border-input bg-background focus:outline-none focus:ring-1 focus:ring-gold"
+          />
+          {searchLoading && (
+            <Loader2 className="absolute right-2 h-3.5 w-3.5 animate-spin text-muted-foreground" />
+          )}
+          {isSearching && !searchLoading && (
+            <button
+              type="button"
+              className="absolute right-2 text-muted-foreground hover:text-foreground"
+              onClick={() => {
+                setSearchQuery("");
+                clearSearch();
+                searchInputRef.current?.focus();
+              }}
+              title="Limpiar búsqueda (ESC)"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+      </div>
+
       {/* List */}
       <div className="flex-1 overflow-y-auto p-2 space-y-1">
-        {loading ? (
+        {loading && !isSearching ? (
           <div className="flex items-center justify-center h-20 text-sm text-muted-foreground">
             Cargando…
           </div>
-        ) : filtered.length === 0 ? (
+        ) : displayList.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-32 text-sm text-muted-foreground gap-2">
             <Inbox className="h-6 w-6 opacity-40" />
-            <span>No hay conversaciones</span>
+            <span>{isSearching ? "Sin resultados" : "No hay conversaciones"}</span>
           </div>
         ) : (
-          filtered.map((conv) => (
+          displayList.map((conv) => (
             <ConvItem
               key={conv.id}
               conv={conv}
