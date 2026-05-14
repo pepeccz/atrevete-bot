@@ -220,6 +220,7 @@ async def _persist_assistant_message(conversation_id: str | None, content: str |
                 role="assistant",
                 content=content,
                 created_at=now,
+                author_type="bot",  # PR-1: stamp bot outbound messages
             )
         )
         await session.flush()

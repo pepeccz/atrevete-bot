@@ -203,6 +203,10 @@ export interface ConversationMessage {
   chatwoot_message_id: number | null;
   // Legacy field — kept for backward compatibility with archived conversations
   timestamp?: string;
+  // PR-1 additive fields (may be absent on older archived rows)
+  author_type?: "bot" | "human_agent" | "system" | "user" | null;
+  read_at?: string | null;
+  delivery_failed?: boolean;
 }
 
 /**
@@ -837,6 +841,11 @@ export interface ConversationHistoryInbox extends ConversationHistory {
   atencion_automatica: boolean | null;
   /** Filter label returned by the listing endpoint ?filter= param. */
   filter_label?: string;
+  /**
+   * PR-1: count of unread customer messages (read_at IS NULL AND author_type='user').
+   * Optional — absent on older archived rows or when migration not yet applied.
+   */
+  unread_message_count?: number | null;
 }
 
 export type InboxFilter = "all" | "bot_on" | "bot_off" | "escalated" | "unread";

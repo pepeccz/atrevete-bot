@@ -48,6 +48,14 @@ logger = logging.getLogger(__name__)
 # Global flag for graceful shutdown
 shutdown_requested = False
 
+# PR-1: map archiver role values to author_type for ConversationMessage stamping
+_ROLE_TO_AUTHOR_TYPE: dict[str, str] = {
+    "user": "user",
+    "assistant": "bot",
+    "human_agent": "human_agent",
+    "system": "system",
+}
+
 # Timezone for all datetime operations
 TIMEZONE = ZoneInfo("Europe/Madrid")
 
@@ -384,6 +392,7 @@ async def upsert_conversation_to_db(
             role=role,
             content=content,
             created_at=timestamp,
+            author_type=_ROLE_TO_AUTHOR_TYPE.get(role, "user"),  # PR-1: stamp on archive
         )
         session.add(msg_record)
         existing_fingerprints.add(fingerprint)

@@ -90,12 +90,23 @@ function ConvItem({
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between gap-1">
-            <span className="text-sm font-medium truncate">{name}</span>
-            {botPaused && (
-              <Badge variant="outline" className="text-[10px] px-1 py-0 border-amber-400 text-amber-700 flex-shrink-0">
-                Pausado
-              </Badge>
-            )}
+            {/* PR-1: bold name when there are unread messages */}
+            <span className={cn("text-sm truncate", (inbox.unread_message_count ?? 0) > 0 ? "font-semibold" : "font-medium")}>
+              {name}
+            </span>
+            <div className="flex items-center gap-1 flex-shrink-0">
+              {/* PR-1: unread badge */}
+              {(inbox.unread_message_count ?? 0) > 0 && (
+                <Badge className="text-[10px] px-1.5 py-0 bg-primary text-primary-foreground min-w-[1.25rem] text-center">
+                  {inbox.unread_message_count}
+                </Badge>
+              )}
+              {botPaused && (
+                <Badge variant="outline" className="text-[10px] px-1 py-0 border-amber-400 text-amber-700">
+                  Pausado
+                </Badge>
+              )}
+            </div>
           </div>
           <p className="text-xs text-muted-foreground mt-0.5 truncate">
             {conv.message_count} mensajes

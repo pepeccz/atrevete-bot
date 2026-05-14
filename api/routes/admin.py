@@ -5302,6 +5302,14 @@ async def get_conversation(
                 "content": msg.content,
                 "created_at": msg.created_at.isoformat(),
                 "chatwoot_message_id": msg.chatwoot_message_id,
+                # PR-1 additive fields — None/False when migration not yet applied
+                "author_type": getattr(msg, "author_type", None),
+                "read_at": (
+                    getattr(msg, "read_at", None).isoformat()
+                    if getattr(msg, "read_at", None) is not None
+                    else None
+                ),
+                "delivery_failed": getattr(msg, "delivery_failed", False),
             }
             for msg in conversation.message_records
         ]
@@ -6407,6 +6415,9 @@ async def resolve_escalation(
 from api.models.inbox import (  # noqa: E402
     EscalateRequest,
     EscalateResponse,
+    MarkReadRequest,
+    MarkReadResponse,
+    MessageDetailDTO,
     MessageResponse,
     PauseRequest,
     PauseResponse,
@@ -6694,3 +6705,60 @@ async def inbox_list_templates(
         for t in raw_templates
     ]
     return TemplateListResponse(items=items)
+
+
+# =============================================================================
+# PR-1: mark-read endpoint
+# =============================================================================
+
+
+@router.post("/conversations/{conversation_id}/mark-read", status_code=200)
+async def inbox_mark_read(
+    conversation_id: str,
+    current_user: Annotated[AdminUser, Depends(require_permission("conversations:write"))],
+    body: MarkReadRequest = MarkReadRequest(),
+) -> MarkReadResponse:
+    """Mark all unread messages in a conversation as read.
+
+    Idempotent: calling multiple times is safe — already-read messages are
+    skipped and the response reflects only rows actually updated.
+
+    Optional body field ``up_to_message_id``: when provided, only messages
+    created up to and including that message are marked.
+
+    Returns HTTP 404 with Spanish detail when the conversation does not exist.
+
+    Permissions: conversations:write (admin + stylist).
+    """
+    from api.services.conversation_read_service import mark_messages_read
+    from uuid import UUID as _UUID
+
+    # Resolve conversation_id to a ConversationHistory UUID
+    try:
+        conv_uuid = _UUID(conversation_id)
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=400, detail="Formato de ID de conversación inválido.")
+
+    up_to: UUID | None = body.up_to_message_id
+
+    async with get_async_session() as session:
+        # Verify the conversation exists
+        result = await session.execute(
+            select(ConversationHistory).where(ConversationHistory.id == conv_uuid)
+        )
+        history = result.scalar_one_or_none()
+        if history is None:
+            raise HTTPException(status_code=404, detail="Conversación no encontrada.")
+
+        try:
+            count = await mark_messages_read(
+                session=session,
+                conversation_history_id=history.id,
+                up_to_message_id=up_to,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+        await session.commit()
+
+    return MarkReadResponse(marked=count)

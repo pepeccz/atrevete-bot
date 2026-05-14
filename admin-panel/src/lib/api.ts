@@ -1220,6 +1220,29 @@ class ApiClient {
       "/api/admin/conversations/templates"
     );
   }
+
+  /**
+   * Mark all unread messages in a conversation as read.
+   * Idempotent — safe to call on every conversation selection.
+   * Requires conversations:write permission. PR-1, REQ-2.
+   *
+   * @param convId  ConversationHistory UUID
+   * @param upToMessageId  Optional: mark only up to this message
+   */
+  async markRead(
+    convId: string,
+    upToMessageId?: string
+  ): Promise<{ marked: number }> {
+    return this.request<{ marked: number }>(
+      `/api/admin/conversations/${convId}/mark-read`,
+      {
+        method: "POST",
+        body: JSON.stringify(
+          upToMessageId ? { up_to_message_id: upToMessageId } : {}
+        ),
+      }
+    );
+  }
 }
 
 export const api = new ApiClient(API_BASE_URL);

@@ -1,0 +1,133 @@
+{
+  "account": {
+    "id": 5,
+    "name": "Atrevete Peluqueria"
+  },
+  "additional_attributes": {},
+  "content_attributes": {},
+  "content_type": "text",
+  "content": "Hola",
+  "conversation": {
+    "additional_attributes": {},
+    "can_reply": true,
+    "channel": "Channel::Whatsapp",
+    "contact_inbox": {
+      "id": 1,
+      "contact_id": 1,
+      "inbox_id": 1,
+      "source_id": "34623226544",
+      "created_at": "2026-03-08T21:43:07.392Z",
+      "updated_at": "2026-03-08T21:43:07.392Z",
+      "hmac_verified": false,
+      "pubsub_token": "BXKN9SwBn9K6p2ry1TP4odgK"
+    },
+    "id": 8,
+    "inbox_id": 1,
+    "messages": [
+      {
+        "id": 2084,
+        "content": "Hola",
+        "account_id": 5,
+        "inbox_id": 1,
+        "conversation_id": 8,
+        "message_type": 0,
+        "created_at": 1778757720,
+        "updated_at": "2026-05-14T11:22:00.240Z",
+        "private": false,
+        "status": "sent",
+        "source_id": "wamid.HBgLMzQ2MjMyMjY1NDQVAgASGBYzRUIwRjlCNzY0NjAzOUM0Q0ZDNTQ2AA==",
+        "content_type": "text",
+        "content_attributes": {},
+        "sender_type": "Contact",
+        "sender_id": 1,
+        "external_source_ids": {},
+        "additional_attributes": {},
+        "processed_message_content": "Hola",
+        "sentiment": {},
+        "conversation": {
+          "assignee_id": null,
+          "unread_count": 10,
+          "last_activity_at": 1778757720,
+          "contact_inbox": {
+            "source_id": "34623226544"
+          }
+        },
+        "sender": {
+          "additional_attributes": {},
+          "custom_attributes": {},
+          "email": null,
+          "id": 1,
+          "identifier": null,
+          "name": "Pepe",
+          "phone_number": "+34623226544",
+          "thumbnail": "",
+          "blocked": false,
+          "type": "contact"
+        }
+      }
+    ],
+    "labels": [],
+    "meta": {
+      "sender": {
+        "additional_attributes": {},
+        "custom_attributes": {},
+        "email": null,
+        "id": 1,
+        "identifier": null,
+        "name": "Pepe",
+        "phone_number": "+34623226544",
+        "thumbnail": "",
+        "blocked": false,
+        "type": "contact"
+      },
+      "assignee": null,
+      "assignee_type": null,
+      "team": null,
+      "hmac_verified": false
+    },
+    "status": "open",
+    "custom_attributes": {
+      "atencion_automatica": true
+    },
+    "snoozed_until": null,
+    "unread_count": 10,
+    "first_reply_created_at": "2026-04-27T18:18:21.761Z",
+    "priority": null,
+    "waiting_since": 1778523744,
+    "agent_last_seen_at": 0,
+    "contact_last_seen_at": 0,
+    "last_activity_at": 1778757720,
+    "timestamp": 1778757720,
+    "created_at": 1777313901,
+    "updated_at": 1778757720.243894,
+    "applied_sla": null,
+    "sla_events": [],
+    "sla_policy_id": null
+  },
+  "created_at": "2026-05-14T11:22:00.240Z",
+  "id": 2084,
+  "inbox": {
+    "id": 1,
+    "name": "Testing Phone"
+  },
+  "message_type": "incoming",
+  "private": false,
+  "sender": {
+    "account": {
+      "id": 5,
+      "name": "Atrevete Peluqueria"
+    },
+    "additional_attributes": {},
+    "avatar": "",
+    "custom_attributes": {},
+    "email": null,
+    "id": 1,
+    "identifier": null,
+    "name": "Pepe",
+    "phone_number": "+34623226544",
+    "thumbnail": "",
+    "blocked": false
+  },
+  "source_id": "wamid.HBgLMzQ2MjMyMjY1NDQVAgASGBYzRUIwRjlCNzY0NjAzOUM0Q0ZDNTQ2AA==",
+  "event": "message_created"
+}

@@ -768,6 +768,22 @@ class ConversationMessage(Base):
         index=True,
     )
 
+    # PR-1 — operator inbox foundation columns (a1b2c3d4e5f6)
+    # author_type: canonical author label for the inbox UI
+    #   Values: 'bot' | 'human_agent' | 'system' | 'user'
+    #   Application-layer validation only (no CHECK constraint — ADR-D5).
+    author_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+
+    # read_at: operator read-receipt timestamp (NULL = unread)
+    read_at: Mapped[Optional[datetime]] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+
+    # delivery_failed: set to True when Chatwoot reports delivery failure
+    delivery_failed: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+
     # Timestamp (timezone-aware, server-set for consistency)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
