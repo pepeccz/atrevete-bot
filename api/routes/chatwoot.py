@@ -146,6 +146,7 @@ async def upsert_conversation_history(
                     content=message_text,
                     chatwoot_message_id=chatwoot_message_id,
                     created_at=now,
+                    author_type="user",  # PR-1: stamp inbound as user
                 )
             )
             await session.flush()
@@ -156,6 +157,81 @@ async def upsert_conversation_history(
         .where(ConversationMessage.conversation_history_id == parent.id)
     )
     parent.message_count = count_result.scalar() or 0
+
+
+# =============================================================================
+# PR-1: delivery_failed webhook hook
+# =============================================================================
+
+STATUS_LOGGER = logging.getLogger("webhook.message_status")
+
+
+async def _handle_message_status_event(payload_body: dict, db_session: Any) -> bool:
+    """Handle Chatwoot ``message_updated`` events for delivery failure tracking.
+
+    Sets ``delivery_failed=True`` on the matching ``ConversationMessage`` row
+    when ``payload.status == 'failed'``.  All other statuses are silently
+    ignored (non-failure events are common and expected).
+
+    Tolerant by design:
+    - If the event is not ``message_updated``, returns False (no-op).
+    - If ``payload.status`` is not ``'failed'``, returns False (no-op).
+    - If the message row has not been persisted yet (rare race), logs and skips.
+    - Idempotent: setting ``True`` again is a no-op in the DB.
+
+    Args:
+        payload_body: Raw parsed webhook payload dict.
+        db_session: Active async SQLAlchemy session.
+
+    Returns:
+        True if a row was updated; False otherwise (ignored or not found).
+    """
+    from database.models import ConversationMessage
+    from sqlalchemy import update as sa_update
+
+    event = payload_body.get("event")
+    if event != "message_updated":
+        return False
+
+    # Extract status from the message-level object — Chatwoot sends it under
+    # the top-level "status" key or nested in "message.status".
+    # Tolerate both shapes.
+    status = payload_body.get("status") or (payload_body.get("message") or {}).get("status")
+
+    if status != "failed":
+        STATUS_LOGGER.debug("message_updated with non-failed status=%r — ignored", status)
+        return False
+
+    # Locate the ConversationMessage by chatwoot_message_id
+    chatwoot_msg_id = payload_body.get("id") or (payload_body.get("message") or {}).get("id")
+    if chatwoot_msg_id is None:
+        STATUS_LOGGER.warning("message_updated: no message id found in payload — skipped")
+        return False
+
+    STATUS_LOGGER.info("Delivery failure event received for chatwoot_message_id=%s", chatwoot_msg_id)
+
+    stmt = (
+        sa_update(ConversationMessage)
+        .where(ConversationMessage.chatwoot_message_id == int(chatwoot_msg_id))
+        .values(delivery_failed=True)
+        .execution_options(synchronize_session="fetch")
+    )
+    result = await db_session.execute(stmt)
+    updated = result.rowcount or 0
+
+    if updated == 0:
+        STATUS_LOGGER.warning(
+            "message_updated: chatwoot_message_id=%s not found in DB — possible race",
+            chatwoot_msg_id,
+        )
+        return False
+
+    STATUS_LOGGER.info(
+        "delivery_failed=True set for chatwoot_message_id=%s (%d row)",
+        chatwoot_msg_id,
+        updated,
+    )
+    return True
 
 
 # Idempotency constants
@@ -270,6 +346,25 @@ async def receive_chatwoot_webhook(
             extra={"payload_preview": body_str[:1000]},
         )
         raise HTTPException(status_code=400, detail=f"Invalid payload format: {str(e)}") from e
+
+    # PR-1: Handle message_updated delivery-failure events before the event filter.
+    # This is tolerant — if no row is updated (rare race, non-failure status) we
+    # simply return 200 without further processing.
+    if payload.event == "message_updated":
+        try:
+            from database.connection import get_async_session
+
+            async with get_async_session() as db_session:
+                await _handle_message_status_event(
+                    payload_body=body_str and __import__("json").loads(body_str) or {},
+                    db_session=db_session,
+                )
+                await db_session.commit()
+        except Exception as e:
+            STATUS_LOGGER.warning(
+                "Failed to handle message_updated event: %s", e, exc_info=True
+            )
+        return JSONResponse(status_code=200, content={"status": "message_updated_handled"})
 
     # Filter: Only process message_created events
     if payload.event != "message_created":

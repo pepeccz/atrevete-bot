@@ -36,6 +36,9 @@ function MessageBubble({ msg }: { msg: ConversationMessage & { author_username?:
     ? "Bot"
     : null;
 
+  // PR-1: delivery failure indicator
+  const failedDelivery = msg.delivery_failed === true;
+
   return (
     <div className={cn("flex flex-col gap-0.5 max-w-[80%]", alignClass, isCustomer || isAgent ? "self-end" : "self-start")}>
       {roleLabel && (
@@ -44,16 +47,23 @@ function MessageBubble({ msg }: { msg: ConversationMessage & { author_username?:
       <div className={cn("rounded-xl px-3 py-2 text-sm", bubbleClass)}>
         <p className="whitespace-pre-wrap break-words">{msg.content}</p>
       </div>
-      {msg.created_at && (
-        <span
-          className={cn(
-            "text-[10px] text-muted-foreground px-1",
-            isCustomer || isAgent ? "text-right" : "text-left"
-          )}
-        >
-          {formatDate(msg.created_at)}
-        </span>
-      )}
+      <div className={cn("flex items-center gap-1 px-1", isCustomer || isAgent ? "justify-end" : "justify-start")}>
+        {msg.created_at && (
+          <span className="text-[10px] text-muted-foreground">
+            {formatDate(msg.created_at)}
+          </span>
+        )}
+        {/* PR-1: red triangle + tooltip for undelivered messages */}
+        {failedDelivery && (
+          <span
+            title="No entregado"
+            className="text-[10px] text-red-500 cursor-default"
+            aria-label="No entregado"
+          >
+            ▲
+          </span>
+        )}
+      </div>
     </div>
   );
 }
@@ -98,6 +108,10 @@ export function ConversationThread({ conversationId }: ConversationThreadProps) 
     setLoading(true);
     setConversation(null);
     fetchThread();
+    // PR-1: mark all messages read when a conversation is selected (REQ-2, Scenario 2.4)
+    api.markRead(conversationId).catch(() => {
+      // Non-critical — silently ignore mark-read errors
+    });
   }, [conversationId, fetchThread]);
 
   // Scroll to bottom when messages are loaded/updated.

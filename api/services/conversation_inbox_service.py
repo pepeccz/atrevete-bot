@@ -160,6 +160,7 @@ class ConversationInboxService:
             content=text,
             author_user_id=author.id,
             created_at=now,
+            author_type="human_agent",  # PR-1: stamp operator messages
         )
         self._session.add(msg)
         await self._session.commit()
@@ -244,6 +245,7 @@ class ConversationInboxService:
             content=rendered_body,
             author_user_id=author.id,
             created_at=now,
+            author_type="human_agent",  # PR-1: stamp operator template messages
         )
         self._session.add(msg)
         await self._session.commit()

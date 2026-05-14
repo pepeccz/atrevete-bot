@@ -164,3 +164,50 @@ class TemplateListResponse(BaseModel):
     """Response for GET /templates."""
 
     items: list[TemplateDefResponse]
+
+
+# ---------------------------------------------------------------------------
+# mark-read (PR-1)
+# ---------------------------------------------------------------------------
+
+
+class MarkReadRequest(BaseModel):
+    """Optional body for POST /{conversation_id}/mark-read.
+
+    When ``up_to_message_id`` is omitted all unread messages in the
+    conversation are marked.
+    """
+
+    up_to_message_id: UUID | None = Field(
+        default=None,
+        description="Mark only messages up to and including this message UUID.",
+    )
+
+
+class MarkReadResponse(BaseModel):
+    """Response for mark-read."""
+
+    marked: int = Field(description="Number of messages whose read_at was updated.")
+
+
+# ---------------------------------------------------------------------------
+# Extended message DTO (PR-1) — additive fields
+# ---------------------------------------------------------------------------
+
+
+class MessageDetailDTO(BaseModel):
+    """Per-message fields returned on GET /conversations/{id}.
+
+    Additive over the plain dict used today. Backward-compat: existing
+    consumers still get role, content, created_at, chatwoot_message_id.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    role: str
+    content: str | None
+    created_at: datetime
+    chatwoot_message_id: int | None = None
+    author_type: str | None = None
+    read_at: datetime | None = None
+    delivery_failed: bool = False
