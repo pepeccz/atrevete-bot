@@ -4,8 +4,11 @@
  */
 
 import type {
+  ConversationNote,
   GlobalSearchResponse,
+  NoteListResponse,
   NotificationsListResponse,
+  SidebarResponse,
   NotificationsPaginatedResponse,
   NotificationQueryParams,
   NotificationStatsResponse,
@@ -1242,6 +1245,96 @@ class ApiClient {
         ),
       }
     );
+  }
+
+  // ── Conversation notes (PR-2) ─────────────────────────────────────────────
+
+  /**
+   * List operator notes for a conversation, ordered by created_at DESC.
+   * PR-2, REQ-4.
+   */
+  async listNotes(convId: string): Promise<NoteListResponse> {
+    return this.request<NoteListResponse>(
+      `/api/admin/conversations/${convId}/notes`
+    );
+  }
+
+  /**
+   * Create a new operator note for a conversation.
+   * PR-2, REQ-4. Returns HTTP 201 + note body.
+   */
+  async createNote(convId: string, content: string): Promise<ConversationNote> {
+    return this.request<ConversationNote>(
+      `/api/admin/conversations/${convId}/notes`,
+      {
+        method: "POST",
+        body: JSON.stringify({ content }),
+      }
+    );
+  }
+
+  /**
+   * Update the content of an existing note.
+   * Only the original author may update. PR-2, REQ-4.
+   */
+  async updateNote(noteId: string, content: string): Promise<ConversationNote> {
+    return this.request<ConversationNote>(
+      `/api/admin/conversations/notes/${noteId}`,
+      {
+        method: "PATCH",
+        body: JSON.stringify({ content }),
+      }
+    );
+  }
+
+  /**
+   * Delete a note. Author or admin-role user may delete.
+   * Returns void on HTTP 204. PR-2, REQ-4.
+   */
+  async deleteNote(noteId: string): Promise<void> {
+    await this.request<void>(
+      `/api/admin/conversations/notes/${noteId}`,
+      { method: "DELETE" }
+    );
+  }
+
+  // ── Sidebar aggregate (PR-2) ──────────────────────────────────────────────
+
+  /**
+   * Return the sidebar aggregate for a conversation in one round-trip:
+   * customer summary, notes for this conversation, active escalation.
+   * PR-2, REQ-5.
+   */
+  async getSidebar(convId: string): Promise<SidebarResponse> {
+    return this.request<SidebarResponse>(
+      `/api/admin/conversations/${convId}/sidebar`
+    );
+  }
+
+  // ── Global search (PR-2) ──────────────────────────────────────────────────
+
+  /**
+   * Search conversations by customer name, phone, or message content.
+   * Delegates to global_search_service when q is non-empty.
+   * Returns the same shape as listConversations. PR-2, REQ-6.
+   */
+  async searchConversations(
+    q: string,
+    page = 1,
+    pageSize = 50
+  ): Promise<{
+    items: unknown[];
+    total: number;
+    page: number;
+    page_size: number;
+    has_more: boolean;
+  }> {
+    const params = new URLSearchParams({
+      q,
+      page: String(page),
+      page_size: String(pageSize),
+    });
+    return this.request(`/api/admin/conversations?${params.toString()}`);
   }
 }
 
