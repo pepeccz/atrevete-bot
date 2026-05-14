@@ -5335,6 +5335,23 @@ async def get_conversation(
                     else None
                 ),
                 "delivery_failed": getattr(msg, "delivery_failed", False),
+                # PR-3a: inbound attachments (lazy="selectin" — loaded automatically)
+                "attachments": [
+                    {
+                        "id": str(att.id),
+                        "file_type": att.file_type,
+                        "url": att.url,
+                        "thumb_url": att.thumb_url,
+                        "content_type": att.content_type,
+                        "filename": att.filename,
+                        "size_bytes": att.size_bytes,
+                        "width": att.width,
+                        "height": att.height,
+                        "position": att.position,
+                        "created_at": att.created_at.isoformat(),
+                    }
+                    for att in getattr(msg, "attachments", [])
+                ],
             }
             for msg in conversation.message_records
         ]
