@@ -125,7 +125,9 @@ def test_bot_off_inbound_persists_db_no_redis_publish(client, mock_redis):
     """SC-2: When atencion_automatica=False, DB is written but Redis is NOT published."""
     db_upsert_called = []
 
-    async def _fake_upsert(session, payload, message_text=None, chatwoot_message_id=None):
+    async def _fake_upsert(
+        session, payload, message_text=None, chatwoot_message_id=None, attachments_payload=None
+    ):
         db_upsert_called.append({"message_text": message_text})
 
     mock_db_session = _make_db_session_mock()
@@ -177,7 +179,9 @@ def test_global_ai_off_persists_db_no_redis_publish(client, mock_redis):
     """SC-10: When ai_agent_enabled=False globally, DB is written but Redis is NOT published."""
     db_upsert_called = []
 
-    async def _fake_upsert(session, payload, message_text=None, chatwoot_message_id=None):
+    async def _fake_upsert(
+        session, payload, message_text=None, chatwoot_message_id=None, attachments_payload=None
+    ):
         db_upsert_called.append({"message_text": message_text})
 
     # Settings service reports AI is disabled

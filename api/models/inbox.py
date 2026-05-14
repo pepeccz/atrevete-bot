@@ -191,6 +191,33 @@ class MarkReadResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# PR-3a — attachment DTO
+# ---------------------------------------------------------------------------
+
+
+class AttachmentDTO(BaseModel):
+    """Single attachment as returned within a MessageDetailDTO.
+
+    Fields mirror the ``message_attachments`` table columns exactly so the
+    ORM ``from_attributes=True`` mapping works without a custom serializer.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    file_type: str
+    url: str
+    thumb_url: str | None = None
+    content_type: str | None = None
+    filename: str | None = None
+    size_bytes: int | None = None
+    width: int | None = None
+    height: int | None = None
+    position: int
+    created_at: datetime
+
+
+# ---------------------------------------------------------------------------
 # Extended message DTO (PR-1) — additive fields
 # ---------------------------------------------------------------------------
 
@@ -200,6 +227,7 @@ class MessageDetailDTO(BaseModel):
 
     Additive over the plain dict used today. Backward-compat: existing
     consumers still get role, content, created_at, chatwoot_message_id.
+    PR-3a: ``attachments`` list is populated by the ORM selectin relationship.
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -211,6 +239,7 @@ class MessageDetailDTO(BaseModel):
     author_type: str | None = None
     read_at: datetime | None = None
     delivery_failed: bool = False
+    attachments: list[AttachmentDTO] = []
 
 
 # ---------------------------------------------------------------------------

@@ -7,6 +7,7 @@ import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 import aiohttp
 from fastapi import APIRouter, HTTPException, Request
@@ -46,6 +47,7 @@ async def upsert_conversation_history(
     payload: ChatwootWebhookPayload,
     message_text: str | None = None,
     chatwoot_message_id: int | None = None,
+    attachments_payload: list[dict] | None = None,
 ) -> None:
     """
     UPSERT a ConversationHistory row + ConversationMessage child for inbound message.
@@ -55,6 +57,9 @@ async def upsert_conversation_history(
       chatwoot_message_id when present, else by (role, content) within the conversation.
     - Recomputes parent.message_count from actual children to stay consistent
       with the archiver fallback.
+    - PR-3a: when ``attachments_payload`` is provided, persists attachment rows after
+      the ConversationMessage flush.  Message is inserted even when ``message_text``
+      is None/empty as long as attachments are present (attachment-only messages).
     """
     from sqlalchemy import func
 
@@ -118,7 +123,12 @@ async def upsert_conversation_history(
         await session.flush()
 
     # Insert user child idempotently
-    if message_text:
+    # PR-3a: persist message when EITHER text OR attachments are present.
+    # Attachment-only messages (content=null in Chatwoot) use empty-string content.
+    _has_content = bool(message_text) or bool(attachments_payload)
+    if _has_content:
+        # Normalise: use empty string when the message has no text body
+        _content = message_text or ""
         is_dup = False
         if chatwoot_message_id is not None:
             dup_result = await session.execute(
@@ -133,23 +143,30 @@ async def upsert_conversation_history(
                 select(ConversationMessage.id).where(
                     ConversationMessage.conversation_history_id == parent.id,
                     ConversationMessage.role == "user",
-                    ConversationMessage.content == message_text,
+                    ConversationMessage.content == _content,
                 )
             )
             is_dup = dup_result.scalar_one_or_none() is not None
 
         if not is_dup:
-            session.add(
-                ConversationMessage(
-                    conversation_history_id=parent.id,
-                    role="user",
-                    content=message_text,
-                    chatwoot_message_id=chatwoot_message_id,
-                    created_at=now,
-                    author_type="user",  # PR-1: stamp inbound as user
-                )
+            msg_row = ConversationMessage(
+                conversation_history_id=parent.id,
+                role="user",
+                content=_content,
+                chatwoot_message_id=chatwoot_message_id,
+                created_at=now,
+                author_type="user",  # PR-1: stamp inbound as user
             )
+            session.add(msg_row)
             await session.flush()
+
+            # PR-3a: persist attachment rows now that msg_row.id is available
+            if attachments_payload:
+                await _persist_attachments(
+                    message_id=msg_row.id,
+                    attachments_payload=attachments_payload,
+                    session=session,
+                )
 
     count_result = await session.execute(
         select(func.count())
@@ -157,6 +174,60 @@ async def upsert_conversation_history(
         .where(ConversationMessage.conversation_history_id == parent.id)
     )
     parent.message_count = count_result.scalar() or 0
+
+
+# =============================================================================
+# PR-3a: attachment persistence helper
+# =============================================================================
+
+
+async def _persist_attachments(
+    *,
+    message_id: UUID,
+    attachments_payload: list[dict] | None,
+    session: AsyncSession,
+) -> int:
+    """Persist attachments from a Chatwoot webhook payload.
+
+    Tolerant — skips items without ``data_url``, defaults safe for missing
+    fields.  Reads from the top-level ``payload.attachments[]`` which Chatwoot
+    places at the event level (not inside ``conversation.messages``).
+
+    Returns the count of rows persisted.
+    """
+    from database.models import MessageAttachment
+
+    if not attachments_payload:
+        return 0
+
+    count = 0
+    for position, att in enumerate(attachments_payload):
+        url = att.get("data_url")
+        if not url:
+            logger.info(
+                "Skipping attachment at position %d for message %s — data_url missing",
+                position,
+                message_id,
+                extra={"message_id": str(message_id), "attachment": att},
+            )
+            continue
+
+        row = MessageAttachment(
+            message_id=message_id,
+            file_type=att.get("file_type") or "file",
+            url=url,
+            thumb_url=att.get("thumb_url") or None,
+            content_type=att.get("content_type") or None,
+            filename=att.get("file_name") or att.get("filename") or None,
+            size_bytes=att.get("file_size") or None,
+            width=att.get("width") or None,
+            height=att.get("height") or None,
+            position=position,
+        )
+        session.add(row)
+        count += 1
+
+    return count
 
 
 # =============================================================================
@@ -186,8 +257,9 @@ async def _handle_message_status_event(payload_body: dict, db_session: Any) -> b
     Returns:
         True if a row was updated; False otherwise (ignored or not found).
     """
-    from database.models import ConversationMessage
     from sqlalchemy import update as sa_update
+
+    from database.models import ConversationMessage
 
     event = payload_body.get("event")
     if event != "message_updated":
@@ -411,6 +483,8 @@ async def receive_chatwoot_webhook(
     message_text = last_message.content or ""
     is_audio_transcription = False
     audio_url = None
+    # PR-3a: when True the message was persisted but must NOT be published to Redis
+    _skip_redis_non_audio = False
 
     # Check if message has audio attachments (attachments are in message.attachments)
     # Also check root-level attachments for backward compatibility
@@ -433,7 +507,8 @@ async def receive_chatwoot_webhook(
                 # Text + non-audio attachment: process the text, ignore attachment
                 logger.info("Message has text alongside non-audio attachment, processing text only")
             else:
-                # Pure non-audio attachment: reply with friendly message and ignore
+                # PR-3a: attachment-only message — persist to DB but skip Redis publish.
+                # Send a friendly reply to the customer and fall through to Step 7.
                 try:
                     chatwoot_client = ChatwootClient()
                     await chatwoot_client.send_message(
@@ -446,9 +521,8 @@ async def receive_chatwoot_webhook(
                     )
                 except Exception as e:
                     logger.warning("Failed to send non-audio attachment reply: %s", e)
-                return JSONResponse(
-                    status_code=200, content={"status": "ignored_non_audio_attachment"}
-                )
+                _skip_redis_non_audio = True
+                # Fall through to Step 7 so DB row + attachments are persisted.
 
         audio_attachments = [att for att in message_attachments if att.file_type == "audio"]
 
@@ -627,11 +701,19 @@ async def receive_chatwoot_webhook(
                     cw_msg_id = payload.conversation.messages[-1].id
             except Exception:
                 cw_msg_id = None
+            # PR-3a: pass top-level attachments as raw dicts so
+            # _persist_attachments can access thumb_url, file_size, etc.
+            raw_attachments = (
+                [att.model_dump() for att in payload.attachments]
+                if payload.attachments
+                else None
+            )
             await upsert_conversation_history(
                 db_session,
                 payload,
                 message_text=message_text,
                 chatwoot_message_id=cw_msg_id,
+                attachments_payload=raw_attachments,
             )
             await db_session.commit()
     except Exception as e:
@@ -641,6 +723,16 @@ async def receive_chatwoot_webhook(
             e,
             extra={"conversation_id": str(payload.conversation.id)},
         )
+
+    # PR-3a: attachment-only messages were persisted; skip Redis publish.
+    if _skip_redis_non_audio:
+        logger.info(
+            "Non-audio attachment message persisted to DB — not published to Redis "
+            "for conversation %s",
+            payload.conversation.id,
+            extra={"conversation_id": str(payload.conversation.id)},
+        )
+        return JSONResponse(status_code=200, content={"status": "ignored_non_audio_attachment"})
 
     # Step 8: System-wide AI toggle check (panic button) — fail-CLOSED
     # Policy change (FR-WEBHOOK-4): we already persisted the DB row above.

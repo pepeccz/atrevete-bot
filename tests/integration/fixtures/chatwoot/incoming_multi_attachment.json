@@ -1,0 +1,167 @@
+{
+  "account": {"id": 5, "name": "Atrevete Peluqueria"},
+  "additional_attributes": {},
+  "content_attributes": {},
+  "content_type": "text",
+  "content": null,
+  "conversation": {
+    "additional_attributes": {},
+    "can_reply": true,
+    "channel": "Channel::Whatsapp",
+    "contact_inbox": {
+      "id": 1,
+      "contact_id": 1,
+      "inbox_id": 1,
+      "source_id": "34623226544",
+      "created_at": "2026-03-08T21:43:07.392Z",
+      "updated_at": "2026-03-08T21:43:07.392Z",
+      "hmac_verified": false,
+      "pubsub_token": "BXKN9SwBn9K6p2ry1TP4odgK"
+    },
+    "id": 99,
+    "inbox_id": 1,
+    "messages": [
+      {
+        "id": 5001,
+        "content": null,
+        "account_id": 5,
+        "inbox_id": 1,
+        "conversation_id": 99,
+        "message_type": 0,
+        "created_at": 1778900000,
+        "updated_at": "2026-05-14T12:00:00.000Z",
+        "private": false,
+        "status": "sent",
+        "source_id": "wamid.MULTI001",
+        "content_type": "text",
+        "content_attributes": {},
+        "sender_type": "Contact",
+        "sender_id": 1,
+        "external_source_ids": {},
+        "additional_attributes": {},
+        "processed_message_content": null,
+        "sentiment": {},
+        "conversation": {
+          "assignee_id": null,
+          "unread_count": 1,
+          "last_activity_at": 1778900000,
+          "contact_inbox": {"source_id": "34623226544"}
+        },
+        "attachments": [
+          {
+            "id": 10,
+            "message_id": 5001,
+            "file_type": "image",
+            "account_id": 5,
+            "extension": null,
+            "data_url": "https://chats.zonavix.com/rails/active_storage/blobs/redirect/token-a/img1.jpg",
+            "thumb_url": "https://chats.zonavix.com/rails/active_storage/representations/redirect/token-a/thumb/img1.jpg",
+            "file_size": 100000,
+            "width": null,
+            "height": null
+          },
+          {
+            "id": 11,
+            "message_id": 5001,
+            "file_type": "image",
+            "account_id": 5,
+            "extension": null,
+            "data_url": "https://chats.zonavix.com/rails/active_storage/blobs/redirect/token-b/img2.jpg",
+            "thumb_url": "https://chats.zonavix.com/rails/active_storage/representations/redirect/token-b/thumb/img2.jpg",
+            "file_size": 120000,
+            "width": null,
+            "height": null
+          }
+        ],
+        "sender": {
+          "additional_attributes": {},
+          "custom_attributes": {},
+          "email": null,
+          "id": 1,
+          "identifier": null,
+          "name": "Pepe",
+          "phone_number": "+34623226544",
+          "thumbnail": "",
+          "blocked": false,
+          "type": "contact"
+        }
+      }
+    ],
+    "labels": [],
+    "meta": {
+      "sender": {
+        "id": 1,
+        "name": "Pepe",
+        "phone_number": "+34623226544",
+        "thumbnail": "",
+        "type": "contact"
+      },
+      "assignee": null,
+      "assignee_type": null,
+      "team": null,
+      "hmac_verified": false
+    },
+    "status": "open",
+    "custom_attributes": {"atencion_automatica": true},
+    "snoozed_until": null,
+    "unread_count": 1,
+    "first_reply_created_at": "2026-04-27T18:18:21.761Z",
+    "priority": null,
+    "waiting_since": 0,
+    "agent_last_seen_at": 0,
+    "contact_last_seen_at": 0,
+    "last_activity_at": 1778900000,
+    "timestamp": 1778900000,
+    "created_at": 1777313901,
+    "updated_at": 1778900000,
+    "applied_sla": null,
+    "sla_events": [],
+    "sla_policy_id": null
+  },
+  "created_at": "2026-05-14T12:00:00.000Z",
+  "id": 5001,
+  "inbox": {"id": 1, "name": "Testing Phone"},
+  "message_type": "incoming",
+  "private": false,
+  "sender": {
+    "account": {"id": 5, "name": "Atrevete Peluqueria"},
+    "additional_attributes": {},
+    "avatar": "",
+    "custom_attributes": {},
+    "email": null,
+    "id": 1,
+    "identifier": null,
+    "name": "Pepe",
+    "phone_number": "+34623226544",
+    "thumbnail": "",
+    "blocked": false
+  },
+  "source_id": "wamid.MULTI001",
+  "attachments": [
+    {
+      "id": 10,
+      "message_id": 5001,
+      "file_type": "image",
+      "account_id": 5,
+      "extension": null,
+      "data_url": "https://chats.zonavix.com/rails/active_storage/blobs/redirect/token-a/img1.jpg",
+      "thumb_url": "https://chats.zonavix.com/rails/active_storage/representations/redirect/token-a/thumb/img1.jpg",
+      "file_size": 100000,
+      "width": null,
+      "height": null
+    },
+    {
+      "id": 11,
+      "message_id": 5001,
+      "file_type": "image",
+      "account_id": 5,
+      "extension": null,
+      "data_url": "https://chats.zonavix.com/rails/active_storage/blobs/redirect/token-b/img2.jpg",
+      "thumb_url": "https://chats.zonavix.com/rails/active_storage/representations/redirect/token-b/thumb/img2.jpg",
+      "file_size": 120000,
+      "width": null,
+      "height": null
+    }
+  ],
+  "event": "message_created"
+}
