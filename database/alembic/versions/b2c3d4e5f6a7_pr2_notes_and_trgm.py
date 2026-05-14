@@ -1,7 +1,7 @@
 """pr2 — conversation_notes table + pg_trgm GIN indexes for global search
 
 Revision ID: b2c3d4e5f6a7
-Revises: a1b2c3d4e5f6
+Revises: pr1msg5b3a7c
 Create Date: 2026-05-14
 
 PR-2 additive migration:
@@ -25,7 +25,7 @@ from sqlalchemy.dialects import postgresql
 # ─── Revision identifiers ─────────────────────────────────────────────────────
 
 revision: str = "b2c3d4e5f6a7"
-down_revision: str = "a1b2c3d4e5f6"
+down_revision: str = "pr1msg5b3a7c"
 branch_labels = None
 depends_on = None
 

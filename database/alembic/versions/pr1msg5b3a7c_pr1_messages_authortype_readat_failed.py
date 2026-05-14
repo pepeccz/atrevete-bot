@@ -1,7 +1,7 @@
 """pr1 — add author_type, read_at, delivery_failed to conversation_messages
 
-Revision ID: a1b2c3d4e5f6
-Revises: z6a7b8c9d0e1
+Revision ID: pr1msg5b3a7c
+Revises: d7e8f9a0b1c2
 Create Date: 2026-05-14
 
 Additive migration for PR-1 foundation:
@@ -23,8 +23,8 @@ accelerates the mark-read query (only unread rows).
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "a1b2c3d4e5f6"
-down_revision: str | None = "z6a7b8c9d0e1"
+revision: str = "pr1msg5b3a7c"
+down_revision: str | None = "d7e8f9a0b1c2"
 branch_labels = None
 depends_on = None
 
