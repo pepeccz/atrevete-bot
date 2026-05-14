@@ -195,6 +195,21 @@ export interface Holiday {
   is_all_day: boolean;
 }
 
+/** PR-3b: Single file attachment returned by the message detail endpoint. */
+export interface Attachment {
+  id: string;
+  file_type: string;
+  url: string;
+  thumb_url: string | null;
+  content_type: string | null;
+  filename: string | null;
+  size_bytes: number | null;
+  width: number | null;
+  height: number | null;
+  position: number;
+  created_at: string;
+}
+
 export interface ConversationMessage {
   id: string;
   role: MessageRole;
@@ -207,6 +222,8 @@ export interface ConversationMessage {
   author_type?: "bot" | "human_agent" | "system" | "user" | null;
   read_at?: string | null;
   delivery_failed?: boolean;
+  /** PR-3b: attachments sent with this message (images, audio, files). */
+  attachments?: Attachment[];
 }
 
 /**
