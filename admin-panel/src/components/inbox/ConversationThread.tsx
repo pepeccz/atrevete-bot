@@ -117,13 +117,18 @@ function MessageBubble({ msg, imageIndexMap, onImageClick }: MessageBubbleProps)
   const isAgent = role === "human_agent";
   const isAssistant = role === "assistant";
 
-  const bubbleClass = isCustomer
-    ? "bg-primary text-primary-foreground self-end"
-    : isAgent
-    ? "bg-blue-100 text-blue-900 border border-blue-200 self-end"
-    : "bg-muted text-foreground self-start";
+  // Visual convention: customer messages on the LEFT (incoming from the
+  // outside world), our side (bot + operator) on the RIGHT. The operator
+  // gets the brand color (high visibility); the bot gets a softer blue.
+  const onRight = isAgent || isAssistant;
 
-  const alignClass = isCustomer || isAgent ? "items-end" : "items-start";
+  const bubbleClass = isCustomer
+    ? "bg-muted text-foreground self-start"
+    : isAgent
+    ? "bg-primary text-primary-foreground self-end"
+    : "bg-blue-100 text-blue-900 border border-blue-200 self-end";
+
+  const alignClass = onRight ? "items-end" : "items-start";
 
   const roleLabel = isAgent
     ? msg.author_username
@@ -140,7 +145,7 @@ function MessageBubble({ msg, imageIndexMap, onImageClick }: MessageBubbleProps)
   const attachments = (msg.attachments ?? []).slice().sort((a, b) => a.position - b.position);
 
   return (
-    <div className={cn("flex flex-col gap-0.5 max-w-[80%]", alignClass, isCustomer || isAgent ? "self-end" : "self-start")}>
+    <div className={cn("flex flex-col gap-0.5 max-w-[80%]", alignClass, onRight ? "self-end" : "self-start")}>
       {roleLabel && (
         <span className="text-[10px] text-muted-foreground px-1">{roleLabel}</span>
       )}
@@ -164,7 +169,7 @@ function MessageBubble({ msg, imageIndexMap, onImageClick }: MessageBubbleProps)
           />
         ))}
       </div>
-      <div className={cn("flex items-center gap-1 px-1", isCustomer || isAgent ? "justify-end" : "justify-start")}>
+      <div className={cn("flex items-center gap-1 px-1", onRight ? "justify-end" : "justify-start")}>
         {msg.created_at && (
           <span className="text-[10px] text-muted-foreground">
             {formatDate(msg.created_at)}
