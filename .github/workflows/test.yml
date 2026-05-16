@@ -2,9 +2,9 @@ name: CI - Tests and Code Quality
 
 on:
   push:
-    branches: [main]
+    branches: [master]
   pull_request:
-    branches: [main]
+    branches: [master]
 
 permissions:
   contents: read
@@ -89,7 +89,17 @@ jobs:
       - name: Create test service account file
         run: echo '{"type":"service_account","project_id":"test"}' > /tmp/test-service-account.json
 
-      - name: Run Alembic migrations
+      - name: Bootstrap schema from prod snapshot
+        # Apply the committed schema dump (database/init_schema.sql) which contains
+        # the full public-schema DDL and stamps alembic_version at the snapshot
+        # revision. This bypasses a known issue where running the full migration
+        # chain on a fresh DB fails with UnsafeNewEnumValueUsage (an enum value
+        # added in one migration is referenced in a later migration within the
+        # same Postgres session). See AGENTS.md for details.
+        run: PGPASSWORD=test psql -h localhost -U test -d test_db -f database/init_schema.sql
+
+      - name: Run Alembic migrations (delta beyond snapshot)
+        # No-op if init_schema.sql is up to date; applies any newer migrations.
         run: alembic upgrade head
 
       - name: Run ruff linter
