@@ -4,6 +4,9 @@ R-IDs: R17
 """
 from __future__ import annotations
 
+import ast
+import pathlib
+
 from agent.middleware.appointment_context import AppointmentContextMiddleware
 from agent.middleware.availability_context import AvailabilityContextMiddleware
 from agent.middleware.customer_resolve import CustomerResolveMiddleware
@@ -25,24 +28,30 @@ EXPECTED_MIDDLEWARE_CLASSES = [
 ]
 
 
+def _extract_list_assignment(tree: ast.AST, var_name: str) -> list[str]:
+    """Find `var_name = [Call(), Call(), ...]` and return the call names in order."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.List):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id == var_name:
+                    return [
+                        elt.func.id
+                        for elt in node.value.elts
+                        if isinstance(elt, ast.Call) and isinstance(elt.func, ast.Name)
+                    ]
+    return []
+
+
 def test_middleware_stack_order() -> None:
-    """The middleware list in agent_factory must have exactly 7 entries in the expected order."""
+    """The base middleware list in agent_factory must contain exactly the 7 expected
+    entries in the documented order. LLMTraceMiddleware is opt-in via flag and tracked
+    separately in test_agent_factory_trace.py (ADR-3)."""
     import agent.agent_factory as factory_module
-    import inspect, ast, pathlib
 
     source = pathlib.Path(factory_module.__file__).read_text(encoding="utf-8")
     tree = ast.parse(source)
 
-    # Find the middleware=[...] list in the build_conversation_agent function
-    middleware_names: list[str] = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-            if node.func.id == "create_agent":
-                for kw in node.keywords:
-                    if kw.arg == "middleware" and isinstance(kw.value, ast.List):
-                        for elt in kw.value.elts:
-                            if isinstance(elt, ast.Call) and isinstance(elt.func, ast.Name):
-                                middleware_names.append(elt.func.id)
+    middleware_names = _extract_list_assignment(tree, "base_middleware")
 
     expected_names = [cls.__name__ for cls in EXPECTED_MIDDLEWARE_CLASSES]
     assert middleware_names == expected_names, (
