@@ -90,3 +90,6 @@ v4-backup/
 _panel_audit/
 notes.md
 Panel Atrevete Bot*.zip
+
+# LLM trace files (debug-only, never commit)
+llm_traces/

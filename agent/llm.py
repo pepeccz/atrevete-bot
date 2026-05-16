@@ -7,18 +7,28 @@ Config mapping (shared/config.py field names):
   - HTTP-Referer   ← settings.SITE_URL
   - X-Title        ← settings.SITE_NAME
   - temperature    ← caller-supplied or 0.0 (no OPENAI_TEMPERATURE in config)
+
+When LLM_TRACE_ENABLED=True, a traced httpx.AsyncClient is injected via
+http_async_client= to capture all outbound LLM requests and responses to disk.
+When False (default), http_async_client=None preserves the LangChain default.
 """
 
 from langchain_openai import ChatOpenAI
 
+from agent.tracing.httpx_hooks import _traced_client_singleton
 from shared.config import get_settings
 
 _OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 
 def _build_llm(model: str, temperature: float = 0.0) -> ChatOpenAI:
-    """Return ChatOpenAI for the given model slug wired to OpenRouter."""
+    """Return ChatOpenAI for the given model slug wired to OpenRouter.
+
+    When LLM_TRACE_ENABLED=True, injects a traced httpx.AsyncClient.
+    When False, http_async_client=None uses LangChain's default client.
+    """
     s = get_settings()
+    traced_client = _traced_client_singleton()
     return ChatOpenAI(
         model=model,
         temperature=temperature,
@@ -28,6 +38,7 @@ def _build_llm(model: str, temperature: float = 0.0) -> ChatOpenAI:
             "HTTP-Referer": s.SITE_URL,
             "X-Title": s.SITE_NAME,
         },
+        http_async_client=traced_client,
     )
 
 

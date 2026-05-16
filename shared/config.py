@@ -416,6 +416,24 @@ class Settings(BaseSettings):
         ),
     )
 
+    # LLM Trace Capture (debug-only — never enable in production with real customer data)
+    LLM_TRACE_ENABLED: bool = Field(
+        default=False,
+        description=(
+            "Enable HTTP-level capture of all LLM requests and responses to disk. "
+            "Files land in LLM_TRACE_DIR under {conversation_id}/. "
+            "Zero overhead when False (default). NEVER enable in production with real customer data."
+        ),
+    )
+    LLM_TRACE_DIR: str = Field(
+        default="llm_traces",
+        description=(
+            "Directory for LLM trace files (relative or absolute path). "
+            "Traces are written as {conversation_id}/{turn_ts}_{seq:04d}_{req|res}.json. "
+            "gitignored — do not commit trace files."
+        ),
+    )
+
     @property
     def google_oauth_configured(self) -> bool:
         """True if Google OAuth2 credentials are configured (OAuth2 mode active).

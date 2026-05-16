@@ -33,13 +33,14 @@ agent/
 ├── checkpointer.py          # AsyncRedisSaver wiring
 ├── resume_handler.py        # Resume helpers for interrupted runs
 ├── state.py                 # AgentState TypedDict (slim, 7 fields)
-├── middleware/              # 6 composed middlewares (order matters)
+├── middleware/              # 7 base + 1 optional trace middleware (order matters)
 │   ├── disclosure.py        # First-turn EU AI Act disclosure prepend
 │   ├── customer_resolve.py  # phone → Customer DB lookup, writes _slot_customer
 │   ├── appointment_context.py # upcoming PENDING/CONFIRMED appts → _slot_upcoming_appointments
 │   ├── dynamic_prompt.py    # catalog + business hours → _slot_catalog, _slot_business_hours
 │   ├── prompt_assembly.py   # collapse _slot_* keys into system_message in fixed order
-│   └── summarize.py         # collapse history > window into [Resumen previo] SystemMessage
+│   ├── summarize.py         # collapse history > window into [Resumen previo] SystemMessage
+│   └── llm_trace.py         # optional (LLM_TRACE_ENABLED=true) — sets TraceContext ContextVar
 ├── tools/                   # 6 LangChain tools
 │   ├── check_availability.py
 │   ├── next_available.py    # get_next_available_options
@@ -53,6 +54,9 @@ agent/
 │   ├── business_hours.py    # load_business_hours_snapshot()
 │   ├── shared/              # identity, rules, glossary, booking_flow
 │   └── modes/               # legacy mode overlays still used as prompt fragments
+├── tracing/                 # LLM HTTP-level trace capture (debug flag only)
+│   ├── context.py           # TraceContext dataclass + ContextVar + helpers
+│   └── httpx_hooks.py       # request_hook, response_hook, _traced_client_singleton
 ├── routing/
 │   └── intent_types.py      # IntentType enum (legacy, no live router)
 ├── booking/
@@ -80,6 +84,7 @@ Redis Streams message
          │
          ▼  awrap_model_call chain (composed)
 ┌─────────────────────────────────────────────────────────┐
+│ 0. LLMTraceMiddleware (only when LLM_TRACE_ENABLED=true)│  sets ContextVar for httpx hook correlation
 │ 1. DisclosureMiddleware                                 │  prepend EU-AI-Act on first turn
 │ 2. CustomerResolveMiddleware                            │  phone → DB → _slot_customer + customer_id
 │ 3. AppointmentContextMiddleware  (after CustomerResolve)│  upcoming appts → _slot_upcoming_appointments
@@ -107,6 +112,16 @@ Redis Streams message
 | `escalate` | Hand off to human agent |
 
 LLM picks tools directly. No keyword router gates the model — the system prompt and middleware-injected slots provide the steering.
+
+### LLM Trace Capture (debug-only)
+
+Set `LLM_TRACE_ENABLED=true` in `.env` to enable HTTP-level capture of all LLM requests and responses:
+
+- Trace files land in `LLM_TRACE_DIR` (default: `llm_traces/`) under `{conversation_id}/`.
+- Files are named `{turn_ts}_{seq:04d}_{req|res}.json` — pair them to see full request + response.
+- Flag is `False` by default — zero overhead in production. Never enable with real customer data (PII in messages).
+- `llm_traces/` is gitignored. Do not commit trace files.
+- `LLMTraceMiddleware` is registered FIRST (outermost) when enabled; removed entirely when disabled.
 
 ### Slot Order (PromptAssemblyMiddleware)
 
