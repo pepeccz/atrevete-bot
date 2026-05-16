@@ -13,12 +13,12 @@ Test mock paths (agent.services.recurrence_service.*) remain unchanged.
 """
 
 from agent.services.recurrence_service import (
-    expand_recurrence,
     check_conflicts_for_dates,
-    get_business_hours_summary,
-    get_remaining_week_days,
+    expand_recurrence,
     format_byday,
     format_bymonthday,
+    get_business_hours_summary,
+    get_remaining_week_days,
     parse_byday,
 )
 

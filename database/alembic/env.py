@@ -79,7 +79,7 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
 
-    with connectable.begin() as connection:
+    with connectable.connect() as connection:
         # Set timezone to Europe/Madrid
         connection.execute(text("SET timezone='Europe/Madrid'"))
 
@@ -87,10 +87,13 @@ def run_migrations_online() -> None:
             connection=connection,
             target_metadata=target_metadata,
             compare_type=True,
+            # Each migration gets its own transaction so that DDL like
+            # ALTER TYPE ADD VALUE is committed before the next migration runs
+            # (required for cross-migration enum-value use in EXCLUDE predicates).
+            transaction_per_migration=True,
         )
 
-        with context.begin_transaction():
-            context.run_migrations()
+        context.run_migrations()
 
 
 if context.is_offline_mode():

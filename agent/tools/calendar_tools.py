@@ -11,8 +11,8 @@ See ADR sdd/agent-tools-shared-extraction (Decision 4) for rationale.
 
 from shared.calendar_service import (
     CalendarTools,
-    get_calendar_client,
     fetch_calendar_events_async,
+    get_calendar_client,
 )
 
 __all__ = [

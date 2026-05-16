@@ -13,7 +13,7 @@ LLM_TRACE_ENABLED=True. When disabled, zero code runs on the hot path.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import ClassVar
 
 from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
@@ -47,7 +47,7 @@ class LLMTraceMiddleware(AgentMiddleware):
 
         ctx = TraceContext(
             conversation_id=str(conversation_id),
-            turn_started_at=datetime.now(tz=timezone.utc),
+            turn_started_at=datetime.now(tz=UTC),
         )
         token = current_trace_ctx.set(ctx)
         try:

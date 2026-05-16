@@ -14,9 +14,9 @@ from agent.services.availability_service import (
 )
 from agent.tools.check_availability import (
     _get_active_stylists_for_services,
-    _load_lead_time_settings,
     _get_service_durations,
     _get_stylist_name,
+    _load_lead_time_settings,
 )
 from agent.tools.schemas import ToolResponse
 

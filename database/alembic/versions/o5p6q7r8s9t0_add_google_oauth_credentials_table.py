@@ -13,7 +13,7 @@ unique index: `uq_google_oauth_active` on `is_active` WHERE `is_active = true`.
 Tokens are stored encrypted (Fernet symmetric encryption) — never in plaintext.
 """
 
-from typing import Sequence, Union
+from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
@@ -24,9 +24,9 @@ from sqlalchemy.dialects import postgresql
 # ---------------------------------------------------------------------------
 
 revision: str = "o5p6q7r8s9t0"
-down_revision: Union[str, None] = "n4o5p6q7r8s9"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = "n4o5p6q7r8s9"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 # ---------------------------------------------------------------------------

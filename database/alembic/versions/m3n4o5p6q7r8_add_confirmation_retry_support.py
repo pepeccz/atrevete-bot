@@ -11,17 +11,16 @@ Adds retry infrastructure for failed WhatsApp confirmation templates:
 - next_retry_at: TIMESTAMPTZ NULL, controls backoff window (30min → 2h → 6h)
 - idx_appointments_retry_eligible: partial index (notification_failed = true) for worker queries
 """
-from typing import Sequence, Union
+from collections.abc import Sequence
 
-from alembic import op
 import sqlalchemy as sa
-
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = 'm3n4o5p6q7r8'
-down_revision: Union[str, None] = 'l2m3n4o5p6q7'
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = 'l2m3n4o5p6q7'
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:

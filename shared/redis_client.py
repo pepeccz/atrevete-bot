@@ -11,7 +11,7 @@ Supports two messaging modes:
 
 import json
 import logging
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from functools import lru_cache
 from typing import Any
 

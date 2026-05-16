@@ -28,11 +28,11 @@ child messages, drops the child table, and restores the old columns.
 
 Data-migration batch size: 500 conversation_ids per iteration.
 """
-from typing import Sequence, Union
+from collections.abc import Sequence
 from uuid import uuid4
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 from sqlalchemy.dialects import postgresql
 
 # ---------------------------------------------------------------------------
@@ -40,9 +40,9 @@ from sqlalchemy.dialects import postgresql
 # ---------------------------------------------------------------------------
 
 revision: str = "n4o5p6q7r8s9"
-down_revision: Union[str, None] = "m3n4o5p6q7r8"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = "m3n4o5p6q7r8"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 # ---------------------------------------------------------------------------
 # Helpers

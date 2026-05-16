@@ -9,6 +9,7 @@ import logging
 import os
 import signal
 import sys
+from datetime import UTC
 from time import perf_counter
 from typing import Any
 from uuid import UUID
@@ -185,7 +186,8 @@ async def _persist_assistant_message(conversation_id: str | None, content: str |
     if not conversation_id or not content:
         return
 
-    from datetime import datetime, timezone
+    from datetime import datetime
+
     from sqlalchemy import func, select
 
     from database.connection import get_async_session
@@ -213,7 +215,7 @@ async def _persist_assistant_message(conversation_id: str | None, content: str |
         if dup_result.scalar_one_or_none() is not None:
             return
 
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         session.add(
             ConversationMessage(
                 conversation_history_id=parent.id,

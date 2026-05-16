@@ -10,8 +10,8 @@ Test mock paths (agent.services.availability_service.*) remain unchanged.
 
 from agent.services.availability_service import (
     get_available_slots,
-    is_holiday,
     get_calendar_events_for_range,
+    is_holiday,
 )
 
 __all__ = [

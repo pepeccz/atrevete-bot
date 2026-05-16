@@ -5,17 +5,16 @@ Revises: c4f7e6d9a2b1
 Create Date: 2025-11-20 09:53:49.824209
 
 """
-from typing import Sequence, Union
+from collections.abc import Sequence
 
-from alembic import op
 import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = '62769e850a51'
-down_revision: Union[str, None] = 'c4f7e6d9a2b1'
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = 'c4f7e6d9a2b1'
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
@@ -29,11 +28,25 @@ def upgrade() -> None:
     # Add chatwoot_conversation_id to customers
     op.add_column('customers', sa.Column('chatwoot_conversation_id', sa.String(length=50), nullable=True))
 
-    # Update AppointmentStatus enum values
-    # NOTE: This requires manual ALTER TYPE for PostgreSQL enums
-    op.execute("ALTER TYPE appointment_status RENAME VALUE 'provisional' TO 'pending'")
-    op.execute("ALTER TYPE appointment_status ADD VALUE IF NOT EXISTS 'no_show'")
+    # Update AppointmentStatus enum values.
+    # ALTER TYPE ADD VALUE cannot run inside a transaction in PostgreSQL, AND the
+    # new value cannot be used in the same transaction it was added in. Since
+    # env.py runs all migrations inside a single connectable.begin() transaction,
+    # a later migration (b0c1d2e3f4a5) that uses 'no_show' in an EXCLUDE
+    # constraint WHERE clause fails on fresh DBs with UnsafeNewEnumValueUsage.
+    # Pattern: bypass SQLAlchemy's transaction by toggling autocommit on the
+    # raw DBAPI connection — same approach used in b0c1d2e3f4a5 for 'hold'.
+    conn = op.get_bind()
+    raw_conn = conn.connection
+    old_autocommit = raw_conn.autocommit
+    raw_conn.autocommit = True
+
+    with raw_conn.cursor() as cur:
+        cur.execute("ALTER TYPE appointment_status RENAME VALUE 'provisional' TO 'pending'")
+        cur.execute("ALTER TYPE appointment_status ADD VALUE IF NOT EXISTS 'no_show'")
     # Remove 'expired' value - not directly supported, but since it's not used we can leave it
+
+    raw_conn.autocommit = old_autocommit
 
     # Add partial indexes for worker queries
     op.execute("""

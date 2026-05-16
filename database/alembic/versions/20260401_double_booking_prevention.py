@@ -23,8 +23,8 @@ DOWNGRADE NOTE:
   btree_gist extension is not dropped (may be shared with other constraints).
 """
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "b0c1d2e3f4a5"

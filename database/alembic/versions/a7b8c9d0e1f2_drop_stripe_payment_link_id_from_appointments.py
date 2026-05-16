@@ -18,8 +18,8 @@ The count must be 0 before dead-code removal (T8).  This migration itself
 is safe regardless of that count — it only touches the appointments table.
 """
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "a7b8c9d0e1f2"

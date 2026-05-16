@@ -11,8 +11,8 @@ stripe_invoice_id for fast lookup. All columns are nullable for backward
 compatibility with existing invoices.
 """
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision = "c1d2e3f4g5h6"

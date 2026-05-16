@@ -14,8 +14,7 @@ Key Features:
 import logging
 from pathlib import Path
 
-from groq import AsyncGroq
-from groq import RateLimitError, APIError
+from groq import APIError, AsyncGroq, RateLimitError
 
 from shared.config import get_settings
 

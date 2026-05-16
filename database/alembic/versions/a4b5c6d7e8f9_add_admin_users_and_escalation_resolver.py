@@ -19,7 +19,6 @@ Generate hash with: python -c "import bcrypt; print(bcrypt.hashpw(b'your_pw', bc
 from __future__ import annotations
 
 import os
-from typing import Union
 from uuid import uuid4
 
 import sqlalchemy as sa
@@ -27,7 +26,7 @@ from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "a4b5c6d7e8f9"
-down_revision: Union[str, None] = "a3b4c5d6e7f8"
+down_revision: str | None = "a3b4c5d6e7f8"
 branch_labels = None
 depends_on = None
 

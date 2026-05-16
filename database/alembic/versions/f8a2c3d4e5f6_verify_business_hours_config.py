@@ -5,18 +5,17 @@ Revises: 62769e850a51
 Create Date: 2025-11-26 10:30:00.000000
 
 """
-from typing import Sequence, Union
 import logging
+from collections.abc import Sequence
 
 from alembic import op
-import sqlalchemy as sa
 from sqlalchemy import text
 
 # revision identifiers, used by Alembic.
 revision: str = 'f8a2c3d4e5f6'
-down_revision: Union[str, None] = '62769e850a51'
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = '62769e850a51'
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 # Configure logging
 logger = logging.getLogger('alembic.runtime.migration')

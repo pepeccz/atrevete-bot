@@ -143,7 +143,7 @@ async def seed_business_hours() -> None:
 
         # Commit all changes
         await session.commit()
-        print(f"\n✓ Seeding complete!")
+        print("\n✓ Seeding complete!")
         print(f"  Created: {created_count} entries")
         print(f"  Updated: {updated_count} entries")
         print(f"  Total: {len(BUSINESS_HOURS_DATA)} days configured")

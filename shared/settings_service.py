@@ -23,17 +23,16 @@ Usage:
     await service.update("confirmation_hours_before", 72, changed_by="admin@example.com")
 """
 import asyncio
-from datetime import datetime, timezone
+import logging
+from datetime import UTC, datetime
 from typing import Any
-from uuid import UUID, uuid4
+from uuid import uuid4
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
-import logging
-
-from database.models import SystemSetting, SystemSettingsHistory, SettingValueType
+from database.models import SettingValueType, SystemSetting, SystemSettingsHistory
 from shared.config import get_settings
 
 logger = logging.getLogger(__name__)
@@ -119,7 +118,7 @@ class SettingsService:
         """Check if cached value is still valid."""
         if key not in self._cache:
             return False
-        return datetime.now(timezone.utc) < self._cache[key]["expires_at"]
+        return datetime.now(UTC) < self._cache[key]["expires_at"]
 
     async def get(self, key: str, default: Any = None) -> Any:
         """
@@ -157,10 +156,10 @@ class SettingsService:
                 self._cache[key] = {
                     "value": typed_value,
                     "setting": setting,
-                    "expires_at": datetime.now(timezone.utc).timestamp() + CACHE_TTL_SECONDS,
+                    "expires_at": datetime.now(UTC).timestamp() + CACHE_TTL_SECONDS,
                 }
                 self._cache[key]["expires_at"] = datetime.fromtimestamp(
-                    self._cache[key]["expires_at"], tz=timezone.utc
+                    self._cache[key]["expires_at"], tz=UTC
                 )
 
             return typed_value
@@ -260,7 +259,7 @@ class SettingsService:
 
             # Update the setting
             setting.value = value
-            setting.updated_at = datetime.now(timezone.utc)
+            setting.updated_at = datetime.now(UTC)
             setting.updated_by = changed_by
 
             # Create audit trail entry

@@ -14,18 +14,18 @@ All models use:
 - Proper indexes and constraints
 """
 
-from datetime import date, datetime, time, timezone
+from datetime import UTC, date, datetime, time
 from decimal import Decimal
 from enum import Enum as PyEnum
-from typing import Any, Optional
+from typing import Optional
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
     ARRAY,
-    BigInteger,
     DATE,
     TIME,
     TIMESTAMP,
+    BigInteger,
     Boolean,
     CheckConstraint,
     ForeignKey,
@@ -35,13 +35,13 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
-    text,
     func,
+    text,
 )
 from sqlalchemy import (
     Enum as SQLEnum,
 )
-from sqlalchemy.dialects.postgresql import JSONB, ENUM as PG_ENUM
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -198,14 +198,14 @@ class Stylist(Base):
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=func.now(),
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
         nullable=False,
     )
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=func.now(),
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
         nullable=False,
     )
 
@@ -287,7 +287,7 @@ class Customer(Base):
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=func.now(),
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
         nullable=False,
     )
 
@@ -354,14 +354,14 @@ class Service(Base):
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=func.now(),
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
         nullable=False,
     )
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=func.now(),
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
         nullable=False,
     )
 
@@ -450,7 +450,7 @@ class Appointment(Base):
     # Note: The excl_no_overlap GIST exclusion constraint is created via raw DDL migration
     # (database/alembic/versions/20260401_double_booking_prevention.py) because Alembic
     # autogenerate cannot express functional EXCLUDE USING GIST constraints.
-    hold_expires_at: Mapped[Optional[datetime]] = mapped_column(
+    hold_expires_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True, default=None
     )
 
@@ -503,14 +503,14 @@ class Appointment(Base):
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=func.now(),
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
         nullable=False,
     )
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=func.now(),
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
         nullable=False,
     )
 
@@ -595,14 +595,14 @@ class Policy(Base):
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=func.now(),
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
         nullable=False,
     )
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=func.now(),
-        default=lambda: datetime.now(timezone.utc),
-        onupdate=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
         nullable=False,
     )
 
@@ -628,7 +628,7 @@ class ConversationHistory(Base):
     id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
 
     # Foreign key to customer (nullable — allows conversations before customer is identified)
-    customer_id: Mapped[Optional[UUID]] = mapped_column(
+    customer_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("customers.id", ondelete="CASCADE"),
         nullable=True,
@@ -642,17 +642,17 @@ class ConversationHistory(Base):
     )
 
     # Conversation-level timing
-    started_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
-    ended_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    ended_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
 
     # Bot-pause / resume timestamps for human-inbox takeover (FR-DB-3)
     # paused_at: set when atencion_automatica is toggled OFF (bot paused by admin)
-    paused_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    paused_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     # resumed_at: set when atencion_automatica is toggled ON (bot resumed)
-    resumed_at: Mapped[Optional[datetime]] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
+    resumed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     # context_injected_at: idempotency guard — set after graph.aupdate_state() succeeds
     # for a given resume cycle; prevents double-injection under concurrent webhooks (NFR-4)
-    context_injected_at: Mapped[Optional[datetime]] = mapped_column(
+    context_injected_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True
     )
 
@@ -660,8 +660,8 @@ class ConversationHistory(Base):
     # Lets window_service answer "is the 24h reply window open?" without a
     # round trip to Chatwoot. Treat as stale and fall back to message-timestamp
     # computation when can_reply_captured_at is NULL or older than 24h.
-    can_reply: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
-    can_reply_captured_at: Mapped[Optional[datetime]] = mapped_column(
+    can_reply: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    can_reply_captured_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True
     )
 
@@ -669,7 +669,7 @@ class ConversationHistory(Base):
     message_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     # AI-generated summary (populated by archiver / summarize_node)
-    summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Flexible metadata (node_name, escalation_reason, mode_history, etc.)
     metadata_: Mapped[dict] = mapped_column("metadata", JSONB, default=dict, nullable=False)
@@ -764,11 +764,11 @@ class ConversationMessage(Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
 
     # Optional Chatwoot correlation ID
-    chatwoot_message_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    chatwoot_message_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
 
     # Author attribution for human_agent messages — NULL for bot/user messages (FR-DB-2)
     # ON DELETE SET NULL preserves message history when admin accounts are deleted
-    author_user_id: Mapped[Optional[UUID]] = mapped_column(
+    author_user_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("admin_users.id", ondelete="SET NULL"),
         nullable=True,
@@ -779,10 +779,10 @@ class ConversationMessage(Base):
     # author_type: canonical author label for the inbox UI
     #   Values: 'bot' | 'human_agent' | 'system' | 'user'
     #   Application-layer validation only (no CHECK constraint — ADR-D5).
-    author_type: Mapped[Optional[str]] = mapped_column(String(20), nullable=True)
+    author_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     # read_at: operator read-receipt timestamp (NULL = unread)
-    read_at: Mapped[Optional[datetime]] = mapped_column(
+    read_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True
     )
 
@@ -865,7 +865,7 @@ class BusinessHours(Base):
     is_closed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     # Opening time (null if closed)
-    start_hour: Mapped[Optional[int]] = mapped_column(
+    start_hour: Mapped[int | None] = mapped_column(
         Integer,
         CheckConstraint(
             "start_hour IS NULL OR (start_hour >= 0 AND start_hour <= 23)", name="valid_start_hour"
@@ -880,7 +880,7 @@ class BusinessHours(Base):
     )
 
     # Closing time (null if closed)
-    end_hour: Mapped[Optional[int]] = mapped_column(
+    end_hour: Mapped[int | None] = mapped_column(
         Integer,
         CheckConstraint(
             "end_hour IS NULL OR (end_hour >= 0 AND end_hour <= 23)", name="valid_end_hour"
@@ -903,7 +903,7 @@ class BusinessHours(Base):
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=func.now(),
-        onupdate=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(UTC),
         nullable=False,
     )
 
@@ -1006,7 +1006,7 @@ class RecurringBlockingSeries(Base):
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=func.now(),
-        onupdate=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(UTC),
         nullable=False,
     )
 
@@ -1102,7 +1102,7 @@ class BlockingEvent(Base):
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=func.now(),
-        onupdate=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(UTC),
         nullable=False,
     )
 
@@ -1313,7 +1313,7 @@ class SystemSetting(Base):
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=func.now(),
-        onupdate=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(UTC),
         nullable=False,
     )
     updated_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
@@ -1423,7 +1423,7 @@ class GCalSyncState(Base):
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=func.now(),
-        onupdate=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(UTC),
         nullable=False,
     )
 
@@ -1492,7 +1492,7 @@ class GoogleOAuthCredential(Base):
         TIMESTAMP(timezone=True),
         nullable=False,
         server_default=func.now(),
-        onupdate=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(UTC),
     )
 
     # Constraints and indexes
@@ -1553,7 +1553,7 @@ class TokenUsage(Base):
         TIMESTAMP(timezone=True),
         nullable=False,
         server_default=func.now(),
-        onupdate=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(UTC),
     )
 
     # Constraints and indexes
@@ -1668,7 +1668,7 @@ class Invoice(Base):
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=func.now(),
-        onupdate=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(UTC),
         nullable=False,
     )
 
@@ -1743,7 +1743,7 @@ class Payment(Base):
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True),
         server_default=func.now(),
-        onupdate=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(UTC),
         nullable=False,
     )
 
@@ -1812,11 +1812,11 @@ class ConversationTurn(Base):
     latency_ms: Mapped[int] = mapped_column(Integer, nullable=False)
 
     # LLM token counts (NULL when usage_metadata is absent)
-    tokens_in: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    tokens_out: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    tokens_in: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    tokens_out: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # Tool call summaries: [{name, args, result_summary}], NULL for no-tool turns
-    tool_calls: Mapped[Optional[list]] = mapped_column(JSONB, nullable=True)
+    tool_calls: Mapped[list | None] = mapped_column(JSONB, nullable=True)
 
     # Row creation timestamp (server-set)
     created_at: Mapped[datetime] = mapped_column(
@@ -1995,7 +1995,7 @@ class ConversationNote(Base):
     )
 
     # Author — NULL when the admin_users row has been deleted
-    author_user_id: Mapped[Optional[UUID]] = mapped_column(
+    author_user_id: Mapped[UUID | None] = mapped_column(
         PGUUID(as_uuid=True),
         ForeignKey("admin_users.id", ondelete="SET NULL"),
         nullable=True,
@@ -2089,20 +2089,20 @@ class MessageAttachment(Base):
     url: Mapped[str] = mapped_column(Text, nullable=False)
 
     # Thumbnail URL when provided by Chatwoot (image thumbnails)
-    thumb_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    thumb_url: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # MIME content type — not provided by Chatwoot directly; left NULL for now
-    content_type: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    content_type: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Original filename (may be absent for WhatsApp attachments)
-    filename: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    filename: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # File size in bytes (Chatwoot file_size field)
-    size_bytes: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # Pixel dimensions — commonly NULL for WhatsApp images (not reported by Chatwoot)
-    width: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
-    height: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    width: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    height: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     # Position within the attachments array for a given message (0-indexed)
     position: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")

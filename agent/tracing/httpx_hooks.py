@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from datetime import UTC
 from pathlib import Path
 
 import httpx
@@ -77,7 +78,7 @@ def _get_or_create_unknown_ctx() -> TraceContext:
     Used when the ContextVar is not set (hook fired outside middleware scope).
     Logs a WARNING per spec R-3.
     """
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     logger.warning(
         "llm_trace: request/response hook fired with no active TraceContext "
@@ -87,7 +88,7 @@ def _get_or_create_unknown_ctx() -> TraceContext:
     )
     return TraceContext(
         conversation_id="_unknown",
-        turn_started_at=datetime.now(tz=timezone.utc),
+        turn_started_at=datetime.now(tz=UTC),
     )
 
 

@@ -112,7 +112,7 @@ async def seed_holidays() -> None:
 
         # Commit all changes
         await session.commit()
-        print(f"\n✓ Seeding complete!")
+        print("\n✓ Seeding complete!")
         print(f"  Created: {created_count} holidays")
         print(f"  Updated: {updated_count} holidays")
         print(f"  Skipped: {skipped_count} holidays (already exist)")

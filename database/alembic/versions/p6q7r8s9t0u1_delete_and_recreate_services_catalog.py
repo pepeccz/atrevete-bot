@@ -5,20 +5,17 @@ Revises: o5p6q7r8s9t0
 Create Date: 2025-03-11 00:00:00.000000
 
 """
-from typing import Sequence, Union
-from uuid import UUID
 import hashlib
+from collections.abc import Sequence
 
 from alembic import op
-import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
 from sqlalchemy.sql import text
 
 # revision identifiers, used by Alembic.
 revision: str = 'p6q7r8s9t0u1'
-down_revision: Union[str, None] = 'o5p6q7r8s9t0'
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = 'o5p6q7r8s9t0'
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 # Namespace for deterministic UUID generation (must match database/seeds/services.py)
@@ -146,31 +143,31 @@ def upgrade() -> None:
     6. Verify no orphaned appointments remain
     """
     conn = op.get_bind()
-    
+
     # =========================================================================
     # Step 1: Capture current state
     # =========================================================================
     print("→ Step 1: Capturing current services...")
-    
+
     result = conn.execute(text("""
         SELECT id, name FROM services ORDER BY name
     """))
     old_services = {row[0]: row[1] for row in result.fetchall()}
     old_service_count = len(old_services)
     print(f"  Found {old_service_count} existing services")
-    
+
     # =========================================================================
     # Step 2: Identify new service UUIDs
     # =========================================================================
     new_service_names = get_new_service_names()
     new_service_uuids = get_new_service_uuids()
     print(f"  New catalog has {len(new_service_names)} services")
-    
+
     # =========================================================================
     # Step 3: Find appointments that will be orphaned
     # =========================================================================
     print("→ Step 2: Identifying orphaned appointments...")
-    
+
     # Get all appointments with their service_ids
     result = conn.execute(text("""
         SELECT id, service_ids, first_name, last_name 
@@ -178,7 +175,7 @@ def upgrade() -> None:
         WHERE service_ids IS NOT NULL AND array_length(service_ids, 1) > 0
     """))
     appointments = result.fetchall()
-    
+
     orphaned_appointments = []
     for apt_id, service_ids, first_name, last_name in appointments:
         if service_ids:
@@ -193,14 +190,14 @@ def upgrade() -> None:
                     "customer": customer_name,
                     "service_ids": service_ids
                 })
-    
+
     print(f"  Found {len(orphaned_appointments)} appointments to delete")
-    
+
     # =========================================================================
     # Step 4: Delete orphaned appointments
     # =========================================================================
     print("→ Step 3: Deleting orphaned appointments...")
-    
+
     deleted_count = 0
     for apt in orphaned_appointments:
         conn.execute(
@@ -208,14 +205,14 @@ def upgrade() -> None:
             {"id": apt["id"]}
         )
         deleted_count += 1
-    
+
     print(f"  Deleted {deleted_count} appointments")
-    
+
     # =========================================================================
     # Step 5: Delete old services (not in new catalog)
     # =========================================================================
     print("→ Step 4: Deleting old services...")
-    
+
     # Delete services whose names are NOT in the new catalog
     deleted_services = []
     for svc_id, svc_name in old_services.items():
@@ -225,28 +222,28 @@ def upgrade() -> None:
                 {"id": svc_id}
             )
             deleted_services.append(svc_name)
-    
+
     print(f"  Deleted {len(deleted_services)} old services")
-    
+
     # =========================================================================
     # Step 6: Insert new services (with deterministic UUIDs)
     # =========================================================================
     print("→ Step 5: Inserting new services from PDF catalog...")
-    
+
     inserted_count = 0
     updated_count = 0
-    
+
     for svc in ALL_SERVICES:
         svc_uuid = generate_service_uuid(svc["name"])
         category = "HAIRDRESSING" if svc in HAIRDRESSING_SERVICES else "AESTHETICS"
-        
+
         # Check if service already exists (by UUID)
         result = conn.execute(
             text("SELECT id FROM services WHERE id = :id"),
             {"id": svc_uuid}
         )
         exists = result.fetchone() is not None
-        
+
         if exists:
             # Update existing service
             conn.execute(
@@ -285,22 +282,22 @@ def upgrade() -> None:
                 }
             )
             inserted_count += 1
-    
+
     print(f"  Inserted: {inserted_count} new services")
     print(f"  Updated: {updated_count} existing services")
-    
+
     # =========================================================================
     # Step 7: Verify no orphaned appointments remain
     # =========================================================================
     print("→ Step 6: Verifying no orphaned appointments remain...")
-    
+
     result = conn.execute(text("""
         SELECT id, service_ids 
         FROM appointments 
         WHERE service_ids IS NOT NULL AND array_length(service_ids, 1) > 0
     """))
     remaining_appointments = result.fetchall()
-    
+
     orphaned_remaining = 0
     for apt_id, service_ids in remaining_appointments:
         if service_ids:
@@ -312,12 +309,12 @@ def upgrade() -> None:
                 if not result.fetchone():
                     orphaned_remaining += 1
                     print(f"  WARNING: Appointment {apt_id} references orphaned service {sid}")
-    
+
     if orphaned_remaining == 0:
         print("  ✓ No orphaned appointments found")
     else:
         print(f"  ⚠ {orphaned_remaining} orphaned service references found")
-    
+
     # =========================================================================
     # Summary
     # =========================================================================

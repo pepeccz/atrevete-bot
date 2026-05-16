@@ -10,9 +10,9 @@ Test mock paths (agent.services.gcal_push_service.*) remain unchanged.
 
 from agent.services.gcal_push_service import (
     delete_gcal_event,
+    fire_and_forget_push_blocking_event,
     push_appointment_to_gcal,
     update_appointment_in_gcal,
-    fire_and_forget_push_blocking_event,
     update_blocking_event_in_gcal,
 )
 

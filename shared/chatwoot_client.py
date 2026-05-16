@@ -20,7 +20,6 @@ from tenacity import (
     wait_exponential,
 )
 
-from shared.circuit_breaker import call_with_breaker, chatwoot_breaker
 from shared.config import get_settings
 from shared.redis_client import get_redis_client
 

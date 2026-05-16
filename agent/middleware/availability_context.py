@@ -18,7 +18,7 @@ import json
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import date, timedelta
-from typing import ClassVar, Any
+from typing import Any, ClassVar
 from uuid import UUID
 
 from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse

@@ -10,14 +10,13 @@ Adds the conversation_turns table for per-turn observability telemetry:
 - Composite index + UNIQUE constraint on (conversation_history_id, turn_number)
 """
 
-from typing import Union
 
 import sqlalchemy as sa
 from alembic import op
 from sqlalchemy.dialects import postgresql
 
 revision: str = "z6a7b8c9d0e1"
-down_revision: Union[str, None] = "y5z6a7b8c9d0"
+down_revision: str | None = "y5z6a7b8c9d0"
 branch_labels = None
 depends_on = None
 

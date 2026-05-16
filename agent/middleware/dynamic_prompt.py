@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import ClassVar
 from zoneinfo import ZoneInfo
 
@@ -37,7 +37,7 @@ def _slot_today(now_utc: datetime | None = None) -> str:
         XML-fenced string with fecha, dia_semana, hora_local, and tz fields.
     """
     if now_utc is None:
-        now_utc = datetime.now(tz=timezone.utc)
+        now_utc = datetime.now(tz=UTC)
     local = now_utc.astimezone(_MADRID_TZ)
     fecha = local.strftime("%Y-%m-%d")
     dia_semana = _WEEKDAYS_ES[local.weekday()]

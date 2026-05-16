@@ -24,8 +24,7 @@ Usage:
 """
 
 import logging
-from datetime import datetime, date, timedelta
-from typing import Optional
+from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import select
@@ -125,7 +124,7 @@ async def is_date_closed(target_date: datetime | date) -> bool:
 async def get_next_open_date(
     start_date: datetime,
     max_search_days: int = 14
-) -> Optional[datetime]:
+) -> datetime | None:
     """
     Find the next open date starting from start_date.
 
@@ -166,7 +165,7 @@ async def get_next_open_date(
     return None
 
 
-async def validate_slot_on_open_day(slot: dict) -> tuple[bool, Optional[str]]:
+async def validate_slot_on_open_day(slot: dict) -> tuple[bool, str | None]:
     """
     Validate that a slot falls on an open day (not closed).
 
@@ -213,7 +212,7 @@ async def validate_slot_on_open_day(slot: dict) -> tuple[bool, Optional[str]]:
         return False, error_msg
 
 
-async def get_business_hours_for_day(day_of_week: int) -> Optional[dict[str, int]]:
+async def get_business_hours_for_day(day_of_week: int) -> dict[str, int] | None:
     """
     Get business hours (start/end hours) for a specific day.
 

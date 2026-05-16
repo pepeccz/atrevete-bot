@@ -17,13 +17,12 @@ set from their original creation migrations. Their ORM-side change
 is Python-only and produces no DDL.
 """
 
-from typing import Union
 
 import sqlalchemy as sa
 from alembic import op
 
 revision: str = "c9d0e1f2g3h4"
-down_revision: Union[str, None] = "z6a7b8c9d0e1"
+down_revision: str | None = "z6a7b8c9d0e1"
 branch_labels = None
 depends_on = None
 
