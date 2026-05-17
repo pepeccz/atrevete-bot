@@ -30,12 +30,17 @@ def _is_running_in_docker() -> bool:
     return False
 
 
+# Only override DATABASE_URL/REDIS_URL when:
+#   1. The caller has NOT already exported them (CI sets them explicitly)
+#   2. AND we are not running inside Docker (where hostnames like 'postgres' resolve)
+# This preserves CI-provided values (e.g. postgres:postgres@localhost in GitHub
+# Actions) while still giving local pytest runs sensible defaults.
 if not _is_running_in_docker():
-    # Only override when running locally (not in Docker)
-    os.environ["DATABASE_URL"] = (
-        "postgresql+asyncpg://atrevete:changeme_min16chars_secure_password@localhost:5432/atrevete_db"
+    os.environ.setdefault(
+        "DATABASE_URL",
+        "postgresql+asyncpg://atrevete:changeme_min16chars_secure_password@localhost:5432/atrevete_db",
     )
-    os.environ["REDIS_URL"] = "redis://localhost:6379/0"
+    os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 
 
 # ---------------------------------------------------------------------------
