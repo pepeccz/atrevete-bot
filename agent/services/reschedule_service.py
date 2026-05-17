@@ -422,7 +422,6 @@ async def execute_reschedule(
             # Snapshot old values for the result and GCal call
             old_start_time = appointment.start_time
             old_gcal_event_id = appointment.google_calendar_event_id
-            old_stylist_id = appointment.stylist_id
 
             # Perform in-place UPDATE
             appointment.start_time = new_start_time

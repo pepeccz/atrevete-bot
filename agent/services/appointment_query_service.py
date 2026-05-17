@@ -27,12 +27,11 @@ from database.models import (
     Customer,
     Service,
 )
+from shared.date_format import format_date_spanish
 
 logger = logging.getLogger(__name__)
 
 MADRID_TZ = ZoneInfo("Europe/Madrid")
-
-from shared.date_format import format_date_spanish
 
 
 @dataclass

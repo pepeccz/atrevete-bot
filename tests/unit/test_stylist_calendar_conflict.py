@@ -3,7 +3,7 @@ Tests for stylist calendar conflict handling in admin routes.
 
 This module tests the calendar conflict validation implemented for the fix-stylist-calendar-linking change:
 - _check_calendar_conflict() helper
-- _build_calendar_conflict_error() helper  
+- _build_calendar_conflict_error() helper
 - _is_unique_constraint_violation() helper
 - Conflict handling in create_stylist, update_stylist, and assign_stylist_calendar endpoints
 - IntegrityError remapping for race conditions

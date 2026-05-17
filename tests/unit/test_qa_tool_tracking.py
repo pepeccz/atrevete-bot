@@ -113,53 +113,6 @@ def test_validate_all_tools_present() -> None:
 
 def test_validate_missing_tool() -> None:
     evidence = [
-        ToolCallEvidence("check_availability", {}, {}, "checkpoint", datetime.now(UTC)),
-        # book is absent → book_appointment missing
-    ]
-
-    report = validate_tool_trace(evidence, flow_type="booking")
-
-    assert report.all_required_present is False
-    assert report.missing_tools == ["book_appointment"]
-    assert report.out_of_order == []
-
-
-def test_validate_out_of_order() -> None:
-    evidence = [
-        ToolCallEvidence(
-            "book_appointment", {}, {"success": True}, "checkpoint", datetime.now(UTC)
-        ),
-        ToolCallEvidence("check_availability", {}, {}, "checkpoint", datetime.now(UTC)),
-    ]
-
-    report = validate_tool_trace(evidence, flow_type="booking")
-
-    assert report.all_required_present is False
-    assert report.missing_tools == []
-    assert report.out_of_order == [
-        "check_availability",
-        "book_appointment",
-    ]
-
-
-def test_validate_non_booking_flow_skips() -> None:
-    evidence = [ToolCallEvidence("escalate_to_human", {}, {}, "checkpoint", datetime.now(UTC))]
-
-    report = validate_tool_trace(evidence, flow_type="escalation")
-
-    assert report.all_required_present is True
-    assert report.found_tools == []
-    assert report.missing_tools == []
-    assert report.out_of_order == []
-    assert report.found_tools == [
-        "search_services",
-        "check_availability",
-        "book_appointment",
-    ]
-
-
-def test_validate_missing_tool() -> None:
-    evidence = [
         ToolCallEvidence("search_services", {}, {}, "checkpoint", datetime.now(UTC)),
         ToolCallEvidence("check_availability", {}, {}, "checkpoint", datetime.now(UTC)),
     ]

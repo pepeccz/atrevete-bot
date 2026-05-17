@@ -60,7 +60,31 @@ ignore = [
     "E501",  # line too long, handled by black
     "B008",  # do not perform function calls in argument defaults
     "C901",  # too complex
+    # The rules below are intentionally relaxed for this codebase:
+    "B904",  # raise ... from err — bulk legacy across api/routes/admin.py; tracked, will fix gradually
+    "B007",  # unused loop control variable — common idiom (for _, v in items())
+    "E712",  # == True/False — SQLAlchemy ORM columns require literal comparison
+    "UP042", # class X(str, Enum) — serialization pattern; StrEnum migration not adopted yet
+    "C401",  # unnecessary generator — pure style preference
+    "C408",  # unnecessary dict() call — pure style preference
+    "C416",  # unnecessary comprehension — pure style preference
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# QA investigation scripts are throwaway by nature — unused vars and import-order
+# warnings would just create churn. Whitespace tolerance for the same reason.
+"tests/e2e/qa_*.py" = ["F841", "E402", "W291", "W293", "E741", "B007"]
+"tests/e2e/run_qa_*.py" = ["F841", "E402", "W291", "W293", "E741"]
+"tests/e2e/harness/run_qa_*.py" = ["F841", "E402", "W291", "W293", "E741"]
+"tests/qa_*.py" = ["F841", "E402", "W291", "W293", "E741", "F811"]
+"tests/qa_run_*.py" = ["F841", "E402", "W291", "W293", "E741"]
+# Alembic migration files: trailing whitespace in long SQL string literals is acceptable.
+"database/alembic/versions/*.py" = ["W291", "W293", "E501", "B007", "F841"]
+# Maintenance scripts often pre-declare variables for debug visibility.
+"database/scripts/*.py" = ["F841"]
+"scripts/*.py" = ["F841", "B007"]
+# Test fixtures sometimes pre-allocate variables for clarity or future use.
+"tests/**/*.py" = ["F841", "E741", "E402", "B017"]
 
 [tool.mypy]
 python_version = "3.11"

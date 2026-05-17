@@ -121,7 +121,9 @@ async def list_services(
     tasks = [get_container_status(container) for container in CONTAINER_MAP.values()]
     results = await asyncio.gather(*tasks)
 
-    for (service_name, container_name), status_info in zip(CONTAINER_MAP.items(), results):
+    for (service_name, container_name), status_info in zip(
+        CONTAINER_MAP.items(), results, strict=True
+    ):
         services.append(
             ServiceStatus(
                 name=service_name,
@@ -216,13 +218,13 @@ async def stream_logs(
                                         escaped_line = line.replace("\n", "\\n")
                                         yield f"data: {escaped_line}\n\n"
                                     offset += 8 + size
-                            except Exception as e:
+                            except Exception:
                                 # Fallback: try to decode entire chunk
                                 try:
                                     text = chunk.decode("utf-8", errors="replace").strip()
                                     if text:
                                         yield f"data: {text}\n\n"
-                                except:
+                                except (UnicodeDecodeError, AttributeError):
                                     pass
         except httpx.ConnectError:
             yield "data: Error: Cannot connect to Docker daemon\n\n"

@@ -11,6 +11,7 @@ import asyncio
 import logging
 import re
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 from urllib.parse import quote
 from uuid import UUID, uuid4
 
@@ -18,6 +19,9 @@ from langchain_core.tools import tool
 
 from agent.services.customer_memory_service import read_customer_memories, write_customer_memories
 from agent.tools.schemas import ToolResponse
+
+if TYPE_CHECKING:
+    from database.models import Customer
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +106,7 @@ async def _get_or_create_customer(
     phone: str,
     first_name: str,
     last_name: str | None,
-) -> "Customer":  # type: ignore[name-defined]
+) -> "Customer":
     """
     Look up customer by phone. If not found, create and flush (no commit yet).
     Returns the Customer ORM object.
