@@ -1,14 +1,16 @@
 """Core billing service — invoice generation, voiding, estimates, and overdue checks."""
 
 import logging
-from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal, ROUND_HALF_UP
+from datetime import UTC, date, datetime, timedelta
+from decimal import ROUND_HALF_UP, Decimal
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import select, func
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.services.pdf_service import PdfService
+from api.services.stripe_service import StripeService
 from database.models import (
     Invoice,
     InvoiceStatus,
@@ -17,8 +19,6 @@ from database.models import (
     TokenUsage,
 )
 from shared.config import get_settings
-from api.services.pdf_service import PdfService
-from api.services.stripe_service import StripeService
 from shared.email_service import EmailService
 
 logger = logging.getLogger(__name__)
@@ -61,7 +61,7 @@ class BillingService:
         - Email failure → silent (log only)
         """
         settings = get_settings()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         # 1. Validate period — reject future months
         if year > now.year or (year == now.year and month > now.month):
@@ -130,7 +130,7 @@ class BillingService:
         invoice_number = await self._next_invoice_number(session, year, month)
 
         # Due date: 30 days from issue
-        issued_at = datetime.now(timezone.utc)
+        issued_at = datetime.now(UTC)
         due_date = (issued_at + timedelta(days=30)).date()
 
         # 6. Create Invoice DB row (draft)
@@ -324,7 +324,7 @@ class BillingService:
     async def get_current_estimate(self, session: AsyncSession) -> dict:
         """Get current month's running total estimate."""
         settings = get_settings()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         year, month = now.year, now.month
 
         # Query current month token usage

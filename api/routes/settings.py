@@ -10,20 +10,18 @@ Provides REST endpoints for:
 """
 
 import logging
-from datetime import datetime
-
-import httpx
 from typing import Annotated, Any
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
 from api.dependencies.auth import require_permission
 from database.models import AdminUser
 from shared.settings_service import (
-    get_settings_service,
     SettingNotFoundError,
     SettingValidationError,
+    get_settings_service,
 )
 
 logger = logging.getLogger(__name__)

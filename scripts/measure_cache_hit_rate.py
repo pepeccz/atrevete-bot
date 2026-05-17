@@ -71,7 +71,6 @@ import sys
 from pathlib import Path
 from typing import Any
 
-
 # ---------------------------------------------------------------------------
 # Core extraction logic — pure functions for testability
 # ---------------------------------------------------------------------------

@@ -18,10 +18,10 @@ from pathlib import Path
 # Add project root to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 
 from database.connection import get_async_session
-from database.models import Stylist, ServiceCategory
+from database.models import ServiceCategory, Stylist
 from database.seeds.stylists import STYLISTS_DATA  # single source of truth
 
 # Derive the canonical slug set from STYLISTS_DATA for deactivation filtering
