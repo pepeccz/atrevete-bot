@@ -8,9 +8,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from shared.redis_client import INCOMING_STREAM
 from tests.e2e.conftest import qa_run_identity as qa_run_identity_fixture
 from tests.e2e.harness.redis_harness import RedisTestHarness
-from shared.redis_client import INCOMING_STREAM
 from tests.e2e.harness.run_models import QARunIdentity
 from tests.e2e.harness.state_reset import ProtectedDataError, safe_delete_customer
 
@@ -193,7 +193,7 @@ async def test_execute_turn_can_return_timeout_evidence_without_raising() -> Non
 
 
 def test_two_runs_different_phones() -> None:
-    identity_factory = getattr(qa_run_identity_fixture, "__wrapped__")
+    identity_factory = qa_run_identity_fixture.__wrapped__
 
     identity_one = identity_factory(_DummyRequest("qa-first-run"))
     identity_two = identity_factory(_DummyRequest("qa-second-run"))

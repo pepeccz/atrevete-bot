@@ -8,6 +8,8 @@ import pytest
 from tests.e2e.harness.context_manager import (
     AdaptivePersona,
     Milestone,
+)
+from tests.e2e.harness.context_manager import (
     TestingContextManager as ContextManager,
 )
 from tests.e2e.harness.redis_harness import (

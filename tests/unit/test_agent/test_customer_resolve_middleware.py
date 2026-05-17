@@ -4,8 +4,9 @@ When _lookup_customer returns None but state.customer_phone is set, the middlewa
 MUST inject a '## Cliente\n- Teléfono: {phone}' block into the system prompt.
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 
 def _make_request(state: dict, system_content: str = "base system"):

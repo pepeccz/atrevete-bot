@@ -99,7 +99,7 @@ async def run_qa() -> dict:
 
     conversation_id = str(uuid.uuid4())
     print(f"\n{'='*70}")
-    print(f"QA FINAL RUN — All Fixes + Hardened Error Handling (commit 5257dfc)")
+    print("QA FINAL RUN — All Fixes + Hardened Error Handling (commit 5257dfc)")
     print(f"conversation_id: {conversation_id}")
     print(f"Timestamp: {datetime.now(UTC).isoformat()}")
     print(f"{'='*70}\n")
@@ -215,7 +215,7 @@ async def run_qa() -> dict:
                 "pass": found_any,
             })
             if found_any:
-                print(f"  ✅ OK: Response contains booking confirmation keyword")
+                print("  ✅ OK: Response contains booking confirmation keyword")
             else:
                 print(f"  ❌ FAIL: Response missing booking confirmation keywords: {critical}")
                 turn_pass = False
@@ -357,7 +357,7 @@ def main():
     print("QA FINAL REPORT SUMMARY")
     print("="*70)
     print(f"\nOverall Result: {report['overall_result']}")
-    print(f"\nFix Verification:")
+    print("\nFix Verification:")
     for fix, result in report["fix_verification"].items():
         if result == "PASS":
             icon = "✅"
@@ -371,12 +371,12 @@ def main():
             icon = "ℹ️"
         print(f"  {icon} {fix}: {result}")
 
-    print(f"\nFinal State:")
+    print("\nFinal State:")
     fs = report["final_state_summary"]
     for k, v in fs.items():
         print(f"  {k}: {v}")
 
-    print(f"\nTurn Summary:")
+    print("\nTurn Summary:")
     for t in report["turns"]:
         icon = "✅" if t["pass"] else "❌"
         response_preview = (t["agent_response"] or "")[:100]
@@ -395,7 +395,7 @@ def main():
             clean_turns.append(clean_t)
         clean_report["turns"] = clean_turns
         json.dump(clean_report, f, indent=2, default=str)
-    print(f"\nJSON report saved to /tmp/qa_final_all_fixes_report.json")
+    print("\nJSON report saved to /tmp/qa_final_all_fixes_report.json")
 
     return 0 if report["overall_result"] == "PASS" else 1
 

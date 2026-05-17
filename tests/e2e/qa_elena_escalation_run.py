@@ -21,11 +21,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 import redis.asyncio as redis
 
 from shared.config import get_settings
-from shared.redis_client import INCOMING_STREAM
 from tests.e2e.harness.redis_harness import RedisTestHarness
-from tests.e2e.harness.run_models import QARunIdentity, QARunSession
+from tests.e2e.harness.run_models import QARunIdentity
 from tests.e2e.harness.state_reset import StateResetHarness
-
 
 # ── Persona & Flow ────────────────────────────────────────────────────────────
 
@@ -213,7 +211,7 @@ async def run_escalation_qa() -> dict[str, Any]:
     )
 
     print(f"\n{'='*60}")
-    print(f"QA RUN: escalation / elena_escalation_client")
+    print("QA RUN: escalation / elena_escalation_client")
     print(f"conversation_id : {conversation_id}")
     print(f"customer_phone  : {customer_phone}")
     print(f"max_turns       : {FLOW['max_turns']}")
@@ -310,7 +308,7 @@ async def run_escalation_qa() -> dict[str, Any]:
         except TimeoutError:
             timed_out = True
             latency_ms = 60000
-            print(f"         ← Bot: TIMEOUT (60s)")
+            print("         ← Bot: TIMEOUT (60s)")
             # First timeout: send follow-up
             if not any(t.get("timed_out") for t in turns):
                 current_message = "Hola? Siguen ahi?"
@@ -475,7 +473,7 @@ async def main() -> None:
     result = await run_escalation_qa()
 
     print(f"\n{'='*60}")
-    print(f"RESULT SUMMARY")
+    print("RESULT SUMMARY")
     print(f"{'='*60}")
     print(f"outcome          : {result['outcome']}")
     print(f"termination      : {result['termination_reason']}")
@@ -483,7 +481,7 @@ async def main() -> None:
     print(f"total_turns      : {result['total_turns']}")
     print(f"total_duration_ms: {result['total_duration_ms']}")
     print(f"bugs_found       : {len(result['bugs_summary'])}")
-    print(f"\nTURN TRACE:")
+    print("\nTURN TRACE:")
     for t in result["turns"]:
         status = "⏱" if t["timed_out"] else "✓"
         print(f"  {status} T{t['turn_number']}: milestone={t['milestone_reached']} | status={t['flow_status']}")

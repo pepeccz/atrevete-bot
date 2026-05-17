@@ -206,8 +206,9 @@ async def test_g3_date_violates_advance_policy():
 @pytest.mark.asyncio
 async def test_g3_date_exactly_at_min_boundary_passes():
     """G3 boundary: date_iso == ref_date + MIN_BOOKING_DAYS (boundary is inclusive) → ok."""
-    from agent.tools._booking_validators import validate_booking_date
     from datetime import timedelta
+
+    from agent.tools._booking_validators import validate_booking_date
 
     min_date = REF_DATE + timedelta(days=MIN_BOOKING_DAYS)
 
@@ -302,8 +303,9 @@ async def test_ref_date_injectable_deterministic():
 @pytest.mark.asyncio
 async def test_g3_payload_contains_min_date_value():
     """G3: payload min_date must be ref_date + MIN_BOOKING_DAYS as ISO string."""
-    from agent.tools._booking_validators import validate_booking_date
     from datetime import timedelta
+
+    from agent.tools._booking_validators import validate_booking_date
 
     expected_min = REF_DATE + timedelta(days=MIN_BOOKING_DAYS)
 
@@ -329,8 +331,9 @@ async def test_g3_payload_contains_min_date_value():
 @pytest.mark.asyncio
 async def test_manana_regression_resolver_succeeds():
     """Regression: date_text='mañana' with resolver returning ref+1 → ok, date_iso=ref+1."""
-    from agent.tools._booking_validators import validate_booking_date
     from datetime import timedelta
+
+    from agent.tools._booking_validators import validate_booking_date
 
     tomorrow = REF_DATE + timedelta(days=1)
 

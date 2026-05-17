@@ -318,7 +318,7 @@ async def run_qa():
         # ── Flow termination ─────────────────────────────────────────────────
         if booking_done:
             flow_complete = True
-            print(f"Carlos (final ack): Perfecto, gracias!")
+            print("Carlos (final ack): Perfecto, gracias!")
             ack_payload = {
                 "conversation_id": conversation_id,
                 "customer_phone": CUSTOMER_PHONE,

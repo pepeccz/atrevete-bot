@@ -14,11 +14,9 @@ All tests use fakeredis.aioredis.FakeRedis — no live Redis.
 from __future__ import annotations
 
 import json
-import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -120,7 +118,6 @@ async def test_cache_miss_calls_db_then_setex():
 @pytest.mark.asyncio
 async def test_redis_get_error_falls_through_to_db(caplog):
     """When Redis GET fails, _get_cached_customer returns None (fail-open), DB is called, result returned."""
-    import fakeredis.aioredis as fakeredis
 
     # Simulate a Redis client where get() raises
     bad_redis = MagicMock()
@@ -133,7 +130,9 @@ async def test_redis_get_error_falls_through_to_db(caplog):
             new=AsyncMock(return_value=CUSTOMER_DICT),
         ) as mock_lookup,
     ):
-        from agent.middleware.customer_resolve import _get_cached_customer, CustomerResolveMiddleware
+        from agent.middleware.customer_resolve import (
+            _get_cached_customer,
+        )
 
         # _get_cached_customer must return None (fail-open), not raise
         result = await _get_cached_customer(PHONE)

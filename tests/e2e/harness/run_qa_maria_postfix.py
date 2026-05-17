@@ -140,7 +140,7 @@ async def run_qa():
     settings = get_settings()
     conversation_id = str(uuid.uuid4())
     print(f"\n{'='*60}")
-    print(f"QA Post-Fix Retest — María García Happy Path")
+    print("QA Post-Fix Retest — María García Happy Path")
     print(f"Persona: {PERSONA_NAME} | Phone: {PHONE}")
     print(f"Conversation ID: {conversation_id}")
     print(f"Started: {datetime.now(UTC).isoformat()}")
@@ -285,7 +285,7 @@ async def main():
         "checks": checks,
         "turns": turns,
     }
-    print(f"\n--- STRUCTURED RESULT ---")
+    print("\n--- STRUCTURED RESULT ---")
     print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
     return result
 

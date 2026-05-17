@@ -16,10 +16,9 @@ No real DB or GCal network access — all dependencies are mocked.
 from __future__ import annotations
 
 import contextlib
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -6,10 +6,9 @@ Flow: escalation
 
 import asyncio
 import json
+import sys
 import time
 import uuid
-import sys
-import os
 
 sys.path.insert(0, "/home/pcabeza/Proyectos/atrevete-bot")
 
@@ -32,7 +31,7 @@ RESPONSE_TIMEOUT = 60  # seconds
 
 
 async def main():
-    print(f"[QA] Starting escalation flow run")
+    print("[QA] Starting escalation flow run")
     print(f"[QA] conversation_id = {CONVERSATION_ID}")
     print(f"[QA] customer_phone  = {CUSTOMER_PHONE}")
     print()
@@ -69,7 +68,7 @@ async def main():
             async for msg in pubsub.listen():
                 if msg["type"] == "subscribe":
                     break
-    except asyncio.TimeoutError:
+    except TimeoutError:
         pass
 
     turns = []
@@ -107,7 +106,7 @@ async def main():
                                         return v.get("message", v.get("text", ""))
                         except (json.JSONDecodeError, AttributeError):
                             pass
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 return None
 
     # =========================================================
@@ -166,7 +165,7 @@ async def main():
         bot_reply = None
         try:
             bot_reply = await capture_response(timeout=RESPONSE_TIMEOUT)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             bot_reply = None
 
         t_recv = time.time()

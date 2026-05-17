@@ -9,9 +9,8 @@ TDD cycle: these tests were written BEFORE the production module exists.
 
 from __future__ import annotations
 
-import pytest
 import fakeredis.aioredis as fakeredis_async
-
+import pytest
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -268,7 +267,8 @@ async def test_cleanup_captures_scan_error_does_not_raise():
     WHEN cleanup is called
     THEN errors list is populated, no exception propagates, total_deleted=0.
     """
-    from unittest.mock import AsyncMock, MagicMock
+    from unittest.mock import MagicMock
+
     from shared.redis_conversation_cleanup import cleanup_conversation_redis_keys
 
     mock_redis = MagicMock()

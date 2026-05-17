@@ -18,7 +18,6 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import sys
 import time
 import uuid
 from datetime import UTC, datetime
@@ -106,7 +105,7 @@ def check_greeting_dedup(text: str, turn_number: int) -> None:
             )
         else:
             BUG_CHECKS["BUG-006"]["status"] = "PASS"
-            BUG_CHECKS["BUG-006"]["evidence"] = f"T1: Single greeting detected"
+            BUG_CHECKS["BUG-006"]["evidence"] = "T1: Single greeting detected"
     elif turn_number > 1 and hola_count >= 1:
         # Greeting repeated after T1 — suspicious
         BUG_CHECKS["BUG-006"]["status"] = "FAIL"
@@ -310,9 +309,9 @@ async def run_qa_flow() -> dict[str, Any]:
     sender_name = "María QA R4"
     run_started_at = datetime.now(UTC)
 
-    log.info(f"=== QA ROUND 4 — booking_complete / maria_new_client ===")
+    log.info("=== QA ROUND 4 — booking_complete / maria_new_client ===")
     log.info(f"conversation_id={conversation_id}  phone={customer_phone}")
-    log.info(f"Commit: 31deed9")
+    log.info("Commit: 31deed9")
 
     redis_client = await aioredis.from_url(
         REDIS_URL,
@@ -546,7 +545,7 @@ def evaluate_pass_fail(result: dict, appointment_count: int) -> dict[str, Any]:
         checks["BUG-001"]["evidence"] = f"DB: {appointment_count} appointment(s) created in last 1h"
     elif booking_done:
         checks["BUG-001"]["status"] = "FAIL"
-        checks["BUG-001"]["evidence"] = f"Booking completed but 0 appointments in DB"
+        checks["BUG-001"]["evidence"] = "Booking completed but 0 appointments in DB"
     else:
         checks["BUG-001"]["status"] = "FAIL"
         checks["BUG-001"]["evidence"] = "Booking never completed — appointment_in_db=false"

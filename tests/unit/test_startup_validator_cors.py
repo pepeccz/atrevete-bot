@@ -7,9 +7,9 @@ Covers the 3 cases flagged in the PR-1 verify WARNING:
 - secure=False skips the HTTPS enforcement
 """
 
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
+import pytest
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -38,7 +38,7 @@ def _make_settings(cors_origins: str, cookie_secure: bool = True) -> MagicMock:
 @pytest.mark.asyncio
 async def test_cors_wildcard_is_rejected():
     """CORS_ORIGINS='*' must cause StartupValidationError regardless of cookie_secure."""
-    from shared.startup_validator import validate_startup_config, StartupValidationError
+    from shared.startup_validator import StartupValidationError, validate_startup_config
 
     settings = _make_settings("*", cookie_secure=False)
 
@@ -58,7 +58,7 @@ async def test_cors_wildcard_is_rejected():
 @pytest.mark.asyncio
 async def test_http_origin_rejected_when_cookie_secure_true():
     """Non-HTTPS origin must fail when ADMIN_JWT_COOKIE_SECURE=True."""
-    from shared.startup_validator import validate_startup_config, StartupValidationError
+    from shared.startup_validator import StartupValidationError, validate_startup_config
 
     settings = _make_settings("http://admin.example.com", cookie_secure=True)
 
@@ -79,7 +79,7 @@ async def test_http_origin_rejected_when_cookie_secure_true():
 @pytest.mark.asyncio
 async def test_http_origin_allowed_when_cookie_secure_false():
     """Non-HTTPS origin must NOT raise when ADMIN_JWT_COOKIE_SECURE=False (dev mode)."""
-    from shared.startup_validator import validate_startup_config, StartupValidationError
+    from shared.startup_validator import StartupValidationError, validate_startup_config
 
     settings = _make_settings("http://localhost:3000", cookie_secure=False)
 

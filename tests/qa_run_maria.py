@@ -4,11 +4,11 @@ QA Test: BOOKING_COMPLETE flow with persona MARÍA (new client).
 Executes live via Redis Streams + Pub/Sub capture.
 """
 import json
-import time
-import redis
-import threading
 import subprocess
-import sys
+import threading
+import time
+
+import redis
 
 # ── Config ────────────────────────────────────────────────────────────────────
 REDIS_HOST = "localhost"
@@ -307,7 +307,7 @@ def check_booking_in_db_v2(conversation_id: str) -> tuple[bool, str]:
     try:
         # Try appointments table with different fields
         queries = [
-            f"SELECT id, created_at FROM appointments ORDER BY created_at DESC LIMIT 5;",
+            "SELECT id, created_at FROM appointments ORDER BY created_at DESC LIMIT 5;",
         ]
         for q in queries:
             cmd = [
@@ -481,7 +481,6 @@ def main():
     appointment_in_db = after_appointments != before_appointments and "row" in after_appointments.lower()
 
     # More targeted: look for timestamp close to now
-    import re
     if after_appointments:
         # Check if any appointment was created within last 5 minutes
         current_min = time.strftime("%Y-%m-%d %H:%M")

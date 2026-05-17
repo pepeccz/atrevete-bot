@@ -16,7 +16,7 @@ Follows the same pattern as tests/integration/test_token_usage_api.py:
 """
 
 import json
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -27,7 +27,6 @@ from fastapi.testclient import TestClient
 
 from api.main import app
 from api.routes.admin import get_current_user
-
 
 # =============================================================================
 # Fixtures
@@ -85,15 +84,15 @@ def _make_invoice(
     inv.total_amount_eur = Decimal("111.50")
     inv.status = MagicMock()
     inv.status.value = status
-    inv.issued_at = datetime(year, month, 1, tzinfo=timezone.utc)
+    inv.issued_at = datetime(year, month, 1, tzinfo=UTC)
     inv.paid_at = None
     inv.due_date = date(year, month, 15)
     inv.pdf_path = None
     inv.stripe_payment_intent_id = None
     inv.notes = None
     inv.payments = []
-    inv.created_at = datetime(year, month, 1, tzinfo=timezone.utc)
-    inv.updated_at = datetime(year, month, 1, tzinfo=timezone.utc)
+    inv.created_at = datetime(year, month, 1, tzinfo=UTC)
+    inv.updated_at = datetime(year, month, 1, tzinfo=UTC)
     return inv
 
 

@@ -15,7 +15,6 @@ from __future__ import annotations
 import contextlib
 from unittest.mock import AsyncMock, MagicMock, patch
 
-
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------

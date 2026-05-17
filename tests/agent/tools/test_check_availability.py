@@ -658,6 +658,7 @@ STYLIST_B = uuid4()
 async def test_each_slot_has_label_in_spanish():
     """V3-FR-01/02: every slot must have a 'label' field in Spanish format."""
     import re
+
     from agent.tools.check_availability import check_availability
 
     date_iso = future_date_iso(5)
@@ -704,6 +705,7 @@ async def test_each_slot_has_label_in_spanish():
 async def test_label_has_no_year():
     """V3-FR-02: label must not contain the year."""
     import re
+
     from agent.tools.check_availability import check_availability
 
     date_iso = future_date_iso(5)
@@ -743,9 +745,10 @@ async def test_label_has_no_year():
 @pytest.mark.asyncio
 async def test_requested_date_label_matches_date_iso():
     """V3: payload must include requested_date_label matching the requested date."""
+    from datetime import date as dt_date
+
     from agent.tools.check_availability import check_availability
     from shared.date_format import format_date_spanish
-    from datetime import date as dt_date
 
     date_iso = future_date_iso(5)
     expected_label = format_date_spanish(dt_date.fromisoformat(date_iso))

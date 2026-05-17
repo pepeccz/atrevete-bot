@@ -15,7 +15,6 @@ import asyncio
 import json
 import re
 import sys
-import time
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -70,8 +69,8 @@ async def run_qa_flow() -> dict[str, Any]:
     run_started_at = datetime.now(UTC)
 
     print(f"\n{'=' * 60}")
-    print(f"QA FLOW: booking_complete")
-    print(f"Persona: maria_new_client (María)")
+    print("QA FLOW: booking_complete")
+    print("Persona: maria_new_client (María)")
     print(f"Conversation ID: {conversation_id}")
     print(f"Phone: {customer_phone}")
     print(f"Started: {run_started_at.isoformat()}")

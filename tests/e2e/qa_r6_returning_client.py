@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sys
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -122,7 +121,7 @@ async def run_qa() -> dict[str, Any]:
 
             # Check for booking completion signals
             if any(kw in agent_lower for kw in ["turno confirmado", "reserva confirmada", "tu cita", "agendado", "te esperamos", "confirmamos"]):
-                print(f"  [QA] Booking completion detected!", flush=True)
+                print("  [QA] Booking completion detected!", flush=True)
                 booking_done = True
                 break
 

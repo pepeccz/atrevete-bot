@@ -2,12 +2,9 @@
 
 import smtplib
 from decimal import Decimal
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
+from unittest.mock import MagicMock, patch
 
 from shared.email_service import EmailService
-
 
 # =============================================================================
 # Helpers

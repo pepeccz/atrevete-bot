@@ -14,7 +14,7 @@ import asyncio
 import json
 import time
 import uuid
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 
 import redis.asyncio as aioredis
 
@@ -30,7 +30,7 @@ CUSTOMER_PHONE = "+34999000099"
 SENDER_NAME = "María García"
 
 print(f"\n{'=' * 60}")
-print(f"QA-R6 booking_complete | persona: maria_new_client")
+print("QA-R6 booking_complete | persona: maria_new_client")
 print(f"conversation_id: {CONVERSATION_ID}")
 print(f"timestamp: {datetime.now(UTC).isoformat()}")
 print(f"{'=' * 60}\n")
@@ -161,7 +161,7 @@ async def run_qa():
             break
 
         if turn_num >= 15:
-            print(f"\n⚠️  [MAX TURNS REACHED]")
+            print("\n⚠️  [MAX TURNS REACHED]")
             break
 
         # ---- Adaptive next user message ----
@@ -478,7 +478,7 @@ async def main():
 
     # ---- Print summary ----
     print(f"\n{'=' * 60}")
-    print(f"QA-R6 RESULTS — booking_complete / maria_new_client")
+    print("QA-R6 RESULTS — booking_complete / maria_new_client")
     print(f"{'=' * 60}")
     print(f"STATUS          : {status}" + (f" ({fail_reason})" if fail_reason else ""))
     print(f"Turn count      : {len(completed_turns)}/{len(turns)} (timeout={timed_out})")
@@ -487,7 +487,7 @@ async def main():
     print(f"Appointment in DB (last 1h) : {appointment_in_db} (count={db_count})")
     print(f"\nMilestones hit  : {milestones_hit}")
 
-    print(f"\n--- BOOKING STEP PROGRESSION ---")
+    print("\n--- BOOKING STEP PROGRESSION ---")
     for s in steps_seen:
         print(f"  [{s['keyword']}] × {s['count']}  | last: {s['sample'][:150]}")
 
@@ -495,7 +495,7 @@ async def main():
     for line in conv_lines[-30:]:
         print(f"  {line[:250]}")
 
-    print(f"\n--- CONVERSATION TRACE ---")
+    print("\n--- CONVERSATION TRACE ---")
     for t in turns:
         r_preview = (t.get("agent_response") or "")[:200]
         lat = t.get("response_latency_ms")
@@ -503,7 +503,7 @@ async def main():
         print(f"\n  T{t['turn_number']} USER: '{t['user_message'][:100]}'")
         print(f"  T{t['turn_number']} BOT  ({timeout_flag}): '{r_preview}'")
 
-    print(f"\n--- LAST 4000 CHARS OF AGENT LOGS ---")
+    print("\n--- LAST 4000 CHARS OF AGENT LOGS ---")
     print(log_tail)
 
     # ---- Return structured result ----
@@ -524,5 +524,5 @@ async def main():
 
 if __name__ == "__main__":
     result = asyncio.run(main())
-    print(f"\n\n=== FINAL JSON RESULT ===")
+    print("\n\n=== FINAL JSON RESULT ===")
     print(json.dumps(result, indent=2, default=str, ensure_ascii=False))

@@ -10,16 +10,17 @@ CRITICAL TESTS:
 - test_monday_is_closed(): Verifies Monday (day=0) is closed
 """
 
-import pytest
-from datetime import datetime, timedelta
+from datetime import datetime
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from shared.business_hours_validator import (
-    is_day_closed,
-    is_date_closed,
-    get_next_open_date,
-    validate_slot_on_open_day,
     get_business_hours_for_day,
+    get_next_open_date,
+    is_date_closed,
+    is_day_closed,
+    validate_slot_on_open_day,
 )
 
 MADRID_TZ = ZoneInfo("Europe/Madrid")

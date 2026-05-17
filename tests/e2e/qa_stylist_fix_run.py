@@ -11,12 +11,10 @@ Run with:
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import sys
 import time
 import uuid
-from datetime import UTC, datetime
 
 # Ensure we can import project modules
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
@@ -36,7 +34,6 @@ get_settings.cache_clear()
 import redis.asyncio as redis
 
 from tests.e2e.harness.redis_harness import RedisTestHarness
-
 
 SCENARIO_TURNS = [
     {
@@ -170,7 +167,7 @@ async def run_qa_scenario() -> dict:
     settings = get_settings()
     conversation_id = str(uuid.uuid4())
     print(f"\n{'='*70}")
-    print(f"QA Post-Fix #2: stylist_selection resolver")
+    print("QA Post-Fix #2: stylist_selection resolver")
     print(f"Conversation ID: {conversation_id}")
     print(f"Redis URL: {settings.REDIS_URL}")
     print(f"{'='*70}\n")

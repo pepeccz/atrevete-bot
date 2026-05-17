@@ -7,7 +7,6 @@ import asyncio
 import json
 import time
 import uuid
-import sys
 
 import redis.asyncio as aioredis
 
@@ -350,7 +349,7 @@ if __name__ == "__main__":
 
     # DB check
     count, raw_out, raw_err = asyncio.run(check_db())
-    print(f"\n--- DB CHECK ---")
+    print("\n--- DB CHECK ---")
     print(f"Appointments created in last 1h: {count}")
     if raw_err:
         print(f"DB stderr: {raw_err}")
@@ -378,4 +377,4 @@ if __name__ == "__main__":
             "conversation_id": trace["conversation_id"],
             "turns": trace["turns"],
         }, f, indent=2, ensure_ascii=False)
-    print(f"\nFull results saved to /tmp/qa_r6_result.json")
+    print("\nFull results saved to /tmp/qa_r6_result.json")

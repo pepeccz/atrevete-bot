@@ -7,14 +7,11 @@ Tests that the admin GET /conversations list:
 4. Returns started_at / ended_at from DB rows (not derived from messages).
 """
 
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import UTC, datetime
+from unittest.mock import MagicMock
 from uuid import uuid4
 
-import pytest
-
 from api.routes.admin import _conversation_display_name, _resolve_conversation_list_item
-
 
 # ============================================================================
 # Tests for _conversation_display_name helper
@@ -115,7 +112,7 @@ class TestResolveConversationListItem:
         row.ended_at = ended_at
         row.message_count = message_count
         row.summary = summary
-        row.created_at = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        row.created_at = datetime(2024, 1, 1, tzinfo=UTC)
         return row
 
     def test_customer_name_from_linked_customer(self):
@@ -146,7 +143,7 @@ class TestResolveConversationListItem:
 
     def test_started_at_from_db(self):
         """started_at in list item comes from DB row, not message timestamps."""
-        ts = datetime(2024, 6, 15, 10, 30, tzinfo=timezone.utc)
+        ts = datetime(2024, 6, 15, 10, 30, tzinfo=UTC)
         row = self._make_row(started_at=ts)
         item = _resolve_conversation_list_item(row)
 
@@ -154,7 +151,7 @@ class TestResolveConversationListItem:
 
     def test_ended_at_from_db(self):
         """ended_at in list item comes from DB row."""
-        ts = datetime(2024, 6, 15, 11, 0, tzinfo=timezone.utc)
+        ts = datetime(2024, 6, 15, 11, 0, tzinfo=UTC)
         row = self._make_row(ended_at=ts)
         item = _resolve_conversation_list_item(row)
 

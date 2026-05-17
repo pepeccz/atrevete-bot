@@ -6,15 +6,13 @@ running the archival worker, and verifying messages are archived to
 PostgreSQL and deleted from Redis.
 """
 
-import asyncio
 import json
 import pickle
 from datetime import datetime, timedelta
-from uuid import UUID, uuid4
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 import pytest
-import redis
 from sqlalchemy import delete, select
 
 from agent.workers.conversation_archiver import (
@@ -25,7 +23,7 @@ from agent.workers.conversation_archiver import (
     retrieve_and_parse_checkpoint,
 )
 from database.connection import get_async_session
-from database.models import ConversationHistory, ConversationMessage, Customer, MessageRole
+from database.models import ConversationHistory, ConversationMessage, Customer
 
 # Timezone for all datetime operations
 TIMEZONE = ZoneInfo("Europe/Madrid")

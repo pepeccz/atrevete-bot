@@ -25,8 +25,7 @@ from agent.workers.notification_handlers.paused_24h import (
     query_fn,
     send_fn,
 )
-from database.models import ConversationHistory, Notification, NotificationType
-
+from database.models import ConversationHistory, NotificationType
 
 # ─── Helpers ───────────────────────────────────────────────────────────────────
 

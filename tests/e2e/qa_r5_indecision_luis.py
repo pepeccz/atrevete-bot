@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import sys
 import uuid
 from datetime import UTC, datetime
@@ -23,7 +22,7 @@ CONVERSATION_ID = str(uuid.uuid4())
 RESPONSE_TIMEOUT = 35.0
 
 print(f"\n{'='*60}")
-print(f"QA ROUND 5 — Flow: indecision | Persona: luis_indecisive_client")
+print("QA ROUND 5 — Flow: indecision | Persona: luis_indecisive_client")
 print(f"conversation_id: {CONVERSATION_ID}")
 print(f"Started at: {datetime.now(UTC).isoformat()}")
 print(f"{'='*60}\n")
@@ -168,7 +167,7 @@ async def run_indecision_flow():
 
     # CRITICAL: Subscribe BEFORE injecting
     await harness.prepare_response_capture()
-    print(f"[✓] Subscribed to outgoing_messages pubsub")
+    print("[✓] Subscribed to outgoing_messages pubsub")
 
     turns = []
     milestones_hit = []
@@ -288,7 +287,7 @@ async def run_indecision_flow():
     print(f"appointment_in_db: {appointment_in_db}")
     print(f"Milestones hit: {milestones_hit}")
     print(f"Bugs observed: {bugs_observed if bugs_observed else 'None'}")
-    print(f"\n--- CONVERSATION TRACE ---")
+    print("\n--- CONVERSATION TRACE ---")
     for t in turns:
         print(f"\nTurn {t['turn_number']} ({t['response_latency_ms']}ms)")
         print(f"  USER: {t['user_message']}")

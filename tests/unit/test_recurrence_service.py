@@ -10,7 +10,6 @@ Tests cover:
 """
 
 from datetime import date, time
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -23,7 +22,6 @@ from agent.services.recurrence_service import (
     parse_bymonthday,
     validate_time_within_business_hours,
 )
-
 
 # ============================================================================
 # expand_recurrence Tests
@@ -351,7 +349,7 @@ class TestGetOpenDaysOfWeek:
 
     def test_all_closed(self):
         """Test when all days are closed."""
-        business_hours = {i: None for i in range(7)}
+        business_hours = dict.fromkeys(range(7))
         open_days = get_open_days_of_week(business_hours)
         assert open_days == []
 

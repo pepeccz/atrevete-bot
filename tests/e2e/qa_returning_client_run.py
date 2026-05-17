@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import time
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -516,8 +515,8 @@ async def run() -> dict[str, Any]:
     run_started_at = datetime.now(UTC)
     print(f"[QA] conversation_id : {CONVERSATION_ID}")
     print(f"[QA] customer_phone  : {CUSTOMER_PHONE}")
-    print(f"[QA] flow            : returning_client")
-    print(f"[QA] persona         : carlos_returning_client")
+    print("[QA] flow            : returning_client")
+    print("[QA] persona         : carlos_returning_client")
     print(f"[QA] started_at      : {run_started_at.isoformat()}")
 
     r = redis.from_url(REDIS_URL, decode_responses=True)
@@ -649,7 +648,7 @@ async def run() -> dict[str, Any]:
         await pubsub.aclose()
 
     # Phase 4: DB verification
-    print(f"\n[QA] Verifying appointment in PostgreSQL...")
+    print("\n[QA] Verifying appointment in PostgreSQL...")
     db_verification = await verify_appointment_in_db(run_started_at, CUSTOMER_PHONE)
     print(f"[QA] DB: {db_verification['details']}")
     if db_verification.get("rows"):

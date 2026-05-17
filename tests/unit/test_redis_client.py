@@ -9,16 +9,16 @@ from redis import ConnectionError as RedisConnectionError
 from redis.exceptions import ResponseError as RedisResponseError
 
 from shared.redis_client import (
-    get_redis_client,
-    publish_to_channel,
-    add_to_stream,
-    create_consumer_group,
-    read_from_stream,
-    acknowledge_message,
-    move_to_dead_letter,
-    INCOMING_STREAM,
     CONSUMER_GROUP,
     DEAD_LETTER_STREAM,
+    INCOMING_STREAM,
+    acknowledge_message,
+    add_to_stream,
+    create_consumer_group,
+    get_redis_client,
+    move_to_dead_letter,
+    publish_to_channel,
+    read_from_stream,
 )
 
 

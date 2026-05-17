@@ -192,8 +192,8 @@ def _make_execute_reschedule_result():
 @pytest.mark.asyncio
 async def test_reschedule_g1_unresolvable_relative_text_no_db_write():
     """T3 G1: new_date='mañana' (unresolvable non-ISO) → error_code=invalid_relative_date, no DB write."""
-    from agent.tools.manage_appointments_tool import _reschedule_appointment
     from agent.tools._booking_validators import DateValidationResult
+    from agent.tools.manage_appointments_tool import _reschedule_appointment
 
     invalid_result = DateValidationResult(
         date_iso=None,
@@ -235,8 +235,8 @@ async def test_reschedule_g1_unresolvable_relative_text_no_db_write():
 @pytest.mark.asyncio
 async def test_reschedule_g2_sunday_closed_no_db_write():
     """T3 G2: new_date=Sunday ISO → error_code=closed_day, no DB write."""
-    from agent.tools.manage_appointments_tool import _reschedule_appointment
     from agent.tools._booking_validators import DateValidationResult
+    from agent.tools.manage_appointments_tool import _reschedule_appointment
 
     closed_result = DateValidationResult(
         date_iso=None,
@@ -277,8 +277,8 @@ async def test_reschedule_g2_sunday_closed_no_db_write():
 @pytest.mark.asyncio
 async def test_reschedule_g3_advance_policy_violated_no_db_write():
     """T3 G3: new_date=tomorrow (within lead-time) → error_code=advance_policy_violated, no DB write."""
-    from agent.tools.manage_appointments_tool import _reschedule_appointment
     from agent.tools._booking_validators import DateValidationResult
+    from agent.tools.manage_appointments_tool import _reschedule_appointment
 
     violation_result = DateValidationResult(
         date_iso=None,
@@ -320,8 +320,8 @@ async def test_reschedule_g3_advance_policy_violated_no_db_write():
 @pytest.mark.asyncio
 async def test_reschedule_happy_path_valid_date_calls_db():
     """T3 happy path: valid future ISO → validator returns ok → execute_reschedule is called."""
-    from agent.tools.manage_appointments_tool import _reschedule_appointment
     from agent.tools._booking_validators import DateValidationResult
+    from agent.tools.manage_appointments_tool import _reschedule_appointment
 
     ok_result = DateValidationResult(
         date_iso=OPEN_DATE,

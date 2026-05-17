@@ -1,10 +1,11 @@
 """Round-trip coverage for the Customer.notes field across admin endpoints."""
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
 from datetime import datetime
 from decimal import Decimal
+from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
+
+import pytest
 
 from database.models import Customer
 

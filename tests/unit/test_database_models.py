@@ -11,14 +11,19 @@ Tests cover:
 """
 
 from decimal import Decimal
-from uuid import uuid4
 
 import pytest
 from sqlalchemy import inspect, select, text
 from sqlalchemy.exc import IntegrityError
 
 from database.connection import AsyncSessionLocal, engine
-from database.models import Base, Customer, Service, ServiceCategory, Stylist  # Pack removed - packs functionality eliminated
+from database.models import (  # Pack removed - packs functionality eliminated
+    Base,
+    Customer,
+    Service,
+    ServiceCategory,
+    Stylist,
+)
 from database.seeds.stylists import seed_stylists
 
 

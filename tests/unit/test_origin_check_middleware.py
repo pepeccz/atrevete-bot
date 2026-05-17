@@ -9,9 +9,9 @@ Covers:
 - Webhook exempt paths bypass origin check
 """
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
+import pytest
 
 # ---------------------------------------------------------------------------
 # Helpers

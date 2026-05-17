@@ -14,8 +14,7 @@ Follows the established pattern in tests/integration/test_billing_routes.py:
 
 from __future__ import annotations
 
-from datetime import date, datetime
-from decimal import Decimal
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 from zoneinfo import ZoneInfo

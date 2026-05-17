@@ -16,6 +16,7 @@ import pytest
 async def _db_available() -> bool:
     try:
         from sqlalchemy import text
+
         from database.connection import get_async_session
 
         async with get_async_session() as session:
@@ -44,7 +45,9 @@ async def multi_audience_cut_catalog(db_session):
     says "corte" without specifying gender/audience.
     """
     from uuid import uuid4
+
     from sqlalchemy import delete
+
     from database.models import Service, ServiceCategory
 
     dim = "cut_guard_dim"

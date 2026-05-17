@@ -416,12 +416,12 @@ async def run_qa() -> dict:
     run_start = datetime.now(UTC)
 
     print(f"\n{'='*70}")
-    print(f"QA Round 4 — indecision / luis_indecisive_client")
-    print(f"Commit: 31deed9")
+    print("QA Round 4 — indecision / luis_indecisive_client")
+    print("Commit: 31deed9")
     print(f"conversation_id: {conversation_id}")
     print(f"phone:           {CUSTOMER_PHONE}")
     print(f"started_at:      {run_start.isoformat()}")
-    print(f"Validating: NEW-REG-1 (service_id loop), NEW-C (friday), BUG-001, BUG-002, NEW-B")
+    print("Validating: NEW-REG-1 (service_id loop), NEW-C (friday), BUG-001, BUG-002, NEW-B")
     print(f"{'='*70}\n")
 
     # Subscribe BEFORE any injection to avoid race
@@ -738,7 +738,7 @@ async def run_qa() -> dict:
     )
 
     print(f"\n{'='*70}")
-    print(f"RESULT SUMMARY")
+    print("RESULT SUMMARY")
     print(f"  outcome:            {outcome}")
     print(f"  milestone:          {current_milestone}")
     print(f"  milestones_hit:     {milestones_hit}")
@@ -746,7 +746,7 @@ async def run_qa() -> dict:
     print(f"  appointment_in_db:  {result['appointment_in_db']}")
     print(f"  db_count_1h:        {db_count}")
     print(f"  bugs:               {result['bugs_summary']}")
-    print(f"\n  FIXES VALIDATION:")
+    print("\n  FIXES VALIDATION:")
     for k, v in fixes.items():
         icon = "✅" if v == "PASS" else ("❌" if v == "FAIL" else "ℹ️")
         print(f"    {icon} {k}: {v}")

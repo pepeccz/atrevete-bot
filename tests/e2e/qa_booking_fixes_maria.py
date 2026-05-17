@@ -108,7 +108,7 @@ async def run_qa():
     conversation_id = f"qa-maria-{uuid.uuid4().hex[:12]}"
     run_started = datetime.now(UTC)
     print(f"\n{'='*70}")
-    print(f"QA RUN: booking_complete — María persona")
+    print("QA RUN: booking_complete — María persona")
     print(f"Conversation ID: {conversation_id}")
     print(f"Started: {run_started.isoformat()}")
     print(f"{'='*70}\n")
@@ -176,7 +176,7 @@ async def run_qa():
             if fix1_bugs:
                 print(f"[TURN 1] ⚠️  BUG DETECTED: {fix1_bugs[0]['evidence']}")
             else:
-                print(f"[TURN 1] ✅ FIX 1 PASS: Bot did NOT ask redundant audience clarification")
+                print("[TURN 1] ✅ FIX 1 PASS: Bot did NOT ask redundant audience clarification")
 
             turns.append({
                 "turn": 1,
@@ -209,7 +209,7 @@ async def run_qa():
         latency_2 = int((t_recv - t_sent).total_seconds() * 1000)
 
         if response_2["timed_out"]:
-            print(f"[TURN 2] BOT → TIMEOUT")
+            print("[TURN 2] BOT → TIMEOUT")
             turns.append({"turn": 2, "user": user_msg_2, "bot": "TIMEOUT", "latency_ms": latency_2, "bugs": []})
         else:
             bot_reply_2 = response_2["message"]
@@ -236,7 +236,7 @@ async def run_qa():
         latency_3 = int((t_recv - t_sent).total_seconds() * 1000)
 
         if response_3["timed_out"]:
-            print(f"[TURN 3] BOT → TIMEOUT")
+            print("[TURN 3] BOT → TIMEOUT")
             turns.append({"turn": 3, "user": user_msg_3, "bot": "TIMEOUT", "latency_ms": latency_3, "bugs": []})
         else:
             bot_reply_3 = response_3["message"]
@@ -251,14 +251,14 @@ async def run_qa():
                 if any(kw in bot_reply_3.lower() for kw in slot_keywords):
                     fix2_date_bugs.append({
                         "category": "context_loss",
-                        "evidence": f"Turn 3: Bot showing slots but 'jueves' not present — date anchor from turn 1 may be lost",
+                        "evidence": "Turn 3: Bot showing slots but 'jueves' not present — date anchor from turn 1 may be lost",
                         "turns": [1, 3]
                     })
 
             if fix2_date_bugs:
                 print(f"[TURN 3] ⚠️  FIX 2 POSSIBLE ISSUE: {fix2_date_bugs[0]['evidence']}")
             else:
-                print(f"[TURN 3] ✅ FIX 2 CHECK: 'jueves' present or not yet at slot selection")
+                print("[TURN 3] ✅ FIX 2 CHECK: 'jueves' present or not yet at slot selection")
 
             turns.append({
                 "turn": 3,
@@ -288,7 +288,7 @@ async def run_qa():
         latency_4 = int((t_recv - t_sent).total_seconds() * 1000)
 
         if response_4["timed_out"]:
-            print(f"[TURN 4] BOT → TIMEOUT")
+            print("[TURN 4] BOT → TIMEOUT")
             turns.append({"turn": 4, "user": user_msg_4, "bot": "TIMEOUT", "latency_ms": latency_4, "bugs": []})
         else:
             bot_reply_4 = response_4["message"]
@@ -303,14 +303,14 @@ async def run_qa():
                 if any(kw in bot_reply_4.lower() for kw in slot_confirmation_keywords):
                     fix2_bugs.append({
                         "category": "context_loss",
-                        "evidence": f"Turn 4: Slot confirmed but 'jueves' not mentioned — date hint from turn 1 may not be preserved",
+                        "evidence": "Turn 4: Slot confirmed but 'jueves' not mentioned — date hint from turn 1 may not be preserved",
                         "turns": [1, 4]
                     })
 
             if fix2_bugs:
                 print(f"[TURN 4] ⚠️  FIX 2 POTENTIAL ISSUE: {fix2_bugs[0]['evidence']}")
             else:
-                print(f"[TURN 4] ✅ FIX 2 CHECK: Date handling appears correct")
+                print("[TURN 4] ✅ FIX 2 CHECK: Date handling appears correct")
 
             turns.append({
                 "turn": 4,
@@ -340,7 +340,7 @@ async def run_qa():
         latency_5 = int((t_recv - t_sent).total_seconds() * 1000)
 
         if response_5["timed_out"]:
-            print(f"[TURN 5] BOT → TIMEOUT")
+            print("[TURN 5] BOT → TIMEOUT")
             turns.append({"turn": 5, "user": user_msg_5, "bot": "TIMEOUT", "latency_ms": latency_5, "bugs": []})
         else:
             bot_reply_5 = response_5["message"]
@@ -374,7 +374,7 @@ async def run_qa():
         latency_6 = int((t_recv - t_sent).total_seconds() * 1000)
 
         if response_6["timed_out"]:
-            print(f"[TURN 6] BOT → TIMEOUT")
+            print("[TURN 6] BOT → TIMEOUT")
             turns.append({"turn": 6, "user": user_msg_6, "bot": "TIMEOUT", "latency_ms": latency_6, "bugs": []})
         else:
             bot_reply_6 = response_6["message"]
@@ -409,7 +409,7 @@ async def run_qa():
         latency_7 = int((t_recv - t_sent).total_seconds() * 1000)
 
         if response_7["timed_out"]:
-            print(f"[TURN 7] BOT → TIMEOUT")
+            print("[TURN 7] BOT → TIMEOUT")
             turns.append({"turn": 7, "user": user_msg_7, "bot": "TIMEOUT", "latency_ms": latency_7, "bugs": []})
         else:
             bot_reply_7 = response_7["message"]

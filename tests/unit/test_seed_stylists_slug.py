@@ -8,13 +8,13 @@ Tests cover the Rev 2 seed behavior:
 - Existing google_calendar_id values are NEVER overwritten by the seed
 """
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch, call
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
+
+import pytest
 
 from database.models import ServiceCategory, Stylist
 from database.seeds.stylists import STYLISTS_DATA, seed_stylists
-
 
 # ============================================================================
 # Helpers

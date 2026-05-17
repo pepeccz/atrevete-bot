@@ -251,7 +251,7 @@ async def run_test() -> dict:
 
     try:
         await harness.prepare_response_capture()
-        print(f"Subscribed to outgoing_messages BEFORE injecting\n")
+        print("Subscribed to outgoing_messages BEFORE injecting\n")
 
         tracker = ConversationTracker()
         first_message = "Hola, quiero cortarme el pelo y hacerme un tinte"
@@ -599,7 +599,7 @@ async def main():
     if state_error:
         l2_pass = db_results.get("multi_service_found", False) and len(context_bugs) == 0
         print(f"L2 (Context Retention): {'PASS' if l2_pass else 'FAIL'}")
-        print(f"   NOTE: Checkpoint state unavailable, using DB as proxy")
+        print("   NOTE: Checkpoint state unavailable, using DB as proxy")
         print(f"   Multi-service in DB: {db_results.get('multi_service_found', False)}")
     else:
         l2_pass = len(selected_svc) >= 2 and len(context_bugs) == 0

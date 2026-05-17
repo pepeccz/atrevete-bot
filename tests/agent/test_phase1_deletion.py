@@ -14,7 +14,6 @@ TDD approach for deletion tasks:
 import importlib
 import importlib.util
 import os
-import subprocess
 import sys
 
 

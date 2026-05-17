@@ -7,8 +7,6 @@ import asyncio
 import json
 import time
 import uuid
-import sys
-import os
 
 import redis.asyncio as redis
 
@@ -180,7 +178,7 @@ async def wait_for_response(pubsub, conversation_id: str, timeout: float) -> tup
     while (time.monotonic() - start) < timeout:
         try:
             msg = await asyncio.wait_for(pubsub.get_message(ignore_subscribe_messages=True), timeout=1.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             continue
 
         if msg is None:
@@ -212,7 +210,7 @@ async def run_qa() -> dict:
     conversation_id = str(uuid.uuid4())
     contact_id = str(uuid.uuid4())
     print(f"\n{'='*60}")
-    print(f"QA Round 9 — indecision / luis_indecisive_client")
+    print("QA Round 9 — indecision / luis_indecisive_client")
     print(f"conversation_id: {conversation_id}")
     print(f"{'='*60}\n")
 
@@ -343,7 +341,7 @@ async def run_qa() -> dict:
             booking_complete = True
 
         if booking_complete:
-            print(f"  >> Booking confirmed in bot response — done!")
+            print("  >> Booking confirmed in bot response — done!")
             break
 
     await pubsub.unsubscribe(OUTGOING_PUBSUB_CHANNEL)

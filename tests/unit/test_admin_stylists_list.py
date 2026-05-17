@@ -8,13 +8,13 @@ Tests cover:
 All tests use mocks — no real database required.
 """
 
-import pytest
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
-from datetime import datetime
 
-from database.models import Stylist, ServiceCategory
+import pytest
 
+from database.models import ServiceCategory, Stylist
 
 # ============================================================================
 # Helpers

@@ -16,11 +16,10 @@ T8        : state delta contains messages + conversation_summary + last_summariz
 
 from __future__ import annotations
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from langchain_core.messages import HumanMessage
-
 
 # ---------------------------------------------------------------------------
 # Task 1.1 — Config fields exist
@@ -50,7 +49,7 @@ def test_settings_has_summarizer_model_default_empty():
 
 def test_get_summarizer_llm_returns_default_llm_when_model_empty():
     """get_summarizer_llm() returns same instance as get_llm() when SUMMARIZER_MODEL is empty."""
-    from agent.llm import get_llm, get_summarizer_llm
+    from agent.llm import get_summarizer_llm
 
     with patch("agent.llm.get_settings") as mock_settings:
         mock_settings.return_value.SUMMARIZER_MODEL = ""

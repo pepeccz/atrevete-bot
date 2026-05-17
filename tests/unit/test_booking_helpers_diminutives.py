@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # T2.1 — _strip_diminutive unit tests (pure logic)
 # ---------------------------------------------------------------------------
@@ -62,8 +61,8 @@ def test_strip_diminutive_masajito_returns_stem():
 @pytest.mark.asyncio
 async def test_resolve_service_ids_peinadito_matches_peinado():
     """'peinadito' must resolve to the same UUID as 'peinado'."""
-    from unittest.mock import AsyncMock, MagicMock, patch
     import uuid
+    from unittest.mock import AsyncMock, MagicMock, patch
 
     peinado_id = uuid.uuid4()
 
@@ -88,8 +87,8 @@ async def test_resolve_service_ids_peinadito_matches_peinado():
 @pytest.mark.asyncio
 async def test_resolve_service_ids_cortita_matches_corte():
     """'cortita' must resolve to the same UUID as 'Corte'."""
-    from unittest.mock import AsyncMock, MagicMock, patch
     import uuid
+    from unittest.mock import AsyncMock, MagicMock, patch
 
     corte_id = uuid.uuid4()
 
@@ -113,8 +112,8 @@ async def test_resolve_service_ids_cortita_matches_corte():
 @pytest.mark.asyncio
 async def test_resolve_service_ids_masajito_returns_unknown():
     """'masajito' when no match → returns unknown, no exception."""
-    from unittest.mock import AsyncMock, MagicMock, patch
     import uuid
+    from unittest.mock import AsyncMock, MagicMock, patch
 
     corte_id = uuid.uuid4()
 
@@ -139,8 +138,8 @@ async def test_resolve_service_ids_masajito_returns_unknown():
 @pytest.mark.asyncio
 async def test_resolve_service_ids_non_diminutive_unchanged():
     """Non-diminutive input 'corte' must match exactly as before."""
-    from unittest.mock import AsyncMock, MagicMock, patch
     import uuid
+    from unittest.mock import AsyncMock, MagicMock, patch
 
     corte_id = uuid.uuid4()
 

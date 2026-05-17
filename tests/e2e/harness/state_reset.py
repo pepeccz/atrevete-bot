@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from contextlib import asynccontextmanager
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Iterable
-from uuid import UUID
+from typing import TYPE_CHECKING, Any
 
 import redis.asyncio as redis
 from sqlalchemy import select, text
@@ -28,7 +28,7 @@ def is_test_phone(phone: str) -> bool:
     return phone.startswith(_QA_PHONE_PREFIX)
 
 
-def is_test_conversation(conversation_id: str, run_identity: "QARunIdentity") -> bool:
+def is_test_conversation(conversation_id: str, run_identity: QARunIdentity) -> bool:
     """Return True only if conversation_id matches the run identity."""
     return conversation_id == run_identity.conversation_id
 
@@ -68,7 +68,7 @@ async def safe_delete_appointments(session: AsyncSession, phone: str) -> int:
 
 
 async def safe_delete_conversation(
-    session: AsyncSession, conversation_id: str, run_identity: "QARunIdentity"
+    session: AsyncSession, conversation_id: str, run_identity: QARunIdentity
 ) -> int:
     """Delete conversation history for a test conversation.
 
@@ -89,7 +89,7 @@ async def safe_delete_conversation(
 class AsyncDatabaseCleaner:
     """Async database cleaner for QA test cleanup and verification."""
 
-    def __init__(self, db_url: str, run_identity: "QARunIdentity"):
+    def __init__(self, db_url: str, run_identity: QARunIdentity):
         self._db_url = db_url
         self._run_identity = run_identity
         self._engine: Any = None

@@ -8,12 +8,11 @@ Spec: Acceptance Scenarios 1, 2, 7; R-12.1–R-12.7.
 
 from __future__ import annotations
 
-import asyncio
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -21,7 +20,6 @@ import pytest
 @pytest.mark.asyncio
 async def test_flag_off_produces_zero_files(tmp_path: Path):
     """Flag off: no files written to llm_traces/ directory."""
-    from agent.middleware.llm_trace import LLMTraceMiddleware
     from agent.tracing.context import current_trace_ctx
 
     # Simulate a turn with middleware (flag would be off, so middleware shouldn't be added,
@@ -35,8 +33,9 @@ async def test_flag_off_produces_zero_files(tmp_path: Path):
         mock_settings.LLM_TRACE_DIR = str(trace_dir)
 
         # Import hooks and simulate request/response with no ctx set
-        from agent.tracing.httpx_hooks import request_hook, response_hook
         import httpx
+
+        from agent.tracing.httpx_hooks import request_hook, response_hook
 
         req = httpx.Request("POST", "https://openrouter.ai/api/v1/chat/completions",
                             content=b'{"model": "gpt-4"}')
@@ -52,12 +51,13 @@ async def test_flag_off_produces_zero_files(tmp_path: Path):
 @pytest.mark.asyncio
 async def test_flag_on_writes_paired_files(tmp_path: Path):
     """Flag on: after a request+response cycle, paired *_req.json and *_res.json exist."""
-    from agent.tracing.context import TraceContext, current_trace_ctx
-    from agent.tracing.httpx_hooks import request_hook, response_hook
     import httpx
 
+    from agent.tracing.context import TraceContext, current_trace_ctx
+    from agent.tracing.httpx_hooks import request_hook, response_hook
+
     trace_dir = tmp_path / "llm_traces"
-    dt = datetime(2026, 5, 16, 14, 32, 1, 0, tzinfo=timezone.utc)
+    dt = datetime(2026, 5, 16, 14, 32, 1, 0, tzinfo=UTC)
     ctx = TraceContext(conversation_id="conv-e2e-100", turn_started_at=dt)
     token = current_trace_ctx.set(ctx)
 
@@ -104,12 +104,13 @@ async def test_flag_on_writes_paired_files(tmp_path: Path):
 @pytest.mark.asyncio
 async def test_summarizer_call_captured(tmp_path: Path):
     """Both main LLM call and a second call (simulating summarizer) land in same dir, different seq."""
-    from agent.tracing.context import TraceContext, current_trace_ctx
-    from agent.tracing.httpx_hooks import request_hook, response_hook
     import httpx
 
+    from agent.tracing.context import TraceContext, current_trace_ctx
+    from agent.tracing.httpx_hooks import request_hook, response_hook
+
     trace_dir = tmp_path / "llm_traces"
-    dt = datetime(2026, 5, 16, 15, 0, 0, 0, tzinfo=timezone.utc)
+    dt = datetime(2026, 5, 16, 15, 0, 0, 0, tzinfo=UTC)
     ctx = TraceContext(conversation_id="conv-summarizer-789", turn_started_at=dt)
     token = current_trace_ctx.set(ctx)
 
@@ -166,11 +167,12 @@ async def test_middleware_resets_contextvar_e2e():
 @pytest.mark.asyncio
 async def test_hook_failure_is_nonfatal(tmp_path: Path):
     """When _sync_write raises OSError, agent returns normally and WARNING is logged."""
-    from agent.tracing.context import TraceContext, current_trace_ctx
-    from agent.tracing.httpx_hooks import request_hook
     import httpx
 
-    dt = datetime(2026, 5, 16, 15, 0, 0, 0, tzinfo=timezone.utc)
+    from agent.tracing.context import TraceContext, current_trace_ctx
+    from agent.tracing.httpx_hooks import request_hook
+
+    dt = datetime(2026, 5, 16, 15, 0, 0, 0, tzinfo=UTC)
     ctx = TraceContext(conversation_id="conv-fatal-test", turn_started_at=dt)
     token = current_trace_ctx.set(ctx)
 

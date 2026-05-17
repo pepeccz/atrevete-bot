@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
 import sys
 import time
 import uuid
@@ -21,9 +20,8 @@ sys.path.insert(0, "/home/pcabeza/Proyectos/atrevete-bot")
 
 from shared.config import get_settings
 from shared.redis_client import INCOMING_STREAM
-from tests.e2e.harness.run_models import QARunIdentity, QARunSession
-from tests.e2e.harness.state_reset import StateResetHarness, AsyncDatabaseCleaner
-
+from tests.e2e.harness.run_models import QARunIdentity
+from tests.e2e.harness.state_reset import AsyncDatabaseCleaner, StateResetHarness
 
 # ---------------------------------------------------------------------------
 # Persona + Flow Definition (inlined from qa-testing-context.md / skill data)
@@ -229,7 +227,7 @@ async def run_qa_flow():
     conversation_id = f"qa-test-{uuid.uuid4().hex[:12]}"
     
     print(f"\n{'='*60}")
-    print(f"QA RUN: booking_complete | Persona: maria_new_client")
+    print("QA RUN: booking_complete | Persona: maria_new_client")
     print(f"Conversation ID: {conversation_id}")
     print(f"Phone: {QA_PHONE}")
     print(f"{'='*60}\n")
@@ -498,7 +496,7 @@ async def run_qa_flow():
 
     # Summary
     print(f"\n{'='*60}")
-    print(f"RESULT SUMMARY")
+    print("RESULT SUMMARY")
     print(f"{'='*60}")
     print(f"Outcome: {outcome}")
     print(f"Total turns: {len(turns)}")

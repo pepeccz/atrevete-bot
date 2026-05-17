@@ -4,9 +4,10 @@ QA Run R11 — returning_client flow, persona: carlos_returning_client
 Commit: 55ab710 (holistic booking FSM contract fix)
 """
 import json
+import threading
 import time
 import uuid
-import threading
+
 import redis
 
 REDIS_HOST = "localhost"
@@ -141,7 +142,7 @@ def decide_next(bot_text: str, turn_num: int) -> str:
 
 
 print(f"\n{'='*60}")
-print(f"QA R11 — returning_client | carlos_returning_client")
+print("QA R11 — returning_client | carlos_returning_client")
 print(f"conversation_id: {conversation_id}")
 print(f"{'='*60}\n")
 
@@ -200,6 +201,7 @@ print("DB VERIFICATION")
 print("="*60)
 
 import subprocess
+
 db_result = subprocess.run(
     [
         "docker", "exec", "atrevete-postgres",

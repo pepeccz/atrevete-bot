@@ -7,9 +7,6 @@ import re
 from types import SimpleNamespace
 from uuid import UUID, uuid4
 
-import pytest
-
-
 UUID_PATTERN = re.compile(
     r"id=[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
 )

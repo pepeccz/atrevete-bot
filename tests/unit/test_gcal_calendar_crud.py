@@ -58,7 +58,6 @@ from agent.services.google_oauth_service import (
     PrimaryCalendarError,
 )
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -476,7 +475,12 @@ class TestDeleteCalendar:
 # ===========================================================================
 
 
+from fastapi import HTTPException  # type: ignore[import]
+
 import api.routes.google_oauth as _route_module
+from agent.services.google_oauth_service import (
+    GoogleOAuthNotConfiguredError,
+)
 from api.routes.google_oauth import (
     CalendarResponse,
     CreateCalendarRequest,
@@ -485,11 +489,6 @@ from api.routes.google_oauth import (
     delete_google_calendar,
     update_google_calendar,
 )
-from agent.services.google_oauth_service import (
-    GoogleOAuthNotConfiguredError,
-)
-from fastapi import HTTPException  # type: ignore[import]
-
 
 # ---------------------------------------------------------------------------
 # Helpers for API tests

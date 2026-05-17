@@ -1,9 +1,6 @@
 """Unit tests for the token tracking service."""
 
-import uuid
-from datetime import UTC, datetime
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 

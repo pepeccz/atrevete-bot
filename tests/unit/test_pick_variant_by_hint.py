@@ -7,8 +7,6 @@ Covers R3, S6.
 
 from __future__ import annotations
 
-import pytest
-
 
 class TestPickVariantByHint:
     """C6.3: _pick_variant_by_hint reverse-maps hint → variant name."""

@@ -8,7 +8,6 @@ All tests are RED before prompt files are updated (T7/T8/T9).
 """
 from __future__ import annotations
 
-import re
 from pathlib import Path
 
 PROMPTS_DIR = Path(__file__).parents[3] / "agent" / "prompts" / "shared"

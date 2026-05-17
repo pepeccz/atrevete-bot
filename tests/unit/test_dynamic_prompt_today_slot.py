@@ -5,9 +5,10 @@ _slot_today MUST be written every turn.
 """
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
 from langchain_core.messages import AIMessage, SystemMessage
-from unittest.mock import AsyncMock, patch
 
 
 class FakeRequest:

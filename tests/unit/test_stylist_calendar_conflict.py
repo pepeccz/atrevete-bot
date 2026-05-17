@@ -15,15 +15,14 @@ Coverage:
 - IntegrityError remapping to 409 for race conditions
 """
 
-import pytest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4, UUID
+from uuid import uuid4
 
+import pytest
 from sqlalchemy.exc import IntegrityError
 
-from database.models import Stylist, ServiceCategory
-
+from database.models import ServiceCategory, Stylist
 
 # ============================================================================
 # Test Calendar Conflict Validation Helpers
@@ -120,8 +119,9 @@ class TestBuildCalendarConflictError:
 
     def test_builds_409_error_with_single_stylist(self):
         """GIVEN single stylist name, WHEN building error, THEN returns 409 with detail."""
-        from api.routes.admin import _build_calendar_conflict_error
         from fastapi import HTTPException, status
+
+        from api.routes.admin import _build_calendar_conflict_error
 
         error = _build_calendar_conflict_error(["Ana"])
 
@@ -132,8 +132,9 @@ class TestBuildCalendarConflictError:
 
     def test_builds_409_error_with_multiple_stylists(self):
         """GIVEN multiple stylist names, WHEN building error, THEN returns 409 with all names."""
-        from api.routes.admin import _build_calendar_conflict_error
         from fastapi import HTTPException, status
+
+        from api.routes.admin import _build_calendar_conflict_error
 
         error = _build_calendar_conflict_error(["Ana", "Maria", "Laura"])
 
@@ -198,7 +199,7 @@ class TestCreateStylistConflictValidation:
     @pytest.mark.asyncio
     async def test_rejects_create_with_occupied_calendar(self):
         """GIVEN occupied calendar, WHEN creating stylist, THEN raises 409 before commit."""
-        from api.routes.admin import create_stylist, CreateStylistRequest
+        from api.routes.admin import CreateStylistRequest, create_stylist
 
         # Mock the conflict check to return conflict
         with patch("api.routes.admin._check_calendar_conflict") as mock_check:
@@ -223,8 +224,7 @@ class TestCreateStylistConflictValidation:
     @pytest.mark.asyncio
     async def test_allows_create_with_free_calendar(self):
         """GIVEN free calendar, WHEN creating stylist, THEN proceeds without conflict error."""
-        from api.routes.admin import create_stylist, CreateStylistRequest
-        from api.routes.admin import _check_calendar_conflict
+        from api.routes.admin import CreateStylistRequest
 
         # This is an integration-style test - we just verify the helper is called
         with patch("api.routes.admin._check_calendar_conflict") as mock_check:
@@ -248,7 +248,7 @@ class TestUpdateStylistConflictValidation:
     @pytest.mark.asyncio
     async def test_allows_update_same_calendar(self):
         """GIVEN stylist updating with same calendar, WHEN updating, THEN no conflict."""
-        from api.routes.admin import update_stylist, UpdateStylistRequest
+        from api.routes.admin import UpdateStylistRequest, update_stylist
 
         # Mock session returns existing stylist
         mock_stylist = MagicMock(spec=Stylist)
@@ -258,8 +258,8 @@ class TestUpdateStylistConflictValidation:
         mock_stylist.category = ServiceCategory.HAIRDRESSING
         mock_stylist.is_active = True
         mock_stylist.color = None
-        mock_stylist.created_at = datetime.now(timezone.utc)
-        mock_stylist.updated_at = datetime.now(timezone.utc)
+        mock_stylist.created_at = datetime.now(UTC)
+        mock_stylist.updated_at = datetime.now(UTC)
 
         with patch("api.routes.admin.get_async_session") as mock_session_factory:
             mock_session = AsyncMock()
@@ -291,7 +291,7 @@ class TestUpdateStylistConflictValidation:
     @pytest.mark.asyncio
     async def test_rejects_update_to_occupied_calendar(self):
         """GIVEN stylist updating to another's calendar, WHEN updating, THEN raises 409."""
-        from api.routes.admin import update_stylist, UpdateStylistRequest
+        from api.routes.admin import UpdateStylistRequest, update_stylist
 
         mock_stylist = MagicMock(spec=Stylist)
         mock_stylist.id = uuid4()
@@ -327,7 +327,7 @@ class TestAssignStylistCalendarConflictValidation:
     @pytest.mark.asyncio
     async def test_rejects_assign_occupied_calendar(self):
         """GIVEN occupied calendar, WHEN assigning to stylist, THEN raises 409."""
-        from api.routes.admin import assign_stylist_calendar, AssignCalendarRequest
+        from api.routes.admin import AssignCalendarRequest, assign_stylist_calendar
 
         mock_stylist = MagicMock(spec=Stylist)
         mock_stylist.id = uuid4()
@@ -367,7 +367,7 @@ class TestIntegrityErrorRemapping:
     @pytest.mark.asyncio
     async def test_create_remaps_unique_violation_to_409(self):
         """GIVEN unique constraint race on create, WHEN IntegrityError raised, THEN remaps to 409."""
-        from api.routes.admin import create_stylist, CreateStylistRequest
+        from api.routes.admin import CreateStylistRequest, create_stylist
 
         with patch("api.routes.admin._check_calendar_conflict") as mock_check:
             # First check passes (no conflict at pre-validation)
@@ -412,7 +412,7 @@ class TestIntegrityErrorRemapping:
     @pytest.mark.asyncio
     async def test_non_unique_integrity_error_re_raises(self):
         """GIVEN non-unique IntegrityError, WHEN raised, THEN re-raises original error."""
-        from api.routes.admin import create_stylist, CreateStylistRequest
+        from api.routes.admin import CreateStylistRequest, create_stylist
 
         with patch("api.routes.admin._check_calendar_conflict") as mock_check:
             mock_check.return_value = (False, [])

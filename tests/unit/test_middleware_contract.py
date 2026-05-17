@@ -24,8 +24,8 @@ from __future__ import annotations
 
 import ast
 import re
+from collections.abc import Generator
 from pathlib import Path
-from typing import Generator
 
 import pytest
 
@@ -148,8 +148,8 @@ def test_no_imperative_error_messages() -> None:
 
     if violations:
         lines = [
-            f"Imperative error_message strings found — these must be rewritten as "
-            f"descriptive state (e.g. 'Estado actual: …'):"
+            "Imperative error_message strings found — these must be rewritten as "
+            "descriptive state (e.g. 'Estado actual: …'):"
         ]
         for path, lineno, s in violations:
             rel = path.relative_to(_PROJECT_ROOT)

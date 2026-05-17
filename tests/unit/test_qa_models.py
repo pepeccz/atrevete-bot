@@ -13,16 +13,13 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-import pytest
-
+from tests.e2e.harness.redis_harness import ClassifierOutput
 from tests.e2e.harness.run_models import (
     ConversationResult,
     LLMTurnResponse,
     TurnEvidence,
     TurnRecord,
 )
-from tests.e2e.harness.redis_harness import ClassifierOutput
-
 
 # =============================================================================
 # Helpers

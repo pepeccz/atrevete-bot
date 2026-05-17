@@ -6,9 +6,8 @@ not just once per day. Also verifies send_reminders() and
 process_confirmation_retries() run in each cycle.
 """
 
-import asyncio
 from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 from zoneinfo import ZoneInfo
 
 import pytest

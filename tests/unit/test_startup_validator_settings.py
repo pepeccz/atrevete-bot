@@ -25,7 +25,7 @@ async def test_refuses_missing_booking_settings():
         "shared.startup_validator.get_settings_service",
         new=_mock_get_settings_service,
     ):
-        from shared.startup_validator import validate_booking_settings, StartupValidationError
+        from shared.startup_validator import StartupValidationError, validate_booking_settings
 
         with pytest.raises((StartupValidationError, SystemExit, RuntimeError)) as exc_info:
             await validate_booking_settings()

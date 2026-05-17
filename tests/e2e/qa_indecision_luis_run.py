@@ -561,7 +561,7 @@ async def run_qa_indecision() -> dict:
     settings = get_settings()
     redis_url = build_redis_url(settings)
 
-    print(f"Redis URL: masked")
+    print("Redis URL: masked")
     print(f"Incoming stream: {INCOMING_STREAM}")
     print(f"Response channel: {RESPONSE_CHANNEL}")
 
@@ -579,7 +579,7 @@ async def run_qa_indecision() -> dict:
     run_start = datetime.now(UTC)
 
     print(f"\n{'=' * 70}")
-    print(f"QA Flow: indecision — Luis (indecisive client)")
+    print("QA Flow: indecision — Luis (indecisive client)")
     print(f"conversation_id: {conversation_id}")
     print(f"Started: {run_start.isoformat()}")
     print(f"Max turns: {MAX_TURNS}")
@@ -892,7 +892,7 @@ async def run_qa_indecision() -> dict:
                         "found": False,
                         "details": "No appointment found for this conversation_id or phone",
                     }
-                    print(f"  ❌ No appointment found in DB")
+                    print("  ❌ No appointment found in DB")
             finally:
                 await conn.close()
 

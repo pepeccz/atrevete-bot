@@ -10,7 +10,6 @@ TDD: tests are RED before shim creation, GREEN after.
 import importlib
 import os
 
-
 # ---------------------------------------------------------------------------
 # shared/availability_service.py shim
 # ---------------------------------------------------------------------------

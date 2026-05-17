@@ -10,7 +10,7 @@ Uses FastAPI TestClient with mocked auth and database sessions,
 following the same pattern as test_stylist_calendar_conflict_integration.py.
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -21,7 +21,6 @@ from fastapi.testclient import TestClient
 from api.main import app
 from api.routes.admin import get_current_user
 from database.models import TokenUsage
-
 
 # ============================================================================
 # Test Fixtures and Setup
@@ -74,8 +73,8 @@ def _make_token_usage(
     usage.input_tokens = input_tokens
     usage.output_tokens = output_tokens
     usage.total_requests = total_requests
-    usage.created_at = datetime(year, month, 1, tzinfo=timezone.utc)
-    usage.updated_at = datetime(year, month, 15, tzinfo=timezone.utc)
+    usage.created_at = datetime(year, month, 1, tzinfo=UTC)
+    usage.updated_at = datetime(year, month, 15, tzinfo=UTC)
     return usage
 
 

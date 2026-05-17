@@ -1,7 +1,6 @@
 """Unit tests for AppointmentStatus enum and migration fields."""
 
-import pytest
-from database.models import AppointmentStatus, Appointment, Customer
+from database.models import Appointment, AppointmentStatus, Customer
 
 
 class TestAppointmentStatusEnum:

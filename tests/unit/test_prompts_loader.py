@@ -3,7 +3,6 @@
 TDD RED phase — written before agent/prompts/loader.py exists.
 """
 
-import pytest
 
 
 def test_load_system_prompt_importable():

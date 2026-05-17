@@ -9,7 +9,6 @@ Critical order: SUBSCRIBE before INJECT.
 
 import asyncio
 import json
-import sys
 import time
 import uuid
 
@@ -42,7 +41,7 @@ MAX_TURNS = 8
 
 async def run_qa():
     print(f"\n{'='*60}")
-    print(f"QA RUN: escalation / elena_escalation_client")
+    print("QA RUN: escalation / elena_escalation_client")
     print(f"conversation_id: {CONVERSATION_ID}")
     print(f"{'='*60}\n")
 
@@ -84,7 +83,7 @@ async def run_qa():
                             return data.get("message") or data.get("message_text") or str(data)
                     except json.JSONDecodeError:
                         pass
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
         return None
 

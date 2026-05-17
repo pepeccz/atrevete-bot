@@ -185,7 +185,7 @@ async def run_qa():
     settings = get_settings()
     conversation_id = str(uuid.uuid4())
     print(f"\n{'='*60}")
-    print(f"QA: Maria Garcia — Clean-State Happy-Path")
+    print("QA: Maria Garcia — Clean-State Happy-Path")
     print(f"Persona: {PERSONA_NAME}")
     print(f"Phone: {PHONE}")
     print(f"Conversation ID: {conversation_id}")
@@ -403,7 +403,7 @@ async def main():
             ]
         },
     }
-    print(f"\n--- STRUCTURED RESULT ---")
+    print("\n--- STRUCTURED RESULT ---")
     print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
     return result
 

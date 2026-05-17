@@ -22,18 +22,16 @@ Test scenarios:
 """
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
 
 from shared.business_hours_validator import (
+    get_next_open_date,
     is_date_closed,
     is_day_closed,
-    get_next_open_date,
     validate_slot_on_open_day,
 )
-
 
 # ============================================================================
 # Test Fixtures

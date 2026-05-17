@@ -16,8 +16,6 @@ Coverage:
 - Error handling and graceful degradation
 """
 
-import asyncio
-from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 from zoneinfo import ZoneInfo
@@ -35,7 +33,6 @@ from agent.services.escalation_service import (
     trigger_escalation,
 )
 from database.models import NotificationType
-
 
 MADRID_TZ = ZoneInfo("Europe/Madrid")
 

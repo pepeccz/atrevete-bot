@@ -11,10 +11,10 @@ CRITICAL PAYLOAD SHAPE (from agent/main.py):
 
 import asyncio
 import json
+import re
+import sys
 import time
 import uuid
-import sys
-import re
 
 import redis.asyncio as aioredis
 
@@ -197,7 +197,7 @@ async def run_qa(conversation_id: str, phone: str) -> list[dict]:
     )
 
     await client.ping()
-    print(f"✅ Redis connected")
+    print("✅ Redis connected")
     print(f"   conversation_id: {conversation_id}")
     print(f"   phone: {phone}")
     print()
@@ -291,7 +291,7 @@ async def run_qa(conversation_id: str, phone: str) -> list[dict]:
         # Decide next response
         next_msg = decide_response(agent_response, turn_number)
         if next_msg is None:
-            print(f"  [INFO] No next response needed — flow ended or unexpected state")
+            print("  [INFO] No next response needed — flow ended or unexpected state")
             break
 
         current_message = next_msg
@@ -345,7 +345,7 @@ async def main():
         if resp:
             print(f"  Agent: {resp[:400]}{'...' if len(resp) > 400 else ''}")
         else:
-            print(f"  Agent: [TIMEOUT]")
+            print("  Agent: [TIMEOUT]")
 
     # ── DB check ──────────────────────────────────────────────────────────
     print()
@@ -354,7 +354,7 @@ async def main():
     print("=" * 60)
     await asyncio.sleep(2)  # brief wait for DB write
     db_count = await check_db()
-    print(f"  SELECT count(*) FROM appointments WHERE created_at > now() - interval '1 hour'")
+    print("  SELECT count(*) FROM appointments WHERE created_at > now() - interval '1 hour'")
     print(f"  Result: {db_count}")
 
     # ── Milestone analysis ────────────────────────────────────────────────

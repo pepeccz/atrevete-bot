@@ -31,11 +31,9 @@ Usage:
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Callable
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
-
+from unittest.mock import MagicMock
 
 # =============================================================================
 # Error factory helpers — build real openai/httpx exception instances

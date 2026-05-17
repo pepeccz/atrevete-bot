@@ -34,10 +34,10 @@ CONVERSATION_ID = str(uuid.uuid4())
 RESPONSE_TIMEOUT = 35.0
 
 print(f"\n{'='*60}")
-print(f"QA ROUND 7 — Flow: indecision | Persona: luis_indecisive_client")
+print("QA ROUND 7 — Flow: indecision | Persona: luis_indecisive_client")
 print(f"conversation_id: {CONVERSATION_ID}")
 print(f"Started at: {datetime.now(UTC).isoformat()}")
-print(f"Commit: 70b16a6")
+print("Commit: 70b16a6")
 print(f"{'='*60}\n")
 
 
@@ -330,7 +330,7 @@ async def run_indecision_flow():
     print(f"appointment_in_db: {appointment_in_db}")
     print(f"Milestones hit: {milestones_hit}")
     print(f"Bugs observed: {bugs_observed if bugs_observed else 'None'}")
-    print(f"\n--- CONVERSATION TRACE ---")
+    print("\n--- CONVERSATION TRACE ---")
     for t in turns:
         print(f"\nTurn {t['turn_number']} ({t['response_latency_ms']}ms)")
         print(f"  USER: {t['user_message']}")
@@ -355,4 +355,4 @@ if __name__ == "__main__":
     with open("/tmp/qa_r7_indecision_result.json", "w", encoding="utf-8") as f:
         json.dump(result, f, indent=2, ensure_ascii=False, default=str)
     print(f"\n[FINAL STATUS]: {result['status']}")
-    print(f"[SAVED]: /tmp/qa_r7_indecision_result.json")
+    print("[SAVED]: /tmp/qa_r7_indecision_result.json")

@@ -1,11 +1,9 @@
 """Unit tests for StripeService — SEPA Direct Debit payment integration."""
 
-import uuid
 from types import ModuleType, SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Stripe stub — avoids importing the real stripe SDK in unit tests
@@ -14,7 +12,6 @@ import pytest
 
 def _make_stripe_stub():
     """Return a minimal stripe module stub with the classes we need."""
-    import sys
 
     stripe_stub = ModuleType("stripe")
     stripe_stub.__name__ = "stripe"
@@ -196,6 +193,7 @@ class TestVerifyWebhook:
 
         with patch.dict("sys.modules", {"stripe": stripe_stub, "stripe.error": stripe_stub.error}):
             from importlib import reload
+
             import api.services.stripe_service as stripe_mod
 
             reload(stripe_mod)
@@ -224,6 +222,7 @@ class TestVerifyWebhook:
 
         with patch.dict("sys.modules", {"stripe": stripe_stub, "stripe.error": stripe_stub.error}):
             from importlib import reload
+
             import api.services.stripe_service as stripe_mod
 
             reload(stripe_mod)
@@ -252,6 +251,7 @@ class TestGetSepaStatus:
 
         with patch.dict("sys.modules", {"stripe": stripe_stub, "stripe.error": stripe_stub.error}):
             from importlib import reload
+
             import api.services.stripe_service as stripe_mod
 
             reload(stripe_mod)
@@ -289,6 +289,7 @@ class TestGetSepaStatus:
 
         with patch.dict("sys.modules", {"stripe": stripe_stub, "stripe.error": stripe_stub.error}):
             from importlib import reload
+
             import api.services.stripe_service as stripe_mod
 
             reload(stripe_mod)
@@ -316,6 +317,7 @@ class TestGetAndSetSetting:
 
         with patch.dict("sys.modules", {"stripe": stripe_stub, "stripe.error": stripe_stub.error}):
             from importlib import reload
+
             import api.services.stripe_service as stripe_mod
 
             reload(stripe_mod)
@@ -332,6 +334,7 @@ class TestGetAndSetSetting:
 
         with patch.dict("sys.modules", {"stripe": stripe_stub, "stripe.error": stripe_stub.error}):
             from importlib import reload
+
             import api.services.stripe_service as stripe_mod
 
             reload(stripe_mod)
@@ -349,6 +352,7 @@ class TestGetAndSetSetting:
 
         with patch.dict("sys.modules", {"stripe": stripe_stub, "stripe.error": stripe_stub.error}):
             from importlib import reload
+
             import api.services.stripe_service as stripe_mod
 
             reload(stripe_mod)
@@ -370,6 +374,7 @@ class TestGetAndSetSetting:
 
         with patch.dict("sys.modules", {"stripe": stripe_stub, "stripe.error": stripe_stub.error}):
             from importlib import reload
+
             import api.services.stripe_service as stripe_mod
 
             reload(stripe_mod)
@@ -411,6 +416,7 @@ class TestGetSepaStatusMandateStatus:
         returns the result dict.
         """
         from importlib import reload
+
         import api.services.stripe_service as stripe_mod
 
         stub = _make_stripe_stub_with_mandate()
@@ -501,6 +507,7 @@ class TestGetSepaStatusMandateStatus:
         AND no exception propagates
         """
         from importlib import reload
+
         import api.services.stripe_service as stripe_mod
 
         stub = _make_stripe_stub_with_mandate()

@@ -4,9 +4,10 @@ Tests: get_conversation_labels, add_conversation_labels,
        add_private_note, assign_to_team
 """
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 from contextlib import asynccontextmanager
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 
 def _make_client():

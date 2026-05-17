@@ -3,9 +3,10 @@
 TDD RED phase — written before agent/middleware/customer_resolve.py exists.
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
+
+import pytest
 
 
 def _make_request(state: dict, system_message=None):

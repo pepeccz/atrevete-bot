@@ -12,14 +12,14 @@ Tests cover:
 All tests use mocks — no real database required.
 """
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
 from datetime import datetime
 from decimal import Decimal
+from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
+
+import pytest
 
 from database.models import Customer, Stylist
-
 
 # ============================================================================
 # Helpers
@@ -188,8 +188,9 @@ async def test_get_customer_404():
     WHEN GET /api/admin/customers/{non-existent-uuid} is called
     THEN HTTP 404 is returned
     """
-    from api.routes.admin import get_customer
     from fastapi import HTTPException
+
+    from api.routes.admin import get_customer
 
     mock_ctx = _build_session_mock(None)  # No customer found
     mock_user = {"sub": "admin"}

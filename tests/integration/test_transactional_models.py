@@ -18,7 +18,6 @@ which is handled correctly by Alembic migrations but not by create_all().
 """
 
 from datetime import datetime, timedelta
-from decimal import Decimal
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
@@ -33,12 +32,11 @@ from database.models import (
     ConversationHistory,
     ConversationMessage,
     Customer,
-    MessageRole,
-    # Pack,  # Removed - packs functionality eliminated
     Policy,
     Service,
     Stylist,
 )
+
 # from database.seeds.packs import seed_packs  # Removed - packs functionality eliminated
 from database.seeds.policies import seed_policies
 from database.seeds.services import seed_services

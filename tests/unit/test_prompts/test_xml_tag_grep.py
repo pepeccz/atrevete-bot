@@ -1,6 +1,7 @@
 """Tests that each middleware writes XML-fenced blocks to _slot_* keys."""
 from __future__ import annotations
 
+from datetime import UTC
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -98,18 +99,17 @@ async def test_customer_resolve_unknown_customer_emits_xml_tag():
 @pytest.mark.asyncio
 async def test_appointment_context_emits_xml_tag():
     """AppointmentContextMiddleware writes <upcoming_appointments>...</upcoming_appointments>."""
-    from agent.middleware.appointment_context import AppointmentContextMiddleware
-
     import uuid
+
+    from agent.middleware.appointment_context import AppointmentContextMiddleware
     customer_id = uuid.uuid4()
     req, captured = _make_request(state={"customer_id": customer_id})
 
-    from unittest.mock import MagicMock
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     appt = MagicMock()
     appt.id = uuid.uuid4()
-    appt.start_time = datetime(2026, 5, 10, 10, 0, tzinfo=timezone.utc)
+    appt.start_time = datetime(2026, 5, 10, 10, 0, tzinfo=UTC)
     appt.stylist = MagicMock()
     appt.stylist.name = "Pilar"
     appt.service_ids = []

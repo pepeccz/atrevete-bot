@@ -12,11 +12,9 @@ Tests the ai_agent_enabled check in api/routes/chatwoot.py:
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 from fastapi.testclient import TestClient
 
 from api.main import app
-
 
 # =============================================================================
 # Helpers

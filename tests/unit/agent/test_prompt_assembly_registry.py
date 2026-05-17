@@ -17,8 +17,8 @@ class TestPromptAssemblyImportsRegistry:
 
     def test_slot_registry_is_imported_from_agent_state(self) -> None:
         """SLOT_REGISTRY must be importable from prompt_assembly and be the same object as in state."""
-        import agent.state as state_module
         import agent.middleware.prompt_assembly as pa
+        import agent.state as state_module
 
         assert hasattr(pa, "SLOT_REGISTRY"), (
             "SLOT_REGISTRY not accessible in agent.middleware.prompt_assembly"

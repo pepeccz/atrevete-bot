@@ -7,7 +7,7 @@ of the number of appointments in the result set.
 
 import contextlib
 from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 from zoneinfo import ZoneInfo
 

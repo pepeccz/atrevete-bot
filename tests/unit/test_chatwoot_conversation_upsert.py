@@ -5,19 +5,18 @@ with the correct conversation_id and sender_name metadata after receiving
 an incoming message.
 """
 
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch, call
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from api.routes.chatwoot import upsert_conversation_history
 from api.models.chatwoot_webhook import (
     ChatwootConversation,
     ChatwootMessage,
     ChatwootSender,
     ChatwootWebhookPayload,
 )
-
+from api.routes.chatwoot import upsert_conversation_history
 
 # ============================================================================
 # Helpers
@@ -156,7 +155,7 @@ class TestUpsertConversationHistoryUpdate:
         existing.conversation_id = "42"
         existing.message_count = 3
         existing.metadata_ = {"sender_name": "Ana"}
-        existing.started_at = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        existing.started_at = datetime(2024, 1, 1, tzinfo=UTC)
         existing.ended_at = None
 
         session = _make_db_session()
@@ -185,7 +184,7 @@ class TestUpsertConversationHistoryUpdate:
         existing.conversation_id = "42"
         existing.message_count = 1
         existing.metadata_ = {}
-        existing.started_at = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        existing.started_at = datetime(2024, 1, 1, tzinfo=UTC)
         existing.ended_at = None
 
         session = _make_db_session()
@@ -208,7 +207,7 @@ class TestUpsertConversationHistoryUpdate:
         existing.message_count = 1
         existing.customer_id = None
         existing.metadata_ = {}
-        existing.started_at = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        existing.started_at = datetime(2024, 1, 1, tzinfo=UTC)
 
         customer_uuid = uuid4()
         customer_result = MagicMock(scalar_one_or_none=MagicMock(return_value=customer_uuid))
@@ -225,7 +224,7 @@ class TestUpsertConversationHistoryUpdate:
     @pytest.mark.asyncio
     async def test_update_does_not_change_started_at(self):
         """On UPDATE, started_at must remain unchanged."""
-        original_started = datetime(2024, 1, 1, tzinfo=timezone.utc)
+        original_started = datetime(2024, 1, 1, tzinfo=UTC)
         existing = MagicMock()
         existing.conversation_id = "42"
         existing.message_count = 2

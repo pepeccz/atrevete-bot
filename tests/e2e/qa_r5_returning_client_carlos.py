@@ -159,7 +159,7 @@ def decide_next_reply(turn_num: int, bot_message: str, history: list) -> tuple[s
 async def run_qa():
     print(f"\n{'='*70}")
     print("QA ROUND 5 — returning_client — carlos_returning_client")
-    print(f"Commits: 31deed9 + 67f421f + 13772c2")
+    print("Commits: 31deed9 + 67f421f + 13772c2")
     print(f"{'='*70}\n")
 
     conversation_id = str(uuid.uuid4())
@@ -351,7 +351,7 @@ async def run_qa():
         # ── Flow termination ─────────────────────────────────────────────────
         if booking_done:
             flow_complete = True
-            print(f"Carlos (final ack): Perfecto, gracias!")
+            print("Carlos (final ack): Perfecto, gracias!")
             ack_payload = {
                 "conversation_id": conversation_id,
                 "customer_phone": CUSTOMER_PHONE,

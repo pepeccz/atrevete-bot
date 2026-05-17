@@ -8,11 +8,9 @@ Spec refs: SPEC-1.1→1.5, SPEC-2.1→2.3, SPEC-3.1→3.3, SPEC-4.1→4.2, ADR-2
 from __future__ import annotations
 
 import json
-from contextlib import AsyncExitStack
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Shared mock setup helpers

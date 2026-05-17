@@ -94,7 +94,7 @@ async def run_qa() -> dict:
     run_start = datetime.now(UTC)
 
     print(f"\n{'='*70}")
-    print(f"QA Booking Complete — Maria (new client)")
+    print("QA Booking Complete — Maria (new client)")
     print(f"conversation_id: {conversation_id}")
     print(f"Started: {run_start.isoformat()}")
     print(f"{'='*70}\n")

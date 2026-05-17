@@ -5,7 +5,8 @@ Throwaway code. Run: ./venv/bin/python spikes/create_agent_migration/spike.py
 from __future__ import annotations
 
 import warnings
-from typing import Annotated, Any, Callable, NotRequired
+from collections.abc import Callable
+from typing import Any, NotRequired
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import AgentMiddleware

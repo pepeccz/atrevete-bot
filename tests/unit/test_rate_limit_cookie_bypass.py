@@ -6,9 +6,9 @@ Covers the 2 cases flagged in the PR-1 verify WARNING:
 - A request with no cookie falls through to the standard rate limit
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 
 # ---------------------------------------------------------------------------
 # Helpers

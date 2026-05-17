@@ -14,7 +14,6 @@ from typing import NotRequired, TypedDict
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # T1 — SLOT_REGISTRY tuple contract (Scenario A)
 # ---------------------------------------------------------------------------

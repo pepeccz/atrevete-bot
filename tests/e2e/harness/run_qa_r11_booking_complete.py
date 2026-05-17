@@ -35,7 +35,6 @@ sys.path.insert(0, "/home/pcabeza/Proyectos/atrevete-bot")
 import redis.asyncio as redis
 
 from shared.config import get_settings
-from shared.redis_client import INCOMING_STREAM
 from tests.e2e.harness.redis_harness import RedisTestHarness
 
 PERSONA_NAME = "María García"
@@ -196,11 +195,11 @@ async def run_qa():
     settings = get_settings()
     conversation_id = str(uuid.uuid4())
     print(f"\n{'='*60}")
-    print(f"QA Round 11 — booking_complete flow")
+    print("QA Round 11 — booking_complete flow")
     print(f"Persona: maria_new_client ({PERSONA_NAME})")
     print(f"Conversation ID: {conversation_id}")
     print(f"Started: {datetime.now(UTC).isoformat()}")
-    print(f"Commit: 55ab710")
+    print("Commit: 55ab710")
     print(f"{'='*60}\n")
 
     redis_password = settings.REDIS_PASSWORD
@@ -208,7 +207,7 @@ async def run_qa():
         redis_url = f"redis://:{redis_password}@localhost:6379/0"
     else:
         redis_url = "redis://localhost:6379/0"
-    print(f"Connecting to Redis at: localhost:6379/0")
+    print("Connecting to Redis at: localhost:6379/0")
     r = redis.from_url(redis_url, decode_responses=True)
     harness = RedisTestHarness(redis_client=r)
 
@@ -441,7 +440,7 @@ async def main():
         "appointment_in_db": appointment_in_db,
         "turns": turns,
     }
-    print(f"\n--- STRUCTURED RESULT ---")
+    print("\n--- STRUCTURED RESULT ---")
     print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
     return result
 

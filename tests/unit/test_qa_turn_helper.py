@@ -13,7 +13,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-
 # Patches target the *source* modules because qa_turn_helper uses local imports
 # inside each async function (from shared.config import get_settings, etc.)
 SETTINGS_PATCH = "shared.config.get_settings"

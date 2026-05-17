@@ -3,14 +3,12 @@
 import uuid
 from datetime import date, datetime, timedelta
 from decimal import Decimal
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
 
-from database.models import Invoice, InvoiceStatus, Payment, PaymentStatus, TokenUsage
-
+from database.models import InvoiceStatus
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -11,7 +11,7 @@ All tests patch DB helpers so they run without a live database.
 from __future__ import annotations
 
 import json
-from datetime import date, datetime
+from datetime import date
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 

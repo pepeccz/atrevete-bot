@@ -8,10 +8,9 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-import sys
 import time
 import uuid
-from dataclasses import dataclass, field, asdict
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -589,7 +588,7 @@ async def run_qa_flow() -> ConversationResult:
 
 async def main() -> None:
     print(f"\n{'#' * 60}")
-    print(f"  QA Run: booking_complete / maria_new_client")
+    print("  QA Run: booking_complete / maria_new_client")
     print(f"  Run ID: {RUN_ID}")
     print(f"  Started: {datetime.now(UTC).isoformat()}")
     print(f"{'#' * 60}\n")
@@ -597,7 +596,7 @@ async def main() -> None:
     result = await run_qa_flow()
 
     print(f"\n{'#' * 60}")
-    print(f"  RESULT SUMMARY")
+    print("  RESULT SUMMARY")
     print(f"{'#' * 60}")
     print(json.dumps(asdict(result), indent=2, default=str))
 

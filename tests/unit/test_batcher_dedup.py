@@ -3,7 +3,6 @@
 Tests scenarios S1–S3 from spec: fix-booking-duplicate-response.
 """
 
-import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest

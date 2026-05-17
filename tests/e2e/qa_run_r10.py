@@ -12,8 +12,6 @@ import asyncio
 import json
 import time
 import uuid
-import sys
-import os
 
 import redis.asyncio as redis
 
@@ -78,7 +76,7 @@ async def run_qa():
                 msg = await asyncio.wait_for(
                     pubsub.get_message(ignore_subscribe_messages=True), timeout=min(1.0, remaining)
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
             if msg is None:
                 await asyncio.sleep(0.05)

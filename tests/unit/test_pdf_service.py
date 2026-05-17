@@ -4,10 +4,7 @@ import uuid
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch, call
-
-import pytest
-
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -90,7 +87,6 @@ class TestGenerateInvoicePdf:
 
     async def test_generate_invoice_pdf_creates_file(self, tmp_path):
         """PDF is written to output_dir/{invoice_number}.pdf."""
-        from api.services.pdf_service import PdfService
 
         settings = _make_settings(invoices_dir=str(tmp_path))
         invoice = _make_invoice()
@@ -118,7 +114,6 @@ class TestGenerateInvoicePdf:
 
     async def test_generate_invoice_pdf_returns_string_path(self, tmp_path):
         """Return type is str (not Path)."""
-        from api.services.pdf_service import PdfService
 
         settings = _make_settings(invoices_dir=str(tmp_path))
         invoice = _make_invoice()
@@ -136,7 +131,6 @@ class TestGenerateInvoicePdf:
 
     async def test_generate_invoice_pdf_calls_write_in_executor(self, tmp_path):
         """_write_pdf is called via run_in_executor (not directly)."""
-        from api.services.pdf_service import PdfService
 
         settings = _make_settings(invoices_dir=str(tmp_path))
         invoice = _make_invoice()
@@ -171,7 +165,6 @@ class TestEnsurePdfExists:
 
     async def test_ensure_pdf_exists_returns_existing(self, tmp_path):
         """When pdf_path exists on disk, returns it without regenerating."""
-        from api.services.pdf_service import PdfService
 
         # Create an actual file
         existing_pdf = tmp_path / "ATR-2026-03-001.pdf"
@@ -192,7 +185,6 @@ class TestEnsurePdfExists:
 
     async def test_ensure_pdf_exists_regenerates_missing(self, tmp_path):
         """When pdf_path is set but file is missing on disk, regenerates PDF."""
-        from api.services.pdf_service import PdfService
 
         missing_path = str(tmp_path / "ATR-2026-03-001.pdf")
         # Do NOT create the file — it's missing
@@ -212,7 +204,6 @@ class TestEnsurePdfExists:
 
     async def test_ensure_pdf_exists_no_path_generates(self, tmp_path):
         """When invoice has no pdf_path, generates PDF."""
-        from api.services.pdf_service import PdfService
 
         generated_path = str(tmp_path / "ATR-2026-03-001.pdf")
 
@@ -239,7 +230,6 @@ class TestRenderHtml:
 
     def test_render_html_calls_template_with_invoice_number(self):
         """Template render receives invoice_number via invoice object."""
-        from api.services.pdf_service import PdfService
 
         settings = _make_settings()
         invoice = _make_invoice(invoice_number="ATR-2026-03-001")
@@ -257,7 +247,6 @@ class TestRenderHtml:
 
     def test_render_html_passes_amounts(self):
         """Template render receives correct maintenance and total amounts."""
-        from api.services.pdf_service import PdfService
 
         settings = _make_settings()
         invoice = _make_invoice(
@@ -286,7 +275,6 @@ class TestRenderHtml:
 
     def test_render_html_period_label_spanish(self):
         """period_label is in Spanish for known months."""
-        from api.services.pdf_service import PdfService
 
         settings = _make_settings()
         invoice = _make_invoice(year=2026, month=3)
@@ -310,7 +298,6 @@ class TestRenderHtml:
 
     def test_render_html_no_token_usage(self):
         """_render_html handles invoice with no token_usage (uses zeros)."""
-        from api.services.pdf_service import PdfService
 
         settings = _make_settings()
         invoice = _make_invoice(with_token_usage=False)
@@ -345,7 +332,6 @@ class TestWritePdf:
 
     def test_write_pdf_calls_weasyprint(self, tmp_path):
         """_write_pdf delegates to weasyprint HTML.write_pdf."""
-        from api.services.pdf_service import PdfService
 
         settings = _make_settings(invoices_dir=str(tmp_path))
         svc, _ = _build_pdf_service(settings, tmp_path)

@@ -19,9 +19,8 @@ import asyncio
 import json
 import os
 import subprocess
-import sys
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import redis.asyncio as aioredis
 
@@ -312,10 +311,10 @@ class FlowState:
                 return "Sí, confirmo"
             # Still showing slots?
             if "1." in last_agent or "1)" in last_agent:
-                print(f"[FSM-DEBUG] slot_selected: still showing slots, sending 1")
+                print("[FSM-DEBUG] slot_selected: still showing slots, sending 1")
                 return "1"
             if "?" in last_agent:
-                print(f"[FSM-DEBUG] slot_selected: has ? → check notes keywords")
+                print("[FSM-DEBUG] slot_selected: has ? → check notes keywords")
                 if "saber" in msg or "preferencia" in msg or "primera" in msg or "algo" in msg:
                     self.phase = self.PHASE_NOTES_ASKED
                     return "Sin notas"
@@ -434,7 +433,7 @@ async def run_qa():
             "customer_phone": CUSTOMER_PHONE,
             "message_text": user_text,
             "sender_name": "Luis Martínez",
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
         }
         wrapped = {"data": json.dumps(payload)}
         t0 = asyncio.get_event_loop().time()
@@ -451,7 +450,7 @@ async def run_qa():
             user_msg = state.next_message(last_agent_msg)
 
             if user_msg is None:
-                print(f"[HARNESS] FSM complete — no more turns needed.")
+                print("[HARNESS] FSM complete — no more turns needed.")
                 break
 
             turn_num += 1
@@ -610,7 +609,7 @@ async def main():
     # Save JSON result
     with open("/tmp/qa_r10_result.json", "w") as f:
         json.dump(result, f, indent=2, ensure_ascii=False)
-    print(f"[HARNESS] Result saved to /tmp/qa_r10_result.json")
+    print("[HARNESS] Result saved to /tmp/qa_r10_result.json")
 
     return result
 

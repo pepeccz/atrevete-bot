@@ -11,11 +11,11 @@ import json
 import os
 import sys
 import uuid
-from datetime import UTC, datetime
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 import redis.asyncio as redis_async
+
 from shared.config import get_settings
 from shared.redis_client import INCOMING_STREAM
 
@@ -103,7 +103,7 @@ async def run_addon_rejection_test():
     conversation_id = f"qa-maria-addon-{uuid.uuid4().hex[:10]}"
 
     print(f"\n{'='*60}")
-    print(f"FIX 3 TEST: Add-on loop / Bounded Retry Escalation")
+    print("FIX 3 TEST: Add-on loop / Bounded Retry Escalation")
     print(f"Conversation ID: {conversation_id}")
     print(f"{'='*60}\n")
 

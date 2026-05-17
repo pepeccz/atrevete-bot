@@ -3,10 +3,11 @@
 TDD RED phase — written before agent/middleware/disclosure.py exists.
 """
 
-import pytest
 from unittest.mock import MagicMock
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+
+import pytest
 from langchain.agents.middleware import ModelResponse
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 
 def _make_request(messages: list, system_message=None):
@@ -52,7 +53,7 @@ def test_disclosure_text_exported():
 @pytest.mark.asyncio
 async def test_disclosure_on_first_turn():
     """First turn (empty messages) → disclosure prepended to AI response content."""
-    from agent.middleware.disclosure import DisclosureMiddleware, DISCLOSURE_TEXT
+    from agent.middleware.disclosure import DISCLOSURE_TEXT, DisclosureMiddleware
 
     middleware = DisclosureMiddleware()
     request = _make_request(messages=[])
@@ -74,7 +75,7 @@ async def test_disclosure_on_first_turn():
 @pytest.mark.asyncio
 async def test_no_disclosure_on_subsequent_turn():
     """Second turn (prior messages exist) → disclosure NOT added to response."""
-    from agent.middleware.disclosure import DisclosureMiddleware, DISCLOSURE_TEXT
+    from agent.middleware.disclosure import DISCLOSURE_TEXT, DisclosureMiddleware
 
     middleware = DisclosureMiddleware()
     prior_messages = [

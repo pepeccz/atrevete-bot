@@ -10,7 +10,6 @@ Tests coverage:
 - Module structure
 """
 
-import pytest
 
 
 # ============================================================================
@@ -38,6 +37,7 @@ class TestNotificationToolsReexport:
     def test_reexport_is_same_class(self):
         """Test that re-export points to the same class."""
         from agent.tools.notification_tools import ChatwootClient as NotificationClient
+
         from shared.chatwoot_client import ChatwootClient as SharedClient
 
         # Should be the exact same class

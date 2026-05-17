@@ -3,7 +3,6 @@
 Tests written BEFORE implementation (TDD RED phase).
 """
 
-import pytest
 
 
 def test_agent_state_has_required_fields():
@@ -77,6 +76,7 @@ def test_agent_state_instantiation():
 def test_agent_state_has_customer_memories_field():
     """AgentState declares customer_memories as a NotRequired field."""
     from typing import get_type_hints
+
     from agent.state import AgentState
 
     hints = get_type_hints(AgentState, include_extras=True)

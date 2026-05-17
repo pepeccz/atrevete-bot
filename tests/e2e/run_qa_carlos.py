@@ -10,7 +10,6 @@ import asyncio
 import json
 import os
 import sys
-import time
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -37,6 +36,7 @@ MAX_TURNS = 12
 # ── LLM config ─────────────────────────────────────────────────────────────────
 # Read from env (same OpenRouter key used by the bot)
 from shared.config import get_settings
+
 settings = get_settings()
 OPENROUTER_API_KEY = settings.OPENROUTER_API_KEY
 LLM_MODEL = "openai/gpt-4.1-mini"  # same model as bot
@@ -203,7 +203,7 @@ async def capture_response(
 
 async def run_qa_flow() -> dict[str, Any]:
     print(f"\n{'='*60}")
-    print(f"QA Flow: returning_client | Persona: carlos_returning_client")
+    print("QA Flow: returning_client | Persona: carlos_returning_client")
     print(f"Conversation ID: {CONVERSATION_ID}")
     print(f"{'='*60}\n")
 
@@ -405,5 +405,5 @@ if __name__ == "__main__":
     print(f"Total Duration:    {result['total_duration_ms']}ms")
     print(f"Bugs:              {result['bugs_summary']}")
     print(f"Termination:       {result['termination_reason']}")
-    print(f"\nFull JSON result written to stdout:")
+    print("\nFull JSON result written to stdout:")
     print(json.dumps(result, ensure_ascii=False, indent=2))

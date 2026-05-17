@@ -1,7 +1,7 @@
 """Unit tests for shared/cache_signals.py — publish_cache_invalidation()."""
 
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 

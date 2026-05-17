@@ -278,7 +278,7 @@ async def run_qa():
         if booking_done:
             flow_complete = True
             # Send polite ack
-            print(f"Carlos (final ack): Perfecto, gracias!")
+            print("Carlos (final ack): Perfecto, gracias!")
             ack_payload = {
                 "conversation_id": conversation_id,
                 "customer_phone": CUSTOMER_PHONE,

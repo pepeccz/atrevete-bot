@@ -12,12 +12,10 @@ Tests cover:
 All tests use mocks — no real database required.
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
-from database.models import Customer
-
+import pytest
 
 # ============================================================================
 # Helpers
@@ -67,7 +65,7 @@ async def test_update_memories_saves_to_pg():
     WHEN PUT /api/admin/customers/{id}/memories is called
     THEN the DB UPDATE is executed and response contains the updated memories
     """
-    from api.routes.admin import update_customer_memories, UpdateMemoriesRequest
+    from api.routes.admin import UpdateMemoriesRequest, update_customer_memories
 
     updated_meta = {"memories": {"preferred_stylist_name": "Ana", "visit_count": 3}}
     mock_ctx = _build_session_mock_for_memories(True, updated_meta)
@@ -94,7 +92,7 @@ async def test_update_memories_preserves_other_metadata_keys():
     Note: The actual JSONB || merge happens in PG. We verify the response
     reflects what PG returned (simulated via the mock).
     """
-    from api.routes.admin import update_customer_memories, UpdateMemoriesRequest
+    from api.routes.admin import UpdateMemoriesRequest, update_customer_memories
 
     # Simulate PG returning the full merged metadata (includes whatsapp_name)
     updated_meta = {
@@ -125,7 +123,7 @@ async def test_update_memories_clear_with_empty_body():
     WHEN PUT /api/admin/customers/{id}/memories is called
     THEN memories is set to {} (clear operation)
     """
-    from api.routes.admin import update_customer_memories, UpdateMemoriesRequest
+    from api.routes.admin import UpdateMemoriesRequest, update_customer_memories
 
     # PG returns metadata with empty memories after clear
     updated_meta = {"memories": {}}
@@ -150,6 +148,7 @@ async def test_update_memories_rejects_extra_keys():
     THEN Pydantic raises a validation error (extra="forbid")
     """
     from pydantic import ValidationError
+
     from api.routes.admin import UpdateMemoriesRequest
 
     with pytest.raises(ValidationError) as exc_info:
@@ -166,8 +165,9 @@ async def test_update_memories_404():
     WHEN PUT /api/admin/customers/{id}/memories is called
     THEN HTTP 404 is returned
     """
-    from api.routes.admin import update_customer_memories, UpdateMemoriesRequest
     from fastapi import HTTPException
+
+    from api.routes.admin import UpdateMemoriesRequest, update_customer_memories
 
     mock_ctx = _build_session_mock_for_memories(False)
     mock_user = {"sub": "admin"}
@@ -190,7 +190,7 @@ async def test_update_memories_partial_update():
     WHEN PUT /api/admin/customers/{id}/memories is called
     THEN the response memories reflects what PG returned (partial keys)
     """
-    from api.routes.admin import update_customer_memories, UpdateMemoriesRequest
+    from api.routes.admin import UpdateMemoriesRequest, update_customer_memories
 
     updated_meta = {
         "memories": {

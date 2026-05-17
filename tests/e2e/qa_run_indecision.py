@@ -377,7 +377,7 @@ async def run_qa() -> dict[str, Any]:
     run_started_at = datetime.now(UTC)
 
     print(f"\n{'='*60}")
-    print(f"QA RUN: indecision / luis_indecisive_client")
+    print("QA RUN: indecision / luis_indecisive_client")
     print(f"conversation_id: {conversation_id}")
     print(f"customer_phone:  {customer_phone}")
     print(f"started_at:      {run_started_at.isoformat()}")
@@ -462,7 +462,7 @@ async def run_qa() -> dict[str, Any]:
         latency_ms = int((timestamp_received - timestamp_sent).total_seconds() * 1000)
 
         if timed_out:
-            print(f"[bot → user] ⚠️  TIMEOUT — no response within 60s")
+            print("[bot → user] ⚠️  TIMEOUT — no response within 60s")
             # If first timeout, send a polite follow-up
             if not any(t.get("timed_out") for t in turns):
                 print("[harness] Sending follow-up after first timeout")
@@ -617,7 +617,7 @@ async def run_qa() -> dict[str, Any]:
     }
 
     print(f"\n{'='*60}")
-    print(f"RESULT SUMMARY")
+    print("RESULT SUMMARY")
     print(f"  outcome:          {outcome}")
     print(f"  milestone:        {result['milestone_reached']}")
     print(f"  turns completed:  {len(turns)}")

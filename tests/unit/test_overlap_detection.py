@@ -9,22 +9,21 @@ Tests coverage:
 - Cancelled/No-show appointments (should NOT trigger overlap)
 """
 
-import pytest
-from datetime import datetime, timedelta
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4, UUID
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
+import pytest
 from fastapi import HTTPException
 
 from api.routes.admin import (
-    find_overlapping_appointments,
-    OverlapConflict,
     OverlapCheckResponse,
+    OverlapConflict,
+    find_overlapping_appointments,
     parse_datetime_as_madrid,
 )
-from database.models import Appointment, AppointmentStatus, Customer, Stylist, Service
-
+from database.models import Appointment, AppointmentStatus, Customer, Service, Stylist
 
 MADRID_TZ = ZoneInfo("Europe/Madrid")
 
@@ -417,7 +416,7 @@ class TestCheckOverlapsEndpoint:
         """Test endpoint returns no overlaps when slot is free."""
         with patch("api.routes.admin.get_async_session") as mock_session_ctx, \
              patch("api.routes.admin.find_overlapping_appointments") as mock_find:
-            
+
             mock_session = AsyncMock()
             mock_session_ctx.return_value.__aenter__.return_value = mock_session
 
@@ -450,7 +449,7 @@ class TestCheckOverlapsEndpoint:
         """Test endpoint returns overlaps when they exist."""
         with patch("api.routes.admin.get_async_session") as mock_session_ctx, \
              patch("api.routes.admin.find_overlapping_appointments") as mock_find:
-            
+
             mock_session = AsyncMock()
             mock_session_ctx.return_value.__aenter__.return_value = mock_session
 
@@ -547,7 +546,7 @@ class TestCreateAppointmentEndpoint:
         with patch("api.routes.admin.get_async_session") as mock_session_ctx, \
              patch("api.routes.admin.find_overlapping_appointments") as mock_find, \
              patch("api.routes.admin._safe_send_admin_appointment_template") as mock_notify:
-            
+
             mock_session = AsyncMock()
             mock_session_ctx.return_value.__aenter__.return_value = mock_session
 
@@ -600,7 +599,7 @@ class TestCreateAppointmentEndpoint:
             mock_session.commit = AsyncMock()
             mock_session.refresh = AsyncMock()
 
-            from api.routes.admin import create_appointment, CreateAppointmentRequest
+            from api.routes.admin import CreateAppointmentRequest, create_appointment
 
             request = CreateAppointmentRequest(
                 customer_id=customer_id,
@@ -627,7 +626,7 @@ class TestCreateAppointmentEndpoint:
         """Test creating appointment fails when overlaps exist and allow_overlap=false."""
         with patch("api.routes.admin.get_async_session") as mock_session_ctx, \
              patch("api.routes.admin.find_overlapping_appointments") as mock_find:
-            
+
             mock_session = AsyncMock()
             mock_session_ctx.return_value.__aenter__.return_value = mock_session
 
@@ -676,7 +675,7 @@ class TestCreateAppointmentEndpoint:
 
             mock_find.return_value = [mock_overlap_appt]
 
-            from api.routes.admin import create_appointment, CreateAppointmentRequest
+            from api.routes.admin import CreateAppointmentRequest, create_appointment
 
             request = CreateAppointmentRequest(
                 customer_id=customer_id,
@@ -704,7 +703,7 @@ class TestCreateAppointmentEndpoint:
         with patch("api.routes.admin.get_async_session") as mock_session_ctx, \
              patch("api.routes.admin.find_overlapping_appointments") as mock_find, \
              patch("api.routes.admin._safe_send_admin_appointment_template") as mock_notify:
-            
+
             mock_session = AsyncMock()
             mock_session_ctx.return_value.__aenter__.return_value = mock_session
 
@@ -753,7 +752,7 @@ class TestCreateAppointmentEndpoint:
 
             mock_find.return_value = [mock_overlap_appt]
 
-            from api.routes.admin import create_appointment, CreateAppointmentRequest
+            from api.routes.admin import CreateAppointmentRequest, create_appointment
 
             request = CreateAppointmentRequest(
                 customer_id=customer_id,
@@ -783,7 +782,7 @@ class TestCreateAppointmentEndpoint:
             # Customer doesn't exist
             mock_session.execute.return_value.scalar_one_or_none.return_value = None
 
-            from api.routes.admin import create_appointment, CreateAppointmentRequest
+            from api.routes.admin import CreateAppointmentRequest, create_appointment
 
             request = CreateAppointmentRequest(
                 customer_id=uuid4(),
@@ -831,7 +830,7 @@ class TestCreateAppointmentEndpoint:
 
             mock_session.execute = mock_execute
 
-            from api.routes.admin import create_appointment, CreateAppointmentRequest
+            from api.routes.admin import CreateAppointmentRequest, create_appointment
 
             request = CreateAppointmentRequest(
                 customer_id=customer_id,

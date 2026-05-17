@@ -74,7 +74,7 @@ class TurnRecord:
 
     message: str
     evidence: TurnEvidence
-    classification: "ClassifierOutput"
+    classification: ClassifierOutput
     bugs: list[dict[str, Any]] = field(default_factory=list)
     final_state: dict[str, Any] = field(default_factory=dict)
 
@@ -98,8 +98,8 @@ class AdaptiveHarness:
     """Fixture-friendly bundle for adaptive QA runs."""
 
     session: QARunSession
-    classifier: "ResponseClassifier"
-    reply_gen: "ReplyGenerator"
-    tracker: "MilestoneTracker"
-    redis: "RedisTestHarness"
+    classifier: ResponseClassifier
+    reply_gen: ReplyGenerator
+    tracker: MilestoneTracker
+    redis: RedisTestHarness
     db_cleaner: Any | None = None

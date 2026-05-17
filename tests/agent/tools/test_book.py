@@ -451,7 +451,8 @@ def _book_args(**overrides):
 @pytest.mark.asyncio
 async def test_confirmation_gate_false():
     """R7: confirmed=False → rejected, next_step=confirmation_required, no DB write."""
-    from unittest.mock import patch, AsyncMock, MagicMock
+    from unittest.mock import AsyncMock, MagicMock
+
     from agent.tools.book import book
 
     mock_session = MagicMock()

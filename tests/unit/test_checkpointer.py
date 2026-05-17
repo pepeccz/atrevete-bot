@@ -10,8 +10,9 @@ Unit tests for TASK-3: Store factory and initialization in agent/state/checkpoin
 - test_initialize_redis_store_raises_on_failure
 """
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch, call
 
 
 class TestGetRedisStore:

@@ -10,6 +10,7 @@ Seed: v2 checkpoint + batcher keys → call DELETE → verify 0 keys remain.
 from __future__ import annotations
 
 import asyncio
+
 import pytest
 
 # ---------------------------------------------------------------------------
@@ -77,6 +78,7 @@ async def test_delete_endpoint_removes_all_v2_keys_and_batcher():
     THEN all 6 keys are deleted and redis_keys_deleted >= 6.
     """
     import redis.asyncio as aioredis
+
     from shared.redis_conversation_cleanup import cleanup_conversation_redis_keys
 
     redis_async = aioredis.Redis(host="localhost", port=6379, decode_responses=False)
@@ -110,6 +112,7 @@ async def test_cleanup_helper_returns_zero_for_nonexistent_conversation():
     THEN total_deleted=0, no error, 200 OK.
     """
     import redis.asyncio as aioredis
+
     from shared.redis_conversation_cleanup import cleanup_conversation_redis_keys
 
     redis_async = aioredis.Redis(host="localhost", port=6379, decode_responses=False)

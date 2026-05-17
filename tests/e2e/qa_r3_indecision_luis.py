@@ -353,7 +353,7 @@ async def run_qa() -> dict:
     run_start = datetime.now(UTC)
 
     print(f"\n{'='*70}")
-    print(f"QA Round 3 — indecision / luis_indecisive_client")
+    print("QA Round 3 — indecision / luis_indecisive_client")
     print(f"conversation_id: {conversation_id}")
     print(f"phone:           {CUSTOMER_PHONE}")
     print(f"started_at:      {run_start.isoformat()}")
@@ -366,7 +366,7 @@ async def run_qa() -> dict:
         msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=0.1)
         if msg is None:
             break
-    print(f"✅ Subscribed BEFORE injecting\n")
+    print("✅ Subscribed BEFORE injecting\n")
 
     state = LuisState()
     turn_number = 0
@@ -612,7 +612,7 @@ async def run_qa() -> dict:
     }
 
     print(f"\n{'='*70}")
-    print(f"RESULT SUMMARY")
+    print("RESULT SUMMARY")
     print(f"  outcome:            {outcome}")
     print(f"  milestone:          {current_milestone}")
     print(f"  milestones_hit:     {milestones_hit}")

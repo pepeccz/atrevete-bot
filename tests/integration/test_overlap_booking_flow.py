@@ -7,15 +7,15 @@ These tests verify:
 - Edge cases are handled properly
 """
 
-import pytest
-from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import datetime
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
+import pytest
+
 from api.routes.admin import find_overlapping_appointments
 from database.models import Appointment, AppointmentStatus
-
 
 MADRID_TZ = ZoneInfo("Europe/Madrid")
 
@@ -31,7 +31,7 @@ class TestOverlapEdgeCases:
 
         mock_session = MagicMock()
         mock_result = MagicMock()
-        
+
         existing_appt = MagicMock(spec=Appointment)
         existing_appt.id = uuid4()
         existing_appt.start_time = start_time
@@ -53,7 +53,7 @@ class TestOverlapEdgeCases:
     async def test_one_minute_overlap_detected(self):
         """Test that even 1-minute overlap is detected."""
         stylist_id = uuid4()
-        
+
         existing_appt = MagicMock(spec=Appointment)
         existing_appt.id = uuid4()
         existing_appt.start_time = datetime(2024, 12, 15, 10, 0, tzinfo=MADRID_TZ)
@@ -79,7 +79,7 @@ class TestOverlapEdgeCases:
     async def test_back_to_back_no_overlap(self):
         """Test that back-to-back appointments don't overlap."""
         stylist_id = uuid4()
-        
+
         existing_appt = MagicMock(spec=Appointment)
         existing_appt.id = uuid4()
         existing_appt.start_time = datetime(2024, 12, 15, 10, 0, tzinfo=MADRID_TZ)
@@ -171,7 +171,7 @@ class TestOverlapEdgeCases:
     async def test_multiple_overlaps_returned(self):
         """Test that multiple overlapping appointments are all returned."""
         stylist_id = uuid4()
-        
+
         # Create 3 overlapping appointments at 10:00, 10:30, 11:00
         existing_appts = []
         times = [(10, 0), (10, 30), (11, 0)]
@@ -209,7 +209,7 @@ class TestAgentBookingIsolation:
         """Test that admin overlap detection is separate from agent booking."""
         # This test verifies that the admin overlap function exists and works
         # independently from the agent's availability_service
-        
+
         stylist_id = uuid4()
         start_time = datetime(2024, 12, 15, 10, 0, tzinfo=MADRID_TZ)
 

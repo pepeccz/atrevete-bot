@@ -10,7 +10,7 @@ from unittest.mock import patch
 
 import pytest
 
-from shared.config import get_settings, Settings
+from shared.config import Settings
 
 
 class TestBackwardCompatibilityFeatureFlag:
@@ -81,7 +81,7 @@ class TestOptimizedPromptLoading:
     @pytest.mark.asyncio
     async def test_optimized_prompt_loads_successfully(self):
         """Test that optimized prompt loads correctly."""
-        from agent.prompts.loader import get_system_prompt, clear_prompt_cache
+        from agent.prompts.loader import clear_prompt_cache, get_system_prompt
 
         # Clear cache for fresh load
         clear_prompt_cache()
@@ -95,7 +95,7 @@ class TestOptimizedPromptLoading:
     @pytest.mark.asyncio
     async def test_optimized_prompt_contains_all_shared_sections(self):
         """Test that optimized prompt contains all shared sections."""
-        from agent.prompts.loader import get_system_prompt, clear_prompt_cache
+        from agent.prompts.loader import clear_prompt_cache, get_system_prompt
 
         clear_prompt_cache()
 
@@ -229,8 +229,9 @@ class TestFallbackMechanisms:
 
     def test_legacy_prompt_fallback_on_file_not_found(self):
         """Test that legacy prompt returns fallback on missing file."""
-        from agent.prompts import load_maite_system_prompt
         from unittest.mock import patch
+
+        from agent.prompts import load_maite_system_prompt
 
         with patch("builtins.open", side_effect=FileNotFoundError()):
             prompt = load_maite_system_prompt()
@@ -241,7 +242,7 @@ class TestFallbackMechanisms:
 
     def test_optimized_prompt_handles_missing_files(self):
         """Test that optimized prompt handles missing files gracefully."""
-        from agent.prompts.loader import load_markdown, get_system_prompt, clear_prompt_cache
+        from agent.prompts.loader import clear_prompt_cache, load_markdown
 
         # Loading non-existent file should return empty string
         content = load_markdown("nonexistent.md", "shared")
@@ -268,8 +269,8 @@ class TestBookingFlowCompatibility:
     async def test_booking_works_with_optimized_prompts(self):
         """Test that booking flow works with optimized prompts."""
         from agent.prompts.loader import (
-            build_step_context,
             build_layered_messages,
+            build_step_context,
             clear_prompt_cache,
         )
 
@@ -311,10 +312,10 @@ class TestConfigurationDescription:
 
     def test_use_optimized_prompts_has_description(self):
         """Test that USE_OPTIMIZED_PROMPTS has a description."""
-        from shared.config import Settings
-
         # Check the field definition
         import inspect
+
+        from shared.config import Settings
 
         source = inspect.getsource(Settings)
 

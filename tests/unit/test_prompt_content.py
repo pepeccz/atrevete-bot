@@ -6,8 +6,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 PROMPTS_DIR = Path(__file__).parent.parent.parent / "agent" / "prompts" / "shared"
 
 
@@ -128,6 +126,6 @@ def test_no_rule_duplicated_across_prompt_files():
                         duplicates.append((name_a, name_b, para_a[:80]))
 
     assert duplicates == [], (
-        f"Duplicate paragraphs found across prompt files:\n"
+        "Duplicate paragraphs found across prompt files:\n"
         + "\n".join(f"  {a} ↔ {b}: {snip!r}" for a, b, snip in duplicates[:3])
     )

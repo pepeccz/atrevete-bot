@@ -3,14 +3,11 @@
 import uuid
 from datetime import UTC, datetime
 from decimal import Decimal
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
+from unittest.mock import MagicMock, patch
 
 from api.models.token_usage import (
     CurrentMonthUsageResponse,
     TokenPricingResponse,
-    TokenUsageListResponse,
     TokenUsageResponse,
 )
 

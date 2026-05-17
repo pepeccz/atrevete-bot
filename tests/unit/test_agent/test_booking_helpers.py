@@ -10,6 +10,7 @@ import pytest
 async def _db_available() -> bool:
     try:
         from sqlalchemy import text
+
         from database.connection import get_async_session
 
         async with get_async_session() as session:
@@ -38,7 +39,9 @@ async def db_session():
 async def principal_with_children(db_session):
     """Seed principal 'Peinado Test' + active children 'Peinado Novia Test', 'Peinado Fiesta Test'."""
     from uuid import uuid4
+
     from sqlalchemy import delete
+
     from database.models import Service, ServiceCategory
 
     principal_name = "Peinado Test"
@@ -83,7 +86,9 @@ async def principal_with_children(db_session):
 async def child_with_sibling(db_session):
     """Seed 'Peinado Fiesta Test2' with sibling 'Peinado Novia Test2', parent 'Peinado Test2'."""
     from uuid import uuid4
+
     from sqlalchemy import delete
+
     from database.models import Service, ServiceCategory
 
     parent_name = "Peinado Test2"
@@ -115,7 +120,9 @@ async def child_with_sibling(db_session):
 async def principal_no_children(db_session):
     """Seed 'Manicura Test' principal with NO active children."""
     from uuid import uuid4
+
     from sqlalchemy import delete
+
     from database.models import Service, ServiceCategory
 
     name = "Manicura Test"
@@ -145,7 +152,9 @@ async def principal_no_children(db_session):
 async def child_no_siblings(db_session):
     """Seed 'Corte de Mujer Test' as only child of 'Corte Test' — no siblings."""
     from uuid import uuid4
+
     from sqlalchemy import delete
+
     from database.models import Service, ServiceCategory
 
     parent_name = "Corte Test"
@@ -256,7 +265,9 @@ async def test_principal_variant_fires_regardless_of_audience(
 async def stylists_mixed(db_session):
     """Insert 3 active + 1 inactive stylist; clean up after."""
     from uuid import uuid4
+
     from sqlalchemy import delete
+
     from database.models import Stylist
 
     names = [
@@ -289,7 +300,9 @@ async def stylists_mixed(db_session):
 async def no_active_stylists(db_session):
     """Insert only inactive stylists for testing empty list scenario."""
     from uuid import uuid4
+
     from sqlalchemy import delete
+
     from database.models import Stylist
 
     names = ["Solo Inactiva Test A", "Solo Inactiva Test B"]

@@ -13,14 +13,13 @@ Tests cover:
 All tests use mocks — no real database required.
 """
 
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import UUID, uuid4
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, call, patch
-from uuid import uuid4, UUID
-from datetime import datetime, timezone
-from decimal import Decimal
 
-from database.models import Appointment, AppointmentStatus, Customer, Service, Stylist
-
+from database.models import Appointment, AppointmentStatus, Service, Stylist
 
 # ============================================================================
 # Helpers
@@ -51,13 +50,13 @@ def _make_appointment_mock(
     appt.id = uuid4()
     appt.stylist = stylist
     appt.service_ids = service_ids
-    appt.start_time = start_time or datetime(2026, 4, 1, 10, 0, 0, tzinfo=timezone.utc)
+    appt.start_time = start_time or datetime(2026, 4, 1, 10, 0, 0, tzinfo=UTC)
     appt.duration_minutes = 60
     appt.status = status
     appt.first_name = "María"
     appt.last_name = "García"
     appt.notes = None
-    appt.created_at = datetime(2026, 3, 25, 14, 0, 0, tzinfo=timezone.utc)
+    appt.created_at = datetime(2026, 3, 25, 14, 0, 0, tzinfo=UTC)
     return appt
 
 
@@ -155,10 +154,10 @@ async def test_get_customer_appointments_ordered_by_start_time_desc():
     stylist = _make_stylist_mock()
     svc_id = uuid4()
     newer = _make_appointment_mock(
-        stylist, [svc_id], start_time=datetime(2026, 4, 10, 10, 0, tzinfo=timezone.utc)
+        stylist, [svc_id], start_time=datetime(2026, 4, 10, 10, 0, tzinfo=UTC)
     )
     older = _make_appointment_mock(
-        stylist, [svc_id], start_time=datetime(2026, 3, 1, 10, 0, tzinfo=timezone.utc)
+        stylist, [svc_id], start_time=datetime(2026, 3, 1, 10, 0, tzinfo=UTC)
     )
     # Mock returns in the order the endpoint receives from DB (DESC already applied)
     mock_ctx = _build_session_mock_for_appointments(True, [newer, older])
@@ -282,8 +281,9 @@ async def test_get_customer_appointments_404():
     WHEN GET /api/admin/customers/{id}/appointments is called
     THEN HTTP 404 is returned
     """
-    from api.routes.admin import get_customer_appointments
     from fastapi import HTTPException
+
+    from api.routes.admin import get_customer_appointments
 
     mock_ctx = _build_session_mock_for_appointments(False, [])
     mock_user = {"sub": "admin"}

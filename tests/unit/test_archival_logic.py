@@ -10,7 +10,6 @@ import pickle
 from datetime import datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
-from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -18,10 +17,9 @@ from agent.workers.conversation_archiver import (
     CUTOFF_HOURS,
     TIMEZONE,
     find_expired_checkpoints,
-    upsert_conversation_to_db,
     retrieve_and_parse_checkpoint,
+    upsert_conversation_to_db,
 )
-from database.models import MessageRole
 
 # ============================================================================
 # Checkpoint Age Calculation Tests
@@ -597,8 +595,10 @@ async def test_archive_checkpoint_cleanup_deletes_all_4_families_including_check
     Phase 6 spec requirement: archiver must delete checkpoint_latest: (was missing before),
     use async Redis, and NOT delete batcher:pending.
     """
+    from unittest.mock import AsyncMock, MagicMock
+
     import fakeredis.aioredis as fakeredis_async
-    from unittest.mock import AsyncMock, MagicMock, patch
+
     from agent.workers.conversation_archiver import archive_checkpoint
 
     redis_async = fakeredis_async.FakeRedis()
@@ -678,8 +678,10 @@ async def test_archive_checkpoint_cleanup_no_checkpoint_latest_keys_no_error():
     WHEN archive_checkpoint runs
     THEN the 3 existing families are deleted, no error raised.
     """
+    from unittest.mock import AsyncMock, MagicMock
+
     import fakeredis.aioredis as fakeredis_async
-    from unittest.mock import AsyncMock, MagicMock, patch
+
     from agent.workers.conversation_archiver import archive_checkpoint
 
     redis_async = fakeredis_async.FakeRedis()

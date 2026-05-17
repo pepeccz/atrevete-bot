@@ -14,7 +14,6 @@ from typing import Any
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Body canonicalization — ensures JSON bodies match even if key order varies
 # ---------------------------------------------------------------------------
@@ -148,6 +147,7 @@ async def _wipe_test_phone_appointments(request: pytest.FixtureRequest) -> None:
         return
     try:
         from sqlalchemy import text
+
         from database.connection import get_async_session
 
         async with get_async_session() as session:

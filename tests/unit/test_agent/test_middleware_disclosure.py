@@ -4,10 +4,11 @@ RED phase: tests for the refactored predicate-based first-turn detection.
 """
 from __future__ import annotations
 
+from unittest.mock import MagicMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock
-from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain.agents.middleware import ModelResponse
+from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
 
 def _make_request(messages: list):
@@ -87,7 +88,7 @@ def test_predicate_ai_with_whitespace_only_content_is_false():
 @pytest.mark.asyncio
 async def test_disclosure_prepended_on_first_turn_empty_state():
     """Empty prior messages → disclosure prepended to first textual AIMessage."""
-    from agent.middleware.disclosure import DisclosureMiddleware, DISCLOSURE_TEXT
+    from agent.middleware.disclosure import DISCLOSURE_TEXT, DisclosureMiddleware
 
     mw = DisclosureMiddleware()
     request = _make_request(messages=[])
@@ -106,7 +107,7 @@ async def test_disclosure_prepended_on_first_turn_empty_state():
 @pytest.mark.asyncio
 async def test_disclosure_prepended_when_prior_messages_have_only_human():
     """Prior = [HumanMessage] (tool-loop start) → still first turn → disclosure prepended."""
-    from agent.middleware.disclosure import DisclosureMiddleware, DISCLOSURE_TEXT
+    from agent.middleware.disclosure import DISCLOSURE_TEXT, DisclosureMiddleware
 
     mw = DisclosureMiddleware()
     request = _make_request(messages=[HumanMessage(content="Hola")])
@@ -123,7 +124,7 @@ async def test_disclosure_prepended_when_prior_messages_have_only_human():
 @pytest.mark.asyncio
 async def test_disclosure_NOT_prepended_on_tool_call_only_response():
     """First turn but response has only tool-call AIMessage (empty content) → no prepend."""
-    from agent.middleware.disclosure import DisclosureMiddleware, DISCLOSURE_TEXT
+    from agent.middleware.disclosure import DISCLOSURE_TEXT, DisclosureMiddleware
 
     mw = DisclosureMiddleware()
     request = _make_request(messages=[HumanMessage(content="Hola")])
@@ -141,7 +142,7 @@ async def test_disclosure_NOT_prepended_on_tool_call_only_response():
 @pytest.mark.asyncio
 async def test_disclosure_NOT_prepended_when_prior_textual_ai_exists():
     """Prior messages include a textual AIMessage → subsequent turn → no disclosure."""
-    from agent.middleware.disclosure import DisclosureMiddleware, DISCLOSURE_TEXT
+    from agent.middleware.disclosure import DISCLOSURE_TEXT, DisclosureMiddleware
 
     mw = DisclosureMiddleware()
     prior = [

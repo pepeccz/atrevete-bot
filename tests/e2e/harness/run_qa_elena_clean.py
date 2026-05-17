@@ -264,7 +264,7 @@ async def run_test() -> dict:
     try:
         # Subscribe BEFORE injecting (critical harness rule)
         await harness.prepare_response_capture()
-        print(f"Subscribed to outgoing_messages BEFORE injecting\n")
+        print("Subscribed to outgoing_messages BEFORE injecting\n")
 
         tracker = ConversationTracker()
         first_message = "Hola, quiero cortarme el pelo y hacerme un tinte"
@@ -600,7 +600,7 @@ async def main():
         # Checkpoint state capture failed — evaluate L2 from DB data instead
         l2_pass = db_results.get("multi_service_found", False) and len(context_bugs) == 0
         print(f"L2 (Context Retention): {'PASS' if l2_pass else 'FAIL'}")
-        print(f"   NOTE: Checkpoint state unavailable (Redis index error), using DB as proxy")
+        print("   NOTE: Checkpoint state unavailable (Redis index error), using DB as proxy")
         print(f"   Multi-service in DB: {db_results.get('multi_service_found', False)}")
     else:
         l2_pass = len(selected_svc) >= 2 and len(context_bugs) == 0

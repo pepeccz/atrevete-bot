@@ -5,8 +5,6 @@ RED phase: all tests should FAIL before _validate_full_name is implemented.
 """
 from __future__ import annotations
 
-import pytest
-
 from agent.tools._booking_helpers import _validate_full_name
 
 

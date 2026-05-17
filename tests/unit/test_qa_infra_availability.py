@@ -14,12 +14,7 @@ integration-level check run via scripts/measure_cache_hit_rate.py.
 
 from __future__ import annotations
 
-import os
-import sys
 from pathlib import Path
-
-import pytest
-
 
 # =============================================================================
 # T0.1 — QA infra structural verification

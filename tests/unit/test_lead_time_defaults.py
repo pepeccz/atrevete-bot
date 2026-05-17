@@ -10,7 +10,6 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # T1.1 — check_availability: default lead-time is 3 when settings row absent
 # ---------------------------------------------------------------------------
@@ -67,9 +66,9 @@ async def test_default_lead_time_uses_settings_when_present():
 @pytest.mark.asyncio
 async def test_next_available_applies_min_days_3_fallback_on_exception():
     """next_available fallback must use min_days=3 when _load_lead_time_settings raises."""
-    from datetime import date, timedelta
-    from unittest.mock import AsyncMock, patch
     import json
+    from datetime import date
+    from unittest.mock import AsyncMock, patch
 
     today = date.today()
     requested = today  # triggers floor

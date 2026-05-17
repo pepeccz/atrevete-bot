@@ -7,7 +7,6 @@ Asserts:
 - The original 5 tools are still present.
 """
 
-import pytest
 
 EXPECTED_TOOL_NAMES = {
     "check_availability",

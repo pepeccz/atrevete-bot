@@ -4,10 +4,8 @@ Tests that the admin GET /conversations/{id} Redis-sourced path correctly
 deserializes LangChain constructor dicts into plain {role, content} dicts.
 """
 
-import pytest
 
 from api.routes.admin import _deserialize_langchain_message
-
 
 # ============================================================================
 # Tests for _deserialize_langchain_message helper

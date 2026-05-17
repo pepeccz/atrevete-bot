@@ -7,10 +7,7 @@ TDD: tasks 1.1 (RED) — 7 new cases for REQ-P3-1 through REQ-P3-4.
 
 from datetime import date
 
-import pytest
-
 from agent.booking.resolvers.time_resolver import resolve_relative_date
-
 
 # ---------------------------------------------------------------------------
 # Helpers

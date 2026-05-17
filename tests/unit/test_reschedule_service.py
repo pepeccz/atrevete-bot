@@ -16,8 +16,6 @@ from zoneinfo import ZoneInfo
 import pytest
 
 from agent.services.reschedule_service import (
-    RescheduleEligibility,
-    RescheduleResult,
     execute_reschedule,
     validate_reschedule_eligibility,
 )

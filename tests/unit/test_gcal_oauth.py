@@ -20,21 +20,19 @@ from __future__ import annotations
 
 # Docker-only packages (google_auth_oauthlib, googleapiclient) are stubbed in
 # tests/conftest.py BEFORE this module is imported. No need to re-stub here.
-
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from shared.encryption import decrypt_token, encrypt_token  # noqa: E402
+import agent.services.gcal_credential_factory as _factory_module  # noqa: E402
+import agent.services.google_oauth_service as _oauth_module  # noqa: E402
+import shared.encryption as _encryption_module  # noqa: E402
 from agent.services.gcal_credential_factory import (  # noqa: E402
     GCalAuthError,
     get_google_credentials,
 )
 from agent.services.google_oauth_service import GoogleOAuthService  # noqa: E402
-import agent.services.gcal_credential_factory as _factory_module  # noqa: E402
-import agent.services.google_oauth_service as _oauth_module  # noqa: E402
-import shared.encryption as _encryption_module  # noqa: E402
-
+from shared.encryption import decrypt_token, encrypt_token  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Helpers

@@ -107,7 +107,7 @@ async def run_qa() -> dict:
     customer_phone = "+34600111444"
     
     print(f"\n{'='*80}")
-    print(f"QA FULL BOOKING TEST — Stylist Selection State-Driven Refactor Validation")
+    print("QA FULL BOOKING TEST — Stylist Selection State-Driven Refactor Validation")
     print(f"conversation_id: {conversation_id}")
     print(f"customer_phone: {customer_phone}")
     print(f"Timestamp: {datetime.now(UTC).isoformat()}")
@@ -185,7 +185,7 @@ async def run_qa() -> dict:
         
         # Basic checks: non-empty, no traceback, coherent Spanish
         if not agent_response or "Traceback" in agent_response or "Error" in agent_response:
-            print(f"   ⚠️  Response quality issue")
+            print("   ⚠️  Response quality issue")
             turn_pass = False
         
         # Checkpoint-specific checks
@@ -285,9 +285,9 @@ async def run_qa() -> dict:
     
     print(f"\nOverall result: {'✅ PASS' if overall_pass and final_state['appointment_created'] else '⚠️  INCOMPLETE'}")
     if final_state['appointment_created']:
-        print(f"🎉 BOOKING SUCCESSFUL — Full flow completed with refactor validated")
+        print("🎉 BOOKING SUCCESSFUL — Full flow completed with refactor validated")
     else:
-        print(f"⏳ Flow incomplete or final state not captured (may need longer test)")
+        print("⏳ Flow incomplete or final state not captured (may need longer test)")
     
     print()
 

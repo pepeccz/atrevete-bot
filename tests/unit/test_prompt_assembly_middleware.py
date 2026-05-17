@@ -1,6 +1,7 @@
 """C2/C3a/C3b-RED: Tests for PromptAssemblyMiddleware."""
 from __future__ import annotations
 
+from datetime import UTC
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -36,6 +37,7 @@ class FakeRequest:
 async def test_slot_writers_do_not_mutate_system_message_customer():
     """CustomerResolveMiddleware must not mutate system_message.content."""
     from unittest.mock import patch
+
     from agent.middleware.customer_resolve import CustomerResolveMiddleware
 
     phone = "+34600111222"
@@ -63,8 +65,9 @@ async def test_slot_writers_do_not_mutate_system_message_customer():
 async def test_slot_writers_do_not_mutate_system_message_appointment():
     """AppointmentContextMiddleware must not mutate system_message.content."""
     import uuid
-    from datetime import datetime, timezone
+    from datetime import datetime
     from unittest.mock import patch
+
     from agent.middleware.appointment_context import AppointmentContextMiddleware
     from database.models import AppointmentStatus
 
@@ -73,7 +76,7 @@ async def test_slot_writers_do_not_mutate_system_message_appointment():
 
     appt = MagicMock()
     appt.id = uuid.uuid4()
-    appt.start_time = datetime(2026, 5, 15, 10, 0, tzinfo=timezone.utc)
+    appt.start_time = datetime(2026, 5, 15, 10, 0, tzinfo=UTC)
     appt.stylist = MagicMock()
     appt.stylist.name = "Pilar"
     appt.service_ids = []
@@ -109,6 +112,7 @@ async def test_slot_writers_do_not_mutate_system_message_appointment():
 async def test_slot_writers_do_not_mutate_system_message_dynamic():
     """DynamicPromptMiddleware must not mutate system_message.content."""
     from unittest.mock import patch
+
     from agent.middleware.dynamic_prompt import DynamicPromptMiddleware
 
     req = FakeRequest(system_content="original", state={})

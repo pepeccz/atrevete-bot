@@ -16,7 +16,7 @@ from shared.config import get_settings
 from shared.redis_client import INCOMING_STREAM
 
 if TYPE_CHECKING:
-    from tests.e2e.harness.run_models import QARunIdentity, QARunSession, TurnEvidence
+    from tests.e2e.harness.run_models import QARunIdentity, QARunSession
 
 
 # =============================================================================
@@ -129,7 +129,7 @@ def validate_tool_trace(evidence: list[ToolCallEvidence], flow_type: str) -> Too
 class CheckpointToolEvidenceAdapter:
     """Collects tool call evidence from LangGraph checkpoint state."""
 
-    def __init__(self, harness: "RedisTestHarness"):
+    def __init__(self, harness: RedisTestHarness):
         self._harness = harness
 
     async def collect(self, conversation_id: str, turn_index: int) -> list[ToolCallEvidence]:
@@ -164,7 +164,7 @@ class StreamToolEvidenceAdapter:
 
     STREAM_KEY_TEMPLATE = "qa_tool_trace:{conversation_id}"
 
-    def __init__(self, harness: "RedisTestHarness"):
+    def __init__(self, harness: RedisTestHarness):
         self._harness = harness
 
     async def collect(self, conversation_id: str, turn_index: int) -> list[ToolCallEvidence]:
@@ -245,7 +245,7 @@ class ResponseClassifier:
     def classify(
         self,
         bot_response: str,
-        milestone: "Milestone",
+        milestone: Milestone,
         persona: Any,
     ) -> ClassifierOutput:
         """Classify bot response against a milestone."""
@@ -483,9 +483,9 @@ class RedisTestHarness:
 
     def create_session(
         self,
-        identity: "QARunIdentity",
+        identity: QARunIdentity,
         batch_window_seconds: float = 3.0,
-    ) -> "QARunSession":
+    ) -> QARunSession:
         """Create a new QA run session bound to this harness."""
         from tests.e2e.harness.run_models import QARunSession
 
@@ -614,7 +614,7 @@ class RedisTestHarness:
     async def execute_turn(
         self,
         user_message: str,
-        session: "QARunSession",
+        session: QARunSession,
         timeout: float = 60.0,
         raise_on_timeout: bool = True,
     ) -> dict[str, Any]:

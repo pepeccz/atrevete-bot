@@ -11,12 +11,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import sys
-import time
+import re
 import uuid
 from datetime import UTC, datetime
 from typing import Any
-import re
 
 import redis.asyncio as aioredis
 

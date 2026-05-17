@@ -11,14 +11,13 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # T-02: TraceContext + ContextVar module
@@ -42,7 +41,7 @@ async def test_contextvar_isolated_across_tasks():
     async def task_a() -> None:
         ctx = TraceContext(
             conversation_id="conv_a",
-            turn_started_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+            turn_started_at=datetime(2026, 1, 1, tzinfo=UTC),
         )
         token = current_trace_ctx.set(ctx)
         await asyncio.sleep(0)  # yield control
@@ -52,7 +51,7 @@ async def test_contextvar_isolated_across_tasks():
     async def task_b() -> None:
         ctx = TraceContext(
             conversation_id="conv_b",
-            turn_started_at=datetime(2026, 1, 2, tzinfo=timezone.utc),
+            turn_started_at=datetime(2026, 1, 2, tzinfo=UTC),
         )
         token = current_trace_ctx.set(ctx)
         await asyncio.sleep(0)  # yield control
@@ -80,7 +79,7 @@ def test_format_ts_no_colons():
     """format_ts(dt) output contains no ':' characters."""
     from agent.tracing.context import format_ts
 
-    dt = datetime(2026, 5, 16, 14, 32, 1, 123000, tzinfo=timezone.utc)
+    dt = datetime(2026, 5, 16, 14, 32, 1, 123000, tzinfo=UTC)
     result = format_ts(dt)
     assert ":" not in result
     assert "2026" in result
@@ -93,7 +92,7 @@ def test_seq_increments_per_ctx():
 
     ctx = TraceContext(
         conversation_id="test",
-        turn_started_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        turn_started_at=datetime(2026, 1, 1, tzinfo=UTC),
     )
     assert next(ctx.seq) == 0
     assert next(ctx.seq) == 1
@@ -140,7 +139,7 @@ async def test_request_hook_writes_req_json(tmp_path: Path):
     from agent.tracing.context import TraceContext, current_trace_ctx
     from agent.tracing.httpx_hooks import request_hook
 
-    dt = datetime(2026, 5, 16, 14, 32, 1, 123000, tzinfo=timezone.utc)
+    dt = datetime(2026, 5, 16, 14, 32, 1, 123000, tzinfo=UTC)
     ctx = TraceContext(conversation_id="v2:test-123", turn_started_at=dt)
     token = current_trace_ctx.set(ctx)
 
@@ -177,7 +176,7 @@ async def test_response_hook_pairs_seq_with_request(tmp_path: Path):
     from agent.tracing.context import TraceContext, current_trace_ctx
     from agent.tracing.httpx_hooks import response_hook
 
-    dt = datetime(2026, 5, 16, 14, 32, 1, 0, tzinfo=timezone.utc)
+    dt = datetime(2026, 5, 16, 14, 32, 1, 0, tzinfo=UTC)
     ctx = TraceContext(conversation_id="conv-456", turn_started_at=dt)
     token = current_trace_ctx.set(ctx)
 
@@ -220,7 +219,7 @@ async def test_hook_failure_does_not_raise():
     from agent.tracing.context import TraceContext, current_trace_ctx
     from agent.tracing.httpx_hooks import request_hook
 
-    dt = datetime(2026, 5, 16, 14, 32, 1, 0, tzinfo=timezone.utc)
+    dt = datetime(2026, 5, 16, 14, 32, 1, 0, tzinfo=UTC)
     ctx = TraceContext(conversation_id="conv-fail", turn_started_at=dt)
     token = current_trace_ctx.set(ctx)
 
@@ -268,7 +267,7 @@ async def test_response_double_read_safe():
     from agent.tracing.context import TraceContext, current_trace_ctx
     from agent.tracing.httpx_hooks import response_hook
 
-    dt = datetime(2026, 5, 16, 14, 32, 1, 0, tzinfo=timezone.utc)
+    dt = datetime(2026, 5, 16, 14, 32, 1, 0, tzinfo=UTC)
     ctx = TraceContext(conversation_id="conv-double-read", turn_started_at=dt)
     token = current_trace_ctx.set(ctx)
 

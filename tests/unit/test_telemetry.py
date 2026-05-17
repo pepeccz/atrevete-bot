@@ -17,7 +17,6 @@ from uuid import uuid4
 import pytest
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-
 # ---------------------------------------------------------------------------
 # Helpers under test — imported from agent.main after GREEN implementation
 # ---------------------------------------------------------------------------

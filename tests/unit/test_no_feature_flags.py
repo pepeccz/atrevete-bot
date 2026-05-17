@@ -4,7 +4,6 @@ R-IDs: R15
 """
 from __future__ import annotations
 
-import subprocess
 from pathlib import Path
 
 AGENT_DIR = Path(__file__).parent.parent.parent / "agent"

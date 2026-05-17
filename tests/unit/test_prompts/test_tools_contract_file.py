@@ -3,8 +3,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 _SHARED = Path(__file__).parent.parent.parent.parent / "agent" / "prompts" / "shared"
 _FILE = _SHARED / "tools_contract.md"
 

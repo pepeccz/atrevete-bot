@@ -153,7 +153,6 @@ def _make_fake_event_loop(mock_service: MagicMock):
     loop.run_in_executor(None, create_event), which would otherwise return a
     coroutine that never executes under our mock.
     """
-    import asyncio
 
     class FakeLoop:
         async def run_in_executor(self, executor, fn):

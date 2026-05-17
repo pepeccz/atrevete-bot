@@ -16,12 +16,11 @@ Patching strategy:
 - `api.routes.admin.get_async_session` — top-level import, so patched normally.
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
+import pytest
 from fastapi import HTTPException
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -142,6 +141,7 @@ async def test_delete_redis_conversation_keys_found():
     which does dual-scan v2+bare; the old MagicMock scan_iter approach is insufficient).
     """
     import fakeredis.aioredis as fakeredis_async
+
     from api.routes.admin import delete_conversation_endpoint
 
     thread_id = "conv-abc-123"
@@ -277,9 +277,11 @@ async def test_delete_service_uuid_path_v2_keys_deleted():
     WHEN delete_conversation() is called
     THEN all v2 keys and batcher are deleted, redis_keys_deleted >= 5.
     """
-    import fakeredis.aioredis as fakeredis_async
     from unittest.mock import AsyncMock
     from uuid import uuid4
+
+    import fakeredis.aioredis as fakeredis_async
+
     from api.services.conversation_delete_service import delete_conversation
 
     redis = fakeredis_async.FakeRedis()
@@ -323,9 +325,11 @@ async def test_delete_service_v1_compat_bare_keys():
     WHEN delete_conversation() is called
     THEN bare keys are deleted, no error raised.
     """
-    import fakeredis.aioredis as fakeredis_async
     from unittest.mock import AsyncMock
     from uuid import uuid4
+
+    import fakeredis.aioredis as fakeredis_async
+
     from api.services.conversation_delete_service import delete_conversation
 
     redis = fakeredis_async.FakeRedis()
@@ -363,6 +367,7 @@ async def test_delete_service_helper_error_maps_to_redis_status_error():
     """
     from unittest.mock import AsyncMock, MagicMock, patch
     from uuid import uuid4
+
     from api.services.conversation_delete_service import delete_conversation
     from shared.redis_conversation_cleanup import CleanupResult
 
@@ -404,6 +409,7 @@ async def test_route_redis_v2_prefix_stripped_and_helper_called_with_bare_cid():
     AND redis_status='cleaned' is returned.
     """
     import fakeredis.aioredis as fakeredis_async
+
     from api.routes.admin import delete_conversation_endpoint
 
     redis = fakeredis_async.FakeRedis()
@@ -439,6 +445,7 @@ async def test_route_redis_bare_cid_still_works():
     AND redis_status='cleaned' is returned.
     """
     import fakeredis.aioredis as fakeredis_async
+
     from api.routes.admin import delete_conversation_endpoint
 
     redis = fakeredis_async.FakeRedis()
@@ -472,6 +479,7 @@ async def test_route_redis_zero_keys_still_returns_200():
     """
     import fakeredis.aioredis as fakeredis_async
     from fastapi import HTTPException
+
     from api.routes.admin import delete_conversation_endpoint
 
     redis = fakeredis_async.FakeRedis()

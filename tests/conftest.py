@@ -13,7 +13,6 @@ from unittest.mock import MagicMock
 import pytest
 
 
-
 # Override DATABASE_URL and REDIS_URL for tests to use localhost instead of Docker hostname
 # Must be set BEFORE any imports of database.connection or shared.config
 # Skip override if running inside Docker (where postgres/redis hostnames resolve)
@@ -176,7 +175,6 @@ def assert_no_legacy_xml_tags(messages: list) -> None:
     Use this in tests that capture the messages passed to the LLM to verify
     _build_dynamic_context() XML output has been fully removed.
     """
-    from langchain_core.messages import BaseMessage
 
     for msg in messages:
         content = getattr(msg, "content", "")
@@ -250,8 +248,9 @@ async def cleanup_engine():
     yield
     # Dispose engine after each test to release connections
     # Only if we're using a real engine (not mocked)
-    from database.connection import engine
     from unittest.mock import Mock
+
+    from database.connection import engine
     if hasattr(engine, 'dispose') and not isinstance(engine, Mock):
         await engine.dispose()
 

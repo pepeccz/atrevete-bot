@@ -10,7 +10,6 @@ from datetime import date
 
 import pytest
 
-
 TODAY = date(2026, 4, 27)  # lunes (Monday)
 
 

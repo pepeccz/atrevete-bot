@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # DB availability helper
 # ---------------------------------------------------------------------------
@@ -19,6 +18,7 @@ import pytest
 async def _db_available() -> bool:
     try:
         from sqlalchemy import text
+
         from database.connection import get_async_session
 
         async with get_async_session() as session:
@@ -47,7 +47,9 @@ async def db_session():
 async def category_services(db_session):
     """Seed 3 services: one HAIRDRESSING, one AESTHETICS, one BOTH."""
     from uuid import uuid4
+
     from sqlalchemy import delete
+
     from database.models import Service, ServiceCategory
 
     hair_name = "_test_hair_service_cat"
@@ -105,8 +107,10 @@ async def category_services(db_session):
 async def category_stylists(db_session):
     """Seed 3 active stylists: HAIRDRESSING, AESTHETICS, BOTH + 1 inactive HAIRDRESSING."""
     from uuid import uuid4
+
     from sqlalchemy import delete
-    from database.models import Stylist, ServiceCategory
+
+    from database.models import ServiceCategory, Stylist
 
     names = [
         "_test_stylist_hair",
@@ -176,8 +180,8 @@ async def category_stylists(db_session):
 @pytest.mark.asyncio
 async def test_resolve_service_categories_hairdressing_only(db_session, category_services):
     """HAIRDRESSING-only service_ids → {HAIRDRESSING}."""
-    from database.models import ServiceCategory
     from agent.tools._booking_helpers import _resolve_service_categories
+    from database.models import ServiceCategory
 
     result = await _resolve_service_categories(db_session, [category_services["hair_id"]])
     assert result == {ServiceCategory.HAIRDRESSING}
@@ -186,8 +190,8 @@ async def test_resolve_service_categories_hairdressing_only(db_session, category
 @pytest.mark.asyncio
 async def test_resolve_service_categories_aesthetics_only(db_session, category_services):
     """AESTHETICS-only service_ids → {AESTHETICS}."""
-    from database.models import ServiceCategory
     from agent.tools._booking_helpers import _resolve_service_categories
+    from database.models import ServiceCategory
 
     result = await _resolve_service_categories(db_session, [category_services["aesth_id"]])
     assert result == {ServiceCategory.AESTHETICS}
@@ -196,8 +200,8 @@ async def test_resolve_service_categories_aesthetics_only(db_session, category_s
 @pytest.mark.asyncio
 async def test_resolve_service_categories_mixed_hair_and_aesth(db_session, category_services):
     """HAIRDRESSING + AESTHETICS input → {HAIRDRESSING, AESTHETICS}."""
-    from database.models import ServiceCategory
     from agent.tools._booking_helpers import _resolve_service_categories
+    from database.models import ServiceCategory
 
     result = await _resolve_service_categories(
         db_session,
@@ -209,8 +213,8 @@ async def test_resolve_service_categories_mixed_hair_and_aesth(db_session, categ
 @pytest.mark.asyncio
 async def test_resolve_service_categories_both_present(db_session, category_services):
     """BOTH-category service present → {BOTH} in result."""
-    from database.models import ServiceCategory
     from agent.tools._booking_helpers import _resolve_service_categories
+    from database.models import ServiceCategory
 
     result = await _resolve_service_categories(db_session, [category_services["both_id"]])
     assert ServiceCategory.BOTH in result

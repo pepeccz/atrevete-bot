@@ -7,6 +7,7 @@ from __future__ import annotations
 import ast
 import pathlib
 
+from agent.agent_factory import build_conversation_agent  # noqa: F401
 from agent.middleware.appointment_context import AppointmentContextMiddleware
 from agent.middleware.availability_context import AvailabilityContextMiddleware
 from agent.middleware.customer_resolve import CustomerResolveMiddleware
@@ -14,8 +15,6 @@ from agent.middleware.disclosure import DisclosureMiddleware
 from agent.middleware.dynamic_prompt import DynamicPromptMiddleware
 from agent.middleware.prompt_assembly import PromptAssemblyMiddleware
 from agent.middleware.summarize import SummarizeMiddleware
-from agent.agent_factory import build_conversation_agent  # noqa: F401
-
 
 EXPECTED_MIDDLEWARE_CLASSES = [
     DisclosureMiddleware,

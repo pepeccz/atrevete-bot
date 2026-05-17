@@ -24,6 +24,7 @@ def _make_session_ctx():
 async def test_get_active_stylists_for_services_mixed_returns_empty():
     """Mixed HAIRDRESSING + AESTHETICS services → [] (fail-closed, was: all active)."""
     from uuid import uuid4
+
     from database.models import ServiceCategory
 
     hair_id = uuid4()
@@ -57,6 +58,7 @@ async def test_get_active_stylists_for_services_mixed_returns_empty():
 async def test_get_active_stylists_for_services_hairdressing_only_returns_hair_stylists():
     """HAIRDRESSING-only services → returns HAIRDRESSING stylist IDs (existing behavior preserved)."""
     from uuid import uuid4
+
     from database.models import ServiceCategory
 
     hair_svc_id = uuid4()

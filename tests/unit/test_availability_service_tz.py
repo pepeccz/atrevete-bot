@@ -6,9 +6,8 @@ timezone info — the previous BUG-AVAIL-2 "fix" incorrectly stripped tzinfo bef
 binding to timestamptz columns.
 """
 
-import contextlib
-from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
@@ -293,14 +292,13 @@ class TestGetBusyPeriodsHoldStatus:
     @pytest.mark.asyncio
     async def test_active_hold_appears_in_busy_periods(self):
         """REQ-14: HOLD with hold_expires_at in future is included as a busy period."""
-        from datetime import timezone as dt_timezone
 
         stylist_id = uuid4()
         query_start = datetime(2026, 4, 15, 9, 0, tzinfo=MADRID_TZ)
         query_end = datetime(2026, 4, 15, 18, 0, tzinfo=MADRID_TZ)
 
         hold_start = datetime(2026, 4, 15, 10, 0, tzinfo=MADRID_TZ)
-        future_expires = datetime.now(dt_timezone.utc) + timedelta(minutes=3)
+        future_expires = datetime.now(UTC) + timedelta(minutes=3)
 
         hold_appt = _make_mock_appointment(
             stylist_id,
@@ -322,14 +320,13 @@ class TestGetBusyPeriodsHoldStatus:
     @pytest.mark.asyncio
     async def test_expired_hold_excluded_from_busy_periods(self):
         """REQ-14: HOLD with hold_expires_at in past is excluded from busy periods."""
-        from datetime import timezone as dt_timezone
 
         stylist_id = uuid4()
         query_start = datetime(2026, 4, 15, 9, 0, tzinfo=MADRID_TZ)
         query_end = datetime(2026, 4, 15, 18, 0, tzinfo=MADRID_TZ)
 
         hold_start = datetime(2026, 4, 15, 10, 0, tzinfo=MADRID_TZ)
-        past_expires = datetime.now(dt_timezone.utc) - timedelta(minutes=10)  # Expired 10 min ago
+        past_expires = datetime.now(UTC) - timedelta(minutes=10)  # Expired 10 min ago
 
         expired_hold = _make_mock_appointment(
             stylist_id,
@@ -373,7 +370,6 @@ class TestGetBusyPeriodsHoldStatus:
     @pytest.mark.asyncio
     async def test_mixed_active_and_expired_holds(self):
         """Active HOLD is included; expired HOLD is excluded in the same query result."""
-        from datetime import timezone as dt_timezone
 
         stylist_id = uuid4()
         query_start = datetime(2026, 4, 15, 9, 0, tzinfo=MADRID_TZ)
@@ -389,7 +385,7 @@ class TestGetBusyPeriodsHoldStatus:
             first_name="ActiveHold",
             status=AppointmentStatus.HOLD,
         )
-        active_hold.hold_expires_at = datetime.now(dt_timezone.utc) + timedelta(minutes=3)
+        active_hold.hold_expires_at = datetime.now(UTC) + timedelta(minutes=3)
 
         expired_hold = _make_mock_appointment(
             stylist_id,
@@ -398,7 +394,7 @@ class TestGetBusyPeriodsHoldStatus:
             first_name="ExpiredHold",
             status=AppointmentStatus.HOLD,
         )
-        expired_hold.hold_expires_at = datetime.now(dt_timezone.utc) - timedelta(minutes=5)
+        expired_hold.hold_expires_at = datetime.now(UTC) - timedelta(minutes=5)
 
         session = _mock_session_with_results([active_hold, expired_hold], [])
         result = await get_busy_periods(stylist_id, query_start, query_end, session=session)

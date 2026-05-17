@@ -10,17 +10,16 @@ These tests require a database connection and test the actual endpoints
 with mocked authentication.
 """
 
-import pytest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.exc import IntegrityError
 
 from api.main import app
-from database.models import Stylist, ServiceCategory
-
+from database.models import ServiceCategory, Stylist
 
 # ============================================================================
 # Test Fixtures and Setup
@@ -59,7 +58,7 @@ class TestCreateStylistIntegration:
     @pytest.mark.asyncio
     async def test_create_stylist_with_free_calendar_succeeds(self, mock_current_user):
         """GIVEN free calendar, WHEN creating stylist, THEN returns 201."""
-        from api.routes.admin import create_stylist, CreateStylistRequest
+        from api.routes.admin import CreateStylistRequest, create_stylist
 
         with patch("api.routes.admin._check_calendar_conflict") as mock_check:
             mock_check.return_value = (False, [])
@@ -75,8 +74,8 @@ class TestCreateStylistIntegration:
                 mock_stylist.google_calendar_id = "free@calendar.com"
                 mock_stylist.is_active = True
                 mock_stylist.color = None
-                mock_stylist.created_at = datetime.now(timezone.utc)
-                mock_stylist.updated_at = datetime.now(timezone.utc)
+                mock_stylist.created_at = datetime.now(UTC)
+                mock_stylist.updated_at = datetime.now(UTC)
 
                 mock_session.add = MagicMock()
                 mock_session.commit = AsyncMock()
@@ -101,7 +100,7 @@ class TestCreateStylistIntegration:
     @pytest.mark.asyncio
     async def test_create_stylist_with_occupied_calendar_returns_409(self, mock_current_user):
         """GIVEN occupied calendar, WHEN creating stylist, THEN returns 409 with details."""
-        from api.routes.admin import create_stylist, CreateStylistRequest
+        from api.routes.admin import CreateStylistRequest, create_stylist
 
         with patch("api.routes.admin._check_calendar_conflict") as mock_check:
             mock_check.return_value = (True, ["Maria"])
@@ -134,7 +133,7 @@ class TestUpdateStylistIntegration:
     @pytest.mark.asyncio
     async def test_update_same_calendar_succeeds(self, mock_current_user):
         """GIVEN stylist updating with same calendar, WHEN updating, THEN succeeds."""
-        from api.routes.admin import update_stylist, UpdateStylistRequest
+        from api.routes.admin import UpdateStylistRequest, update_stylist
 
         stylist_id = uuid4()
 
@@ -145,8 +144,8 @@ class TestUpdateStylistIntegration:
         mock_stylist.google_calendar_id = "ana@calendar.com"
         mock_stylist.is_active = True
         mock_stylist.color = None
-        mock_stylist.created_at = datetime.now(timezone.utc)
-        mock_stylist.updated_at = datetime.now(timezone.utc)
+        mock_stylist.created_at = datetime.now(UTC)
+        mock_stylist.updated_at = datetime.now(UTC)
 
         with patch("api.routes.admin.get_async_session") as mock_session_factory:
             mock_session = AsyncMock()
@@ -174,7 +173,7 @@ class TestUpdateStylistIntegration:
     @pytest.mark.asyncio
     async def test_update_to_occupied_calendar_returns_409(self, mock_current_user):
         """GIVEN update to another's calendar, WHEN updating, THEN returns 409."""
-        from api.routes.admin import update_stylist, UpdateStylistRequest
+        from api.routes.admin import UpdateStylistRequest, update_stylist
 
         stylist_id = uuid4()
 
@@ -220,7 +219,7 @@ class TestAssignCalendarIntegration:
     @pytest.mark.asyncio
     async def test_assign_free_calendar_succeeds(self, mock_current_user):
         """GIVEN free calendar, WHEN assigning to stylist, THEN succeeds."""
-        from api.routes.admin import assign_stylist_calendar, AssignCalendarRequest
+        from api.routes.admin import AssignCalendarRequest, assign_stylist_calendar
 
         stylist_id = uuid4()
 
@@ -253,7 +252,7 @@ class TestAssignCalendarIntegration:
     @pytest.mark.asyncio
     async def test_assign_occupied_calendar_returns_409(self, mock_current_user):
         """GIVEN occupied calendar, WHEN assigning, THEN returns 409."""
-        from api.routes.admin import assign_stylist_calendar, AssignCalendarRequest
+        from api.routes.admin import AssignCalendarRequest, assign_stylist_calendar
 
         stylist_id = uuid4()
 
@@ -294,7 +293,7 @@ class TestRaceConditionHandling:
     @pytest.mark.asyncio
     async def test_race_condition_on_create_remaps_to_409(self, mock_current_user):
         """GIVEN race condition on create, WHEN IntegrityError occurs, THEN returns 409."""
-        from api.routes.admin import create_stylist, CreateStylistRequest
+        from api.routes.admin import CreateStylistRequest, create_stylist
 
         with patch("api.routes.admin._check_calendar_conflict") as mock_check:
             # Pre-validation passes
@@ -340,7 +339,7 @@ class TestRaceConditionHandling:
     @pytest.mark.asyncio
     async def test_non_constraint_integrity_error_re_raised(self, mock_current_user):
         """GIVEN non-constraint IntegrityError, WHEN raised, THEN re-raises original."""
-        from api.routes.admin import create_stylist, CreateStylistRequest
+        from api.routes.admin import CreateStylistRequest, create_stylist
 
         with patch("api.routes.admin._check_calendar_conflict") as mock_check:
             mock_check.return_value = (False, [])
@@ -385,8 +384,8 @@ class TestDatabaseConstraintIntegrity:
 
     def test_unique_constraint_on_google_calendar_id(self):
         """Verify that the database schema has unique constraint on google_calendar_id."""
+
         from database.models import Stylist
-        from sqlalchemy import inspect
 
         # Get the table
         table = Stylist.__table__
@@ -399,14 +398,13 @@ class TestDatabaseConstraintIntegrity:
 
     def test_model_requires_calendar_id(self):
         """Verify Stylist model requires google_calendar_id."""
-        from database.models import Stylist, ServiceCategory
 
         # The model should enforce non-null calendar_id at the application level too
         # This is validated through the Pydantic request schemas
-        from api.routes.admin import CreateStylistRequest
-
         # Verify the request model requires google_calendar_id
         import pydantic
+
+        from api.routes.admin import CreateStylistRequest
         with pytest.raises(pydantic.ValidationError):
             CreateStylistRequest(
                 name="Test",

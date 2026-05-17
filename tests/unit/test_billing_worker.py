@@ -5,12 +5,10 @@ from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from zoneinfo import ZoneInfo
 
-import pytest
 from fastapi import HTTPException
 from sqlalchemy.exc import IntegrityError
 
 from agent.workers.billing_worker import run_monthly_invoice, run_overdue_check
-
 
 MADRID_TZ = ZoneInfo("Europe/Madrid")
 

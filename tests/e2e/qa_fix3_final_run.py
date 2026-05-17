@@ -75,7 +75,7 @@ async def run_qa() -> dict:
 
     conversation_id = str(uuid.uuid4())
     print(f"\n{'='*70}")
-    print(f"QA FINAL RUN — Fix 3 Validation")
+    print("QA FINAL RUN — Fix 3 Validation")
     print(f"conversation_id: {conversation_id}")
     print(f"Timestamp: {datetime.now(UTC).isoformat()}")
     print(f"{'='*70}\n")
@@ -284,17 +284,17 @@ def main():
     print("QA REPORT SUMMARY")
     print("="*70)
     print(f"\nOverall Result: {report['overall_result']}")
-    print(f"\nFix Verification:")
+    print("\nFix Verification:")
     for fix, result in report["fix_verification"].items():
         icon = "✅" if result == "PASS" else ("⚠️" if result == "PARTIAL" else "❌" if result == "FAIL" else "ℹ️")
         print(f"  {icon} {fix}: {result}")
 
-    print(f"\nFinal State:")
+    print("\nFinal State:")
     fs = report["final_state_summary"]
     for k, v in fs.items():
         print(f"  {k}: {v}")
 
-    print(f"\nTurn Summary:")
+    print("\nTurn Summary:")
     for t in report["turns"]:
         icon = "✅" if t["pass"] else "❌"
         print(f"  {icon} Turn {t['turn_number']} ({t['latency_ms']}ms): {(t['agent_response'] or '')[:80]}")
@@ -313,7 +313,7 @@ def main():
             clean_turns.append(clean_t)
         clean_report["turns"] = clean_turns
         json.dump(clean_report, f, indent=2, default=str)
-    print(f"\nJSON report saved to /tmp/qa_fix3_report.json")
+    print("\nJSON report saved to /tmp/qa_fix3_report.json")
 
     return 0 if report["overall_result"] == "PASS" else 1
 

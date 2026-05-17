@@ -10,7 +10,6 @@ from uuid import uuid4
 
 import pytest
 
-
 FAKE_STYLIST_ID = uuid4()
 FAKE_SERVICE_ID = uuid4()
 

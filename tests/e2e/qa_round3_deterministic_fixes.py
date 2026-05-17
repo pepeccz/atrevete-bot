@@ -103,7 +103,7 @@ async def run_qa() -> dict:
     settings = get_settings()
     redis_url = build_redis_url(settings)
 
-    print(f"Connecting to Redis (host-side)...")
+    print("Connecting to Redis (host-side)...")
     r = redis.from_url(redis_url, decode_responses=True)
     r_binary = redis.from_url(redis_url, decode_responses=False)
 
@@ -120,7 +120,7 @@ async def run_qa() -> dict:
     sender_name = "María García"
 
     print(f"\n{'='*70}")
-    print(f"QA Round 3 — Deterministic Booking Pipeline Fixes")
+    print("QA Round 3 — Deterministic Booking Pipeline Fixes")
     print(f"conversation_id: {conversation_id}")
     print(f"phone: {phone}")
     print(f"Timestamp: {datetime.now(UTC).isoformat()}")
@@ -147,7 +147,7 @@ async def run_qa() -> dict:
     # ─── TURN 1 ────────────────────────────────────────────────────────────────
     # Opening message: request corte de dama + jueves que viene
     turn1_msg = "Hola! Quiero sacar un turno para corte de dama para el jueves que viene."
-    print(f"--- Turn 1: Opening request (dama audience + Thursday date) ---")
+    print("--- Turn 1: Opening request (dama audience + Thursday date) ---")
     print(f"USER: {turn1_msg}")
 
     ts_sent = datetime.now(UTC)
@@ -229,7 +229,7 @@ async def run_qa() -> dict:
     else:
         turn2_msg = "Sí, quiero el corte de pelo."
 
-    print(f"--- Turn 2: Confirm service ---")
+    print("--- Turn 2: Confirm service ---")
     print(f"USER: {turn2_msg}")
 
     ts_sent2 = datetime.now(UTC)
@@ -258,7 +258,7 @@ async def run_qa() -> dict:
 
     turn2_pass = turn2_response not in ("[TIMEOUT]", "[NO_RESPONSE]") and not asks_cancel_t2
     if asks_cancel_t2:
-        print(f"  ❌ CRITICAL FAIL: Bot triggered cancel on Turn 2!")
+        print("  ❌ CRITICAL FAIL: Bot triggered cancel on Turn 2!")
         overall_pass = False
 
     turns_result.append({
@@ -298,7 +298,7 @@ async def run_qa() -> dict:
         # Assume add-ons step or next step
         turn3_msg = "No gracias, solo el corte."
 
-    print(f"--- Turn 3: Add-on decline (CRITICAL FIX 3) ---")
+    print("--- Turn 3: Add-on decline (CRITICAL FIX 3) ---")
     print(f"USER: {turn3_msg}")
 
     ts_sent3 = datetime.now(UTC)
@@ -348,13 +348,13 @@ async def run_qa() -> dict:
 
     print(f"  {'✅' if fix3_pass else '❌ CRITICAL FAIL'} Fix 3 (add-on decline): {'PASS — No cancel trigger' if fix3_pass else 'FAIL — Bot asked to cancel!'}")
     if triggers_cancel:
-        print(f"  🚨 CRITICAL FAIL: Bot responded with cancel confirmation after 'No gracias'!")
+        print("  🚨 CRITICAL FAIL: Bot responded with cancel confirmation after 'No gracias'!")
         overall_pass = False
 
     if advances_to_stylist:
-        print(f"  ✅ Correctly advanced to stylist selection")
+        print("  ✅ Correctly advanced to stylist selection")
     elif advances_to_slot:
-        print(f"  ✅ Correctly advanced to slot selection (may have skipped stylist)")
+        print("  ✅ Correctly advanced to slot selection (may have skipped stylist)")
     else:
         print(f"  ℹ️  Response context: {turn3_response[:100]}")
 
@@ -407,7 +407,7 @@ async def run_qa() -> dict:
         # Default: assume stylist step
         turn4_msg = "Cualquiera."
 
-    print(f"--- Turn 4: Stylist selection (CRITICAL FIX 4 — Cualquiera) ---")
+    print("--- Turn 4: Stylist selection (CRITICAL FIX 4 — Cualquiera) ---")
     print(f"USER: {turn4_msg}")
 
     ts_sent4 = datetime.now(UTC)
@@ -498,7 +498,7 @@ async def run_qa() -> dict:
     else:
         turn5_msg = "Dale, ese está bien."
 
-    print(f"--- Turn 5: Select slot ---")
+    print("--- Turn 5: Select slot ---")
     print(f"USER: {turn5_msg}")
 
     ts_sent5 = datetime.now(UTC)
@@ -703,7 +703,7 @@ def main():
     print("QA ROUND 3 — REPORT SUMMARY")
     print("="*70)
     print(f"\nOverall Result: {report.get('overall_result', 'ERROR')}")
-    print(f"\nFix Verification:")
+    print("\nFix Verification:")
     fix_labels = {
         "fix1_audience_carryover": "Fix 1: Audience carry-over (no dama/caballero re-ask)",
         "fix2_date_anchor": "Fix 2: Date anchor (jueves preserved)",
@@ -724,12 +724,12 @@ def main():
             icon = "ℹ️"
         print(f"  {icon} {fix_label}: {result}")
 
-    print(f"\nFinal State:")
+    print("\nFinal State:")
     fs = report.get("final_state_summary", {})
     for k, v in fs.items():
         print(f"  {k}: {v}")
 
-    print(f"\nTurn Summary:")
+    print("\nTurn Summary:")
     for t in report.get("turns", []):
         icon = "✅" if t.get("pass") else "❌"
         response_preview = (t.get("agent_response") or "")[:120]

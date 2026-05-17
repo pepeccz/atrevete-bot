@@ -7,7 +7,7 @@ when pre_book_validated=False, and MUST NOT write any DB row.
 from __future__ import annotations
 
 import json
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 
