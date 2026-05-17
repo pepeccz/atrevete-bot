@@ -15,7 +15,7 @@ import logging
 import re
 import time
 import unicodedata
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 from datetime import time as dt_time
 from enum import Enum
 from typing import Annotated, Any, Literal
@@ -25,15 +25,10 @@ from zoneinfo import ZoneInfo
 import pytz
 from dateutil.parser import parse as parse_datetime
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Query, Request, Response, status
-from fastapi.security import (
-    HTTPAuthorizationCredentials,
-    HTTPBearer,
-)  # noqa: F401 — kept for type compatibility
 from jose import JWTError, jwt
 from passlib.hash import bcrypt
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import and_, func, or_, select
-from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -60,7 +55,6 @@ from database.models import (
     Holiday,
     Notification,
     NotificationType,
-    Policy,
     RecurrenceFrequency,
     RecurringBlockingSeries,
     Service,
@@ -75,7 +69,6 @@ from shared.recurrence_service import (
     format_bymonthday,
     get_business_hours_summary,
     get_remaining_week_days,
-    parse_byday,
 )
 from shared.security import verify_password
 from shared.settings_service import get_settings_service
@@ -5025,8 +5018,6 @@ async def list_conversations(
             "has_more": (offset + page_size) < total,
         }
 
-    import json
-    import pickle
 
     try:
         from shared.redis_client import get_redis_client
@@ -5600,7 +5591,7 @@ async def global_search(
             )
 
         # Search Appointments (recent 90 days)
-        ninety_days_ago = datetime.now(timezone.utc) - timedelta(days=90)
+        ninety_days_ago = datetime.now(UTC) - timedelta(days=90)
         appointments_query = (
             select(Appointment)
             .where(
@@ -5781,7 +5772,7 @@ async def mark_notification_read(
             raise HTTPException(status_code=404, detail="Notification not found")
 
         notification.is_read = True
-        notification.read_at = datetime.now(timezone.utc)
+        notification.read_at = datetime.now(UTC)
         await session.commit()
 
         return {"success": True}
@@ -5798,7 +5789,7 @@ async def mark_all_notifications_read(
         await session.execute(
             update(Notification)
             .where(Notification.is_read == False)
-            .values(is_read=True, read_at=datetime.now(timezone.utc))
+            .values(is_read=True, read_at=datetime.now(UTC))
         )
         await session.commit()
 
@@ -5974,7 +5965,7 @@ async def get_notification_stats(
             by_category[category_name] = count
 
         # Trend data (last N days)
-        start_date = datetime.now(timezone.utc) - timedelta(days=days)
+        start_date = datetime.now(UTC) - timedelta(days=days)
         trend_query = (
             select(
                 cast(Notification.created_at, Date).label("date"),
@@ -6028,7 +6019,7 @@ async def toggle_notification_star(
             raise HTTPException(status_code=404, detail="Notification not found")
 
         notification.is_starred = not notification.is_starred
-        notification.starred_at = datetime.now(timezone.utc) if notification.is_starred else None
+        notification.starred_at = datetime.now(UTC) if notification.is_starred else None
         await session.commit()
 
         return {
@@ -6218,7 +6209,7 @@ async def export_notifications(
             iter([output.getvalue()]),
             media_type="text/csv",
             headers={
-                "Content-Disposition": f"attachment; filename=notificaciones_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.csv"
+                "Content-Disposition": f"attachment; filename=notificaciones_{datetime.now(UTC).strftime('%Y%m%d_%H%M%S')}.csv"
             },
         )
 
@@ -6313,7 +6304,7 @@ async def list_escalations(
 
                 d = date_type.fromisoformat(date_from)
                 conditions.append(
-                    Escalation.triggered_at >= datetime(d.year, d.month, d.day, tzinfo=timezone.utc)
+                    Escalation.triggered_at >= datetime(d.year, d.month, d.day, tzinfo=UTC)
                 )
             except ValueError:
                 pass
@@ -6324,7 +6315,7 @@ async def list_escalations(
                 d = date_type.fromisoformat(date_to)
                 conditions.append(
                     Escalation.triggered_at
-                    <= datetime(d.year, d.month, d.day, 23, 59, 59, tzinfo=timezone.utc)
+                    <= datetime(d.year, d.month, d.day, 23, 59, 59, tzinfo=UTC)
                 )
             except ValueError:
                 pass
@@ -6425,7 +6416,7 @@ async def resolve_escalation(
         # Idempotente: si ya está resuelta, retornar sin modificar
         if escalation.status != EscalationStatus.RESOLVED:
             escalation.status = EscalationStatus.RESOLVED
-            escalation.resolved_at = datetime.now(tz=timezone.utc)
+            escalation.resolved_at = datetime.now(tz=UTC)
             await session.commit()
             await session.refresh(escalation)
 
@@ -6460,7 +6451,6 @@ from api.models.inbox import (  # noqa: E402
     EscalateResponse,
     MarkReadRequest,
     MarkReadResponse,
-    MessageDetailDTO,
     MessageResponse,
     NoteCreate,
     NoteListResponse,
@@ -6779,8 +6769,9 @@ async def inbox_mark_read(
 
     Permissions: conversations:write (admin + stylist).
     """
-    from api.services.conversation_read_service import mark_messages_read
     from uuid import UUID as _UUID
+
+    from api.services.conversation_read_service import mark_messages_read
 
     # Resolve conversation_id to a ConversationHistory UUID
     try:
@@ -6828,8 +6819,9 @@ async def inbox_list_notes(
     Returns HTTP 404 with Spanish detail when the conversation does not exist.
     Permissions: conversations:read.
     """
-    from api.services.conversation_notes_service import list_notes
     from uuid import UUID as _UUID
+
+    from api.services.conversation_notes_service import list_notes
 
     try:
         conv_uuid = _UUID(conversation_id)
@@ -6861,8 +6853,9 @@ async def inbox_create_note(
     does not exist.  HTTP 422 when content is empty.
     Permissions: conversations:read (any authenticated user may create notes).
     """
-    from api.services.conversation_notes_service import create_note
     from uuid import UUID as _UUID
+
+    from api.services.conversation_notes_service import create_note
 
     try:
         conv_uuid = _UUID(conversation_id)
@@ -6896,8 +6889,9 @@ async def inbox_update_note(
     Only the original author may update.  HTTP 403 for other users.
     Permissions: conversations:read.
     """
-    from api.services.conversation_notes_service import update_note
     from uuid import UUID as _UUID
+
+    from api.services.conversation_notes_service import update_note
 
     try:
         note_uuid = _UUID(note_id)
@@ -6934,8 +6928,9 @@ async def inbox_delete_note(
     HTTP 204 on success, HTTP 403 for unauthorized users.
     Permissions: conversations:read.
     """
-    from api.services.conversation_notes_service import delete_note
     from uuid import UUID as _UUID
+
+    from api.services.conversation_notes_service import delete_note
 
     try:
         note_uuid = _UUID(note_id)
@@ -6981,8 +6976,9 @@ async def inbox_get_sidebar(
     HTTP 404 when the conversation does not exist.
     Permissions: conversations:read.
     """
-    from api.services.conversation_inbox_service import build_sidebar
     from uuid import UUID as _UUID
+
+    from api.services.conversation_inbox_service import build_sidebar
 
     try:
         conv_uuid = _UUID(conversation_id)
