@@ -8,11 +8,9 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, patch, MagicMock
 from uuid import uuid4
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -37,6 +35,7 @@ def future_date_iso(days_ahead: int = 14) -> str:
 async def _db_available() -> bool:
     try:
         from sqlalchemy import text
+
         from database.connection import get_async_session
 
         async with get_async_session() as session:
@@ -63,7 +62,8 @@ async def db_session():
 async def seeded_db(db_session):
     """Seed minimal service+stylist data for update_booking tests."""
     from sqlalchemy import delete
-    from database.models import Service, Stylist, ServiceCategory
+
+    from database.models import Service, ServiceCategory, Stylist
 
     # Clean up any leftovers from previous runs
     await db_session.execute(

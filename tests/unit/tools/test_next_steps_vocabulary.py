@@ -6,12 +6,11 @@ Refs: R9, R10, R19
 
 from __future__ import annotations
 
-import tokenize
 import io
-import importlib.util
 import pathlib
-import pytest
+import tokenize
 
+import pytest
 
 EXPECTED_NEXT_STEP_VALUES = {
     "service_required",
@@ -116,6 +115,6 @@ class TestPayloadContract:
 
     def test_no_extra_next_step_keys_in_contract(self):
         """Contract keys must be a subset of known NextStep values."""
-        from agent.tools.next_steps import NextStep, NEXT_STEP_PAYLOAD_CONTRACT
+        from agent.tools.next_steps import NEXT_STEP_PAYLOAD_CONTRACT, NextStep
         for key in NEXT_STEP_PAYLOAD_CONTRACT:
             assert key in NextStep.__args__, f"Unknown key in contract: {key}"

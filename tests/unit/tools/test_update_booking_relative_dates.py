@@ -8,7 +8,7 @@ All resolver calls and datetime.now are mocked — no DB access required.
 from __future__ import annotations
 
 import json
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -23,7 +23,7 @@ def parse(raw: str) -> dict:
 # ---------------------------------------------------------------------------
 
 _TODAY_DATE = date(2026, 4, 27)
-_TODAY_DT = datetime(2026, 4, 27, 10, 0, 0, tzinfo=timezone.utc)
+_TODAY_DT = datetime(2026, 4, 27, 10, 0, 0, tzinfo=UTC)
 
 
 def _mock_session_ctx(session_mock):

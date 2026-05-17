@@ -20,6 +20,7 @@ import pytest
 async def _db_available() -> bool:
     try:
         from sqlalchemy import text
+
         from database.connection import get_async_session
 
         async with get_async_session() as session:
@@ -50,7 +51,9 @@ async def null_audience_principal_with_tagged_peers(db_session):
     peers exist, so _resolve_audience_variants MUST return kind='audience'.
     """
     from uuid import uuid4
+
     from sqlalchemy import delete
+
     from database.models import Service, ServiceCategory
 
     dim = "cut_null_test_dim"
@@ -95,7 +98,9 @@ async def single_null_audience_principal(db_session):
     principal in its dimension must NOT trigger the audience gate.
     """
     from uuid import uuid4
+
     from sqlalchemy import delete
+
     from database.models import Service, ServiceCategory
 
     dim = "manicura_null_dim"

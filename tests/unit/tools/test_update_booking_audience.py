@@ -19,6 +19,7 @@ def parse_response(raw: str) -> dict:
 async def _db_available() -> bool:
     try:
         from sqlalchemy import text
+
         from database.connection import get_async_session
 
         async with get_async_session() as session:
@@ -40,6 +41,7 @@ async def db_session():
 async def ambiguous_services(db_session):
     """Seed a service family 'corte test' with 3 variants for disambiguation tests."""
     from sqlalchemy import delete
+
     from database.models import Service, ServiceCategory
 
     family_key = "corte test familia"
@@ -98,6 +100,7 @@ async def test_booking_helpers_importable():
 async def test_compute_first_valid_date_pure():
     """_compute_first_valid_date is pure and correct."""
     from datetime import date
+
     from agent.tools._booking_helpers import _compute_first_valid_date
 
     today = date(2026, 5, 1)
@@ -108,6 +111,7 @@ async def test_compute_first_valid_date_pure():
 @pytest.mark.asyncio
 async def test_compute_first_valid_date_zero_days():
     from datetime import date
+
     from agent.tools._booking_helpers import _compute_first_valid_date
 
     today = date(2026, 5, 1)
@@ -154,7 +158,8 @@ async def test_resolve_stylist_unaccented_match(db_session):
         pytest.skip("Postgres not reachable")
 
     from sqlalchemy import delete
-    from database.models import Stylist, ServiceCategory
+
+    from database.models import ServiceCategory, Stylist
 
     stylist_id = uuid4()
     # Add stylist with accented name
