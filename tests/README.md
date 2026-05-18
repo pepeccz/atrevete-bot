@@ -316,6 +316,92 @@ Tests run automatically on:
 - Coverage report artifact (retained 30 days)
 - PR comment with coverage diff
 
+## Async Mocking Patterns
+
+Python's `MagicMock` does NOT support `await`. Use `AsyncMock` (Python 3.8+) for
+any `async def` target, async context manager, or coroutine attribute.
+
+### Pattern 1 — Replace MagicMock with AsyncMock for async callables
+
+**BEFORE (broken — TypeError: object MagicMock is not awaitable):**
+```python
+from unittest.mock import MagicMock
+mock_session = MagicMock()
+result = await mock_session.execute(stmt)  # raises TypeError
+```
+
+**AFTER (correct):**
+```python
+from unittest.mock import AsyncMock
+mock_session = AsyncMock()
+result = await mock_session.execute(stmt)  # works
+```
+
+### Pattern 2 — Set concrete return_value to avoid numeric comparison failures
+
+**BEFORE (broken — MagicMock vs int comparison is always True but misleading):**
+```python
+session = MagicMock()
+session.commit = MagicMock()          # not awaitable
+session.execute = MagicMock()         # not awaitable
+```
+
+**AFTER (correct):**
+```python
+from unittest.mock import AsyncMock, MagicMock
+session = MagicMock()
+session.add = MagicMock()                              # sync — fine
+session.commit = AsyncMock()                           # async
+session.execute = AsyncMock(return_value=mock_result)  # async, typed return
+```
+
+For numeric comparisons, always set a concrete `return_value`:
+```python
+mock_result = MagicMock()
+mock_result.scalar_one_or_none.return_value = 42      # concrete int, not MagicMock
+session.execute = AsyncMock(return_value=mock_result)
+count = await session.execute(stmt)
+assert count.scalar_one_or_none() == 42               # passes
+```
+
+### Pattern 3 — mocker.patch.object with new=AsyncMock
+
+**BEFORE (broken — patches async method with a synchronous MagicMock):**
+```python
+mocker.patch.object(MyService, "fetch_data")
+```
+
+**AFTER (correct):**
+```python
+from unittest.mock import AsyncMock
+mocker.patch.object(MyService, "fetch_data", new=AsyncMock(return_value={"ok": True}))
+```
+
+With context manager form:
+```python
+from unittest.mock import AsyncMock, patch
+with patch("module.path.fetch_data", new_callable=AsyncMock) as mock_fetch:
+    mock_fetch.return_value = {"key": "value"}
+    result = await service.do_something()
+    mock_fetch.assert_awaited_once()
+```
+
+## Rate Limiting
+
+Rate limiting is **disabled globally** in tests (conftest sets `RATE_LIMITING_ENABLED=false`).
+
+Tests that assert 429 behaviour must:
+1. Re-enable: `monkeypatch.setenv("RATE_LIMITING_ENABLED", "true")`
+2. Clear cache: `from shared.config import get_settings; get_settings.cache_clear()`
+3. Mark with: `@pytest.mark.rate_limit_required`
+
+## Stripe Stub
+
+A full in-memory Stripe stub lives in `conftest.py` under `sys.modules["stripe"]`.
+Available: `Invoice`, `InvoiceItem`, `PaymentMethod`, `Subscription`, `Customer`,
+`Charge`, `Refund`, `Event`, `Webhook`, `SetupIntent`, `PaymentIntent`, `TaxRate`,
+`checkout.Session`, `error.StripeError`, `error.InvalidRequestError`.
+
 ## Additional Resources
 
 - [Pytest Documentation](https://docs.pytest.org/)

@@ -420,11 +420,13 @@ class TestCheckOverlapsEndpoint:
             mock_session = AsyncMock()
             mock_session_ctx.return_value.__aenter__.return_value = mock_session
 
-            # Mock stylist exists
+            # Mock stylist exists — use explicit MagicMock to avoid AsyncMock chaining issues
             mock_stylist = MagicMock()
             mock_stylist.id = uuid4()
             mock_stylist.name = "Test Stylist"
-            mock_session.execute.return_value.scalar_one_or_none.return_value = mock_stylist
+            stylist_result = MagicMock()
+            stylist_result.scalar_one_or_none.return_value = mock_stylist
+            mock_session.execute = AsyncMock(return_value=stylist_result)
 
             # No overlaps
             mock_find.return_value = []
@@ -457,7 +459,19 @@ class TestCheckOverlapsEndpoint:
             mock_stylist = MagicMock()
             mock_stylist.id = uuid4()
             mock_stylist.name = "Test Stylist"
-            mock_session.execute.return_value.scalar_one_or_none.return_value = mock_stylist
+
+            # Mock service query
+            mock_service = MagicMock(spec=Service)
+            mock_service.name = "Cortar"
+
+            # Use explicit MagicMock return values to avoid AsyncMock chaining issues
+            stylist_result = MagicMock()
+            stylist_result.scalar_one_or_none.return_value = mock_stylist
+
+            services_result = MagicMock()
+            services_result.scalars.return_value.all.return_value = [mock_service]
+
+            mock_session.execute = AsyncMock(side_effect=[stylist_result, services_result])
 
             # Create overlapping appointment
             mock_appt = MagicMock(spec=Appointment)
@@ -470,11 +484,6 @@ class TestCheckOverlapsEndpoint:
             mock_appt.service_ids = [uuid4()]
 
             mock_find.return_value = [mock_appt]
-
-            # Mock service query
-            mock_service = MagicMock(spec=Service)
-            mock_service.name = "Cortar"
-            mock_session.execute.return_value.scalars.return_value.all.return_value = [mock_service]
 
             # Import here to avoid circular import issues
             from api.routes.admin import check_overlaps
@@ -515,8 +524,10 @@ class TestCheckOverlapsEndpoint:
             mock_session = AsyncMock()
             mock_session_ctx.return_value.__aenter__.return_value = mock_session
 
-            # Stylist doesn't exist
-            mock_session.execute.return_value.scalar_one_or_none.return_value = None
+            # Stylist doesn't exist — use explicit MagicMock to avoid AsyncMock chaining issues
+            not_found_result = MagicMock()
+            not_found_result.scalar_one_or_none.return_value = None
+            mock_session.execute = AsyncMock(return_value=not_found_result)
 
             from api.routes.admin import check_overlaps
 
@@ -573,7 +584,7 @@ class TestCreateAppointmentEndpoint:
             mock_service.duration_minutes = 60
 
             # Setup sequential query results
-            def mock_execute(stmt):
+            async def mock_execute(stmt):
                 mock_result = MagicMock()
                 # First query: customer
                 if "Customer" in str(stmt):
@@ -651,7 +662,7 @@ class TestCreateAppointmentEndpoint:
             mock_service.duration_minutes = 60
             mock_service.name = "Cortar"
 
-            def mock_execute(stmt):
+            async def mock_execute(stmt):
                 mock_result = MagicMock()
                 if "Customer" in str(stmt):
                     mock_result.scalar_one_or_none.return_value = mock_customer
@@ -728,7 +739,7 @@ class TestCreateAppointmentEndpoint:
             mock_service.id = service_id
             mock_service.duration_minutes = 60
 
-            def mock_execute(stmt):
+            async def mock_execute(stmt):
                 mock_result = MagicMock()
                 if "Customer" in str(stmt):
                     mock_result.scalar_one_or_none.return_value = mock_customer
@@ -779,8 +790,10 @@ class TestCreateAppointmentEndpoint:
             mock_session = AsyncMock()
             mock_session_ctx.return_value.__aenter__.return_value = mock_session
 
-            # Customer doesn't exist
-            mock_session.execute.return_value.scalar_one_or_none.return_value = None
+            # Customer doesn't exist — use explicit MagicMock to avoid AsyncMock chaining issues
+            not_found_result = MagicMock()
+            not_found_result.scalar_one_or_none.return_value = None
+            mock_session.execute = AsyncMock(return_value=not_found_result)
 
             from api.routes.admin import CreateAppointmentRequest, create_appointment
 
@@ -820,7 +833,7 @@ class TestCreateAppointmentEndpoint:
             mock_stylist.id = stylist_id
             mock_stylist.is_active = False
 
-            def mock_execute(stmt):
+            async def mock_execute(stmt):
                 mock_result = MagicMock()
                 if "Customer" in str(stmt):
                     mock_result.scalar_one_or_none.return_value = mock_customer

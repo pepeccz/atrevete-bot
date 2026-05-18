@@ -42,6 +42,11 @@ if not _is_running_in_docker():
     )
     os.environ.setdefault("REDIS_URL", "redis://localhost:6379/0")
 
+# Disable rate limiting in all tests by default.
+# Individual tests that assert 429 behaviour must re-enable it via monkeypatch
+# and mark themselves with the `rate_limit_required` pytest marker.
+os.environ.setdefault("RATE_LIMITING_ENABLED", "false")
+
 
 # ---------------------------------------------------------------------------
 # Stub Docker-only packages that are not installed in the local test environment.
@@ -154,6 +159,325 @@ if "pydub" not in sys.modules:
 
     sys.modules["pydub"] = _make_stub_module("pydub", AudioSegment=_AudioSegment_stub)
 
+# stripe — needed by api/services/stripe_service.py and billing routes.
+# ADR-2: explicit class stubs (not blanket MagicMock) so isinstance() and
+# exception-catching work correctly.  Follow the googleapiclient.errors pattern.
+if "stripe" not in sys.modules:
+    from types import SimpleNamespace as _SN
+
+    # ---------------------------------------------------------------------------
+    # Error hierarchy
+    # ---------------------------------------------------------------------------
+    class _StripeError(Exception):
+        """Minimal stub that mimics stripe.error.StripeError."""
+        pass
+
+    class _StripeInvalidRequestError(_StripeError):
+        """Minimal stub that mimics stripe.error.InvalidRequestError."""
+        def __init__(self, message="", param=None, **kwargs):
+            super().__init__(message)
+            self.param = param
+
+    class _StripeSignatureVerificationError(_StripeError):
+        """Minimal stub that mimics stripe.error.SignatureVerificationError."""
+        def __init__(self, message="Invalid signature", sig_header=None, **kwargs):
+            super().__init__(message)
+            self.sig_header = sig_header
+
+    # ---------------------------------------------------------------------------
+    # Resource stubs — each has create / retrieve / modify / list classmethods.
+    # ---------------------------------------------------------------------------
+    class _StripeInvoice:
+        def __init__(self, **kwargs):
+            for k, v in kwargs.items():
+                setattr(self, k, v)
+            if not hasattr(self, "id"):
+                self.id = "in_stub"
+            if not hasattr(self, "status"):
+                self.status = "draft"
+
+        @staticmethod
+        def create(**kwargs):
+            return _StripeInvoice(**kwargs)
+
+        @staticmethod
+        def retrieve(sid, **kwargs):
+            obj = _SN()
+            obj.id = sid
+            obj.status = "draft"
+            return obj
+
+        @staticmethod
+        def modify(sid, **kwargs):
+            obj = _SN()
+            obj.id = sid
+            for k, v in kwargs.items():
+                setattr(obj, k, v)
+            return obj
+
+        @staticmethod
+        def list(**kwargs):
+            return _SN(data=[])
+
+        @staticmethod
+        def finalize_invoice(sid, **kwargs):
+            obj = _SN()
+            obj.id = sid
+            obj.status = "open"
+            return obj
+
+        @staticmethod
+        def pay(sid, **kwargs):
+            obj = _SN()
+            obj.id = sid
+            obj.status = "paid"
+            return obj
+
+        @staticmethod
+        def send_invoice(sid, **kwargs):
+            obj = _SN()
+            obj.id = sid
+            return obj
+
+        @staticmethod
+        def void_invoice(sid, **kwargs):
+            obj = _SN()
+            obj.id = sid
+            obj.status = "void"
+            return obj
+
+    class _StripeInvoiceItem:
+        @staticmethod
+        def create(**kwargs):
+            obj = _SN()
+            obj.id = "ii_stub"
+            for k, v in kwargs.items():
+                setattr(obj, k, v)
+            return obj
+
+        @staticmethod
+        def retrieve(sid, **kwargs):
+            return _SN(id=sid)
+
+        @staticmethod
+        def modify(sid, **kwargs):
+            return _SN(id=sid)
+
+        @staticmethod
+        def list(**kwargs):
+            return _SN(data=[])
+
+    class _StripePaymentMethod:
+        @staticmethod
+        def create(**kwargs):
+            obj = _SN()
+            obj.id = "pm_stub"
+            obj.type = kwargs.get("type", "card")
+            obj.sepa_debit = _SN(last4="1234")
+            return obj
+
+        @staticmethod
+        def retrieve(sid, **kwargs):
+            obj = _SN()
+            obj.id = sid
+            obj.sepa_debit = _SN(last4="1234")
+            return obj
+
+        @staticmethod
+        def modify(sid, **kwargs):
+            return _SN(id=sid)
+
+        @staticmethod
+        def list(**kwargs):
+            return _SN(data=[])
+
+        @staticmethod
+        def attach(pm_id, **kwargs):
+            return _SN(id=pm_id)
+
+    class _StripeSubscription:
+        @staticmethod
+        def create(**kwargs):
+            return _SN(id="sub_stub", status="active")
+
+        @staticmethod
+        def retrieve(sid, **kwargs):
+            return _SN(id=sid, status="active")
+
+        @staticmethod
+        def modify(sid, **kwargs):
+            return _SN(id=sid)
+
+        @staticmethod
+        def list(**kwargs):
+            return _SN(data=[])
+
+        @staticmethod
+        def cancel(sid, **kwargs):
+            return _SN(id=sid, status="canceled")
+
+    class _StripeCustomer:
+        @staticmethod
+        def create(**kwargs):
+            return _SN(id="cus_stub")
+
+        @staticmethod
+        def retrieve(sid, **kwargs):
+            return _SN(id=sid)
+
+        @staticmethod
+        def modify(sid, **kwargs):
+            return _SN(id=sid)
+
+        @staticmethod
+        def list(**kwargs):
+            return _SN(data=[])
+
+    class _StripeCharge:
+        @staticmethod
+        def create(**kwargs):
+            return _SN(id="ch_stub", status="succeeded")
+
+        @staticmethod
+        def retrieve(sid, **kwargs):
+            return _SN(id=sid, status="succeeded")
+
+        @staticmethod
+        def modify(sid, **kwargs):
+            return _SN(id=sid)
+
+        @staticmethod
+        def list(**kwargs):
+            return _SN(data=[])
+
+    class _StripeRefund:
+        @staticmethod
+        def create(**kwargs):
+            return _SN(id="re_stub", status="succeeded")
+
+        @staticmethod
+        def retrieve(sid, **kwargs):
+            return _SN(id=sid)
+
+        @staticmethod
+        def modify(sid, **kwargs):
+            return _SN(id=sid)
+
+        @staticmethod
+        def list(**kwargs):
+            return _SN(data=[])
+
+    class _StripeEvent:
+        @staticmethod
+        def retrieve(sid, **kwargs):
+            return _SN(id=sid, type="test.event", data=_SN(object={}))
+
+        @staticmethod
+        def list(**kwargs):
+            return _SN(data=[])
+
+    class _StripeWebhook:
+        @staticmethod
+        def construct_event(payload, sig_header, secret, **kwargs):
+            return _SN(type="test.event", data=_SN(object={}))
+
+    # SetupIntent — also commonly needed
+    class _StripeSetupIntent:
+        @staticmethod
+        def create(**kwargs):
+            return _SN(id="seti_stub", status="requires_action")
+
+        @staticmethod
+        def retrieve(sid, **kwargs):
+            return _SN(id=sid, payment_method="pm_stub")
+
+        @staticmethod
+        def list(**kwargs):
+            return _SN(data=[])
+
+    # PaymentIntent — also needed in billing routes
+    class _StripePaymentIntent:
+        @staticmethod
+        def create(**kwargs):
+            return _SN(id="pi_stub", status="processing")
+
+        @staticmethod
+        def retrieve(sid, **kwargs):
+            return _SN(id=sid, status="processing")
+
+        @staticmethod
+        def cancel(sid, **kwargs):
+            return _SN(id=sid, status="canceled")
+
+        @staticmethod
+        def modify(sid, **kwargs):
+            return _SN(id=sid)
+
+    # TaxRate — needed by billing routes
+    class _StripeTaxRate:
+        @staticmethod
+        def create(**kwargs):
+            return _SN(id="txr_stub")
+
+        @staticmethod
+        def retrieve(sid, **kwargs):
+            return _SN(id=sid)
+
+        @staticmethod
+        def list(**kwargs):
+            return _SN(data=[])
+
+    # checkout.Session stub
+    _stripe_checkout = _make_stub_module("stripe.checkout")
+
+    class _CheckoutSession:
+        @staticmethod
+        def create(**kwargs):
+            return _SN(url="https://checkout.stripe.com/test", id="cs_stub")
+
+        @staticmethod
+        def retrieve(sid, **kwargs):
+            return _SN(id=sid, url="https://checkout.stripe.com/test")
+
+    _stripe_checkout.Session = _CheckoutSession
+
+    # error submodule
+    _stripe_error = _make_stub_module(
+        "stripe.error",
+        StripeError=_StripeError,
+        InvalidRequestError=_StripeInvalidRequestError,
+        SignatureVerificationError=_StripeSignatureVerificationError,
+    )
+
+    # Main stripe module
+    _stripe_mod = _make_stub_module(
+        "stripe",
+        # Error aliases at top-level (stripe.StripeError is common)
+        StripeError=_StripeError,
+        # Resource classes
+        Invoice=_StripeInvoice,
+        InvoiceItem=_StripeInvoiceItem,
+        PaymentMethod=_StripePaymentMethod,
+        Subscription=_StripeSubscription,
+        Customer=_StripeCustomer,
+        Charge=_StripeCharge,
+        Refund=_StripeRefund,
+        Event=_StripeEvent,
+        Webhook=_StripeWebhook,
+        SetupIntent=_StripeSetupIntent,
+        PaymentIntent=_StripePaymentIntent,
+        TaxRate=_StripeTaxRate,
+        # Submodules
+        error=_stripe_error,
+        checkout=_stripe_checkout,
+        # api_key placeholder (stripe_service sets this at init)
+        api_key=None,
+    )
+
+    sys.modules["stripe"] = _stripe_mod
+    sys.modules["stripe.error"] = _stripe_error
+    sys.modules["stripe.checkout"] = _stripe_checkout
+
 
 # ---------------------------------------------------------------------------
 # Booking-specific test helpers (B.1.4)
@@ -192,42 +516,6 @@ def assert_no_legacy_xml_tags(messages: list) -> None:
             )
 
 
-@pytest.fixture
-def captured_model_request():
-    """Spy middleware fixture that captures messages passed to the LLM.
-
-    Returns (captured_list, SpyMiddlewareClass) tuple.
-    The captured_list is populated in-place by the spy's before_model hook.
-
-    Usage::
-        captured, SpyMiddleware = captured_model_request
-        # ... install SpyMiddleware in the middleware stack ...
-        assert_no_legacy_xml_tags(captured[-1])
-    """
-    from langchain.agents import AgentMiddleware  # noqa: F401 — type reference
-
-    captured: list[list] = []
-
-    class _CaptureMiddleware:
-        """Minimal spy — captures messages before each LLM call."""
-
-        async def before_model(self, state: dict, runtime=None) -> dict | None:
-            msgs = list(state.get("messages", []))
-            captured.append(msgs)
-            return None
-
-        async def after_model(self, state: dict, response, runtime=None) -> dict | None:
-            return None
-
-        async def before_tool(self, tool_name: str, tool_args: dict, runtime=None) -> dict | None:
-            return None
-
-        async def after_tool(self, tool_name: str, tool_args: dict, result, runtime=None):
-            return None
-
-    return captured, _CaptureMiddleware
-
-
 @pytest.fixture(scope="function")
 def event_loop():
     """
@@ -249,6 +537,11 @@ async def cleanup_engine():
 
     This ensures connection pools don't interfere between tests and
     prevents "Future attached to different loop" errors.
+
+    NOTE (test-isolation-refactor): This fixture is retained for PR-1 because
+    many tests rely on a real asyncpg connection pool. Once PR-2 introduces the
+    savepoint-based db_session fixture, tests will be migrated away from the raw
+    engine and this fixture can be safely removed at that point.
     """
     yield
     # Dispose engine after each test to release connections

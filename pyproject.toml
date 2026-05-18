@@ -177,6 +177,7 @@ markers = [
     "e2e: End-to-end scenario tests",
     "slow: Slow running tests",
     "llm: Tests that require live OpenRouter LLM credentials (skip in CI without creds)",
+    "rate_limit_required: Tests asserting 429 behaviour — must run with RATE_LIMITING_ENABLED=true",
 ]
 
 [tool.coverage.run]

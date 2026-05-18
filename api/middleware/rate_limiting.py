@@ -43,6 +43,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             Response with rate limit headers
             429 if rate limit exceeded
         """
+        # Feature-flag bypass (tests, maintenance windows)
+        if not get_settings().RATE_LIMITING_ENABLED:
+            return await call_next(request)
+
         # Skip rate limiting for health check endpoint
         if request.url.path == "/health":
             return await call_next(request)

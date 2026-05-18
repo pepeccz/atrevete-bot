@@ -137,6 +137,7 @@ class TestGenerateInvoiceHappyPath:
         with patch("api.services.billing_service.get_settings", return_value=settings):
             with patch("api.services.billing_service.datetime") as mock_dt:
                 mock_dt.utcnow.return_value = datetime(2026, 3, 15, 12, 0, 0)
+                mock_dt.now.return_value = datetime(2026, 3, 15, 12, 0, 0)
                 invoice = await svc.generate_invoice(session, 2026, 3)
 
         # invoice was added to session and committed
@@ -181,6 +182,7 @@ class TestGenerateInvoiceNoTokenUsage:
         with patch("api.services.billing_service.get_settings", return_value=settings):
             with patch("api.services.billing_service.datetime") as mock_dt:
                 mock_dt.utcnow.return_value = datetime(2026, 3, 15, 12, 0, 0)
+                mock_dt.now.return_value = datetime(2026, 3, 15, 12, 0, 0)
                 await svc.generate_invoice(session, 2026, 3)
 
         added = session.add.call_args_list[0][0][0]
@@ -232,6 +234,7 @@ class TestGenerateInvoiceFuturePeriodRaises422:
         with patch("api.services.billing_service.get_settings", return_value=settings):
             with patch("api.services.billing_service.datetime") as mock_dt:
                 mock_dt.utcnow.return_value = datetime(2026, 3, 15, 12, 0, 0)
+                mock_dt.now.return_value = datetime(2026, 3, 15, 12, 0, 0)
                 with pytest.raises(HTTPException) as exc_info:
                     # April 2026 is in the future relative to March 2026
                     await svc.generate_invoice(session, 2026, 4)
@@ -253,6 +256,7 @@ class TestGenerateInvoiceFuturePeriodRaises422:
         with patch("api.services.billing_service.get_settings", return_value=settings):
             with patch("api.services.billing_service.datetime") as mock_dt:
                 mock_dt.utcnow.return_value = datetime(2026, 3, 15, 12, 0, 0)
+                mock_dt.now.return_value = datetime(2026, 3, 15, 12, 0, 0)
                 with pytest.raises(HTTPException) as exc_info:
                     await svc.generate_invoice(session, 2027, 1)
 
@@ -286,6 +290,7 @@ class TestGenerateInvoicePdfFailure:
         with patch("api.services.billing_service.get_settings", return_value=settings):
             with patch("api.services.billing_service.datetime") as mock_dt:
                 mock_dt.utcnow.return_value = datetime(2026, 3, 15, 12, 0, 0)
+                mock_dt.now.return_value = datetime(2026, 3, 15, 12, 0, 0)
                 # Should NOT raise
                 await svc.generate_invoice(session, 2026, 3)
 
@@ -324,6 +329,7 @@ class TestGenerateInvoiceStripeFailure:
         with patch("api.services.billing_service.get_settings", return_value=settings):
             with patch("api.services.billing_service.datetime") as mock_dt:
                 mock_dt.utcnow.return_value = datetime(2026, 3, 15, 12, 0, 0)
+                mock_dt.now.return_value = datetime(2026, 3, 15, 12, 0, 0)
                 await svc.generate_invoice(session, 2026, 3)
 
         # Invoice committed, no Payment object added (only invoice was added)
@@ -555,6 +561,7 @@ class TestGetCurrentEstimate:
         with patch("api.services.billing_service.get_settings", return_value=settings):
             with patch("api.services.billing_service.datetime") as mock_dt:
                 mock_dt.utcnow.return_value = datetime(2026, 3, 15, 12, 0, 0)
+                mock_dt.now.return_value = datetime(2026, 3, 15, 12, 0, 0)
                 result = await svc.get_current_estimate(session)
 
         # 2M input * 0.15 + 1M output * 0.60 = 0.30 + 0.60 = 0.90
@@ -580,6 +587,7 @@ class TestGetCurrentEstimate:
         with patch("api.services.billing_service.get_settings", return_value=settings):
             with patch("api.services.billing_service.datetime") as mock_dt:
                 mock_dt.utcnow.return_value = datetime(2026, 3, 15, 12, 0, 0)
+                mock_dt.now.return_value = datetime(2026, 3, 15, 12, 0, 0)
                 result = await svc.get_current_estimate(session)
 
         assert result["token_amount_eur"] == "0.00"
@@ -601,6 +609,7 @@ class TestGetCurrentEstimate:
         with patch("api.services.billing_service.get_settings", return_value=settings):
             with patch("api.services.billing_service.datetime") as mock_dt:
                 mock_dt.utcnow.return_value = datetime(2026, 12, 15, 12, 0, 0)
+                mock_dt.now.return_value = datetime(2026, 12, 15, 12, 0, 0)
                 result = await svc.get_current_estimate(session)
 
         assert result["next_invoice_date"] == "2027-01-01"
@@ -695,6 +704,7 @@ class TestGenerateInvoicePdfPersistence:
         with patch("api.services.billing_service.get_settings", return_value=settings):
             with patch("api.services.billing_service.datetime") as mock_dt:
                 mock_dt.utcnow.return_value = datetime(2026, 3, 15, 12, 0, 0)
+                mock_dt.now.return_value = datetime(2026, 3, 15, 12, 0, 0)
                 invoice = await svc.generate_invoice(session, 2026, 3)
 
         # The invoice object added to session must have pdf_path set
@@ -749,6 +759,7 @@ class TestGenerateInvoicePdfPersistence:
         with patch("api.services.billing_service.get_settings", return_value=settings):
             with patch("api.services.billing_service.datetime") as mock_dt:
                 mock_dt.utcnow.return_value = datetime(2026, 3, 15, 12, 0, 0)
+                mock_dt.now.return_value = datetime(2026, 3, 15, 12, 0, 0)
                 # Must NOT raise
                 invoice = await svc.generate_invoice(session, 2026, 3)
 

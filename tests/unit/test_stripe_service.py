@@ -101,6 +101,72 @@ def _make_stripe_stub():
     checkout.Session = _CheckoutSession
     stripe_stub.checkout = checkout
 
+    # Invoice stub — needed for type annotations in stripe_service.py class body
+    class _Invoice:
+        @staticmethod
+        def create(**kwargs):
+            return SimpleNamespace(id="in_test_123", status="draft")
+
+        @staticmethod
+        def retrieve(iid, **kwargs):
+            return SimpleNamespace(id=iid, status="draft")
+
+        @staticmethod
+        def finalize_invoice(iid, **kwargs):
+            return SimpleNamespace(id=iid, status="open")
+
+        @staticmethod
+        def void_invoice(iid, **kwargs):
+            return SimpleNamespace(id=iid, status="void")
+
+        @staticmethod
+        def pay(iid, **kwargs):
+            return SimpleNamespace(id=iid, status="paid")
+
+    stripe_stub.Invoice = _Invoice
+
+    # InvoiceItem stub
+    class _InvoiceItem:
+        @staticmethod
+        def create(**kwargs):
+            return SimpleNamespace(id="ii_test_123")
+
+    stripe_stub.InvoiceItem = _InvoiceItem
+
+    # Event stub
+    class _Event:
+        @staticmethod
+        def retrieve(eid, **kwargs):
+            return SimpleNamespace(id=eid, type="test.event", data=SimpleNamespace(object={}))
+
+    stripe_stub.Event = _Event
+
+    # Mandate stub (needed for SEPA mandate status lookups)
+    class _Mandate:
+        @staticmethod
+        def retrieve(mid, **kwargs):
+            return SimpleNamespace(
+                id=mid,
+                status="active",
+                payment_method_details=SimpleNamespace(
+                    sepa_debit=SimpleNamespace(url="https://stripe.com/mandate/stub")
+                ),
+            )
+
+    stripe_stub.Mandate = _Mandate
+
+    # TaxRate stub
+    class _TaxRate:
+        @staticmethod
+        def create(**kwargs):
+            return SimpleNamespace(id="txr_test_123")
+
+        @staticmethod
+        def retrieve(tid, **kwargs):
+            return SimpleNamespace(id=tid)
+
+    stripe_stub.TaxRate = _TaxRate
+
     return stripe_stub
 
 

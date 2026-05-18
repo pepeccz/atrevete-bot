@@ -416,6 +416,16 @@ class Settings(BaseSettings):
         ),
     )
 
+    # Rate Limiting (disable in tests and maintenance windows)
+    RATE_LIMITING_ENABLED: bool = Field(
+        default=True,
+        description=(
+            "Feature flag for HTTP rate limiting middleware. When False, all requests pass through "
+            "without rate-limit checks. Set to False in tests or during maintenance windows. "
+            "NEVER set to False in production without a specific reason."
+        ),
+    )
+
     # LLM Trace Capture (debug-only — never enable in production with real customer data)
     LLM_TRACE_ENABLED: bool = Field(
         default=False,
