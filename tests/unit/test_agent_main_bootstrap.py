@@ -54,11 +54,13 @@ async def test_subscribe_to_incoming_messages_uses_authoritative_runtime_graph()
         }
     )
     settings = SimpleNamespace(MESSAGE_BATCH_WINDOW_SECONDS=0, USE_REDIS_STREAMS=True)
+    # Fake module with current agent.checkpointer API (get_checkpointer / setup_checkpointer)
+    fake_cm = MagicMock()
+    fake_cm.__aenter__ = AsyncMock(return_value="checkpoint")
+    fake_cm.__aexit__ = AsyncMock(return_value=False)
     fake_checkpointer_module = SimpleNamespace(
-        get_redis_checkpointer=MagicMock(return_value="checkpoint"),
-        initialize_redis_indexes=AsyncMock(),
-        get_redis_store=MagicMock(return_value=None),
-        initialize_redis_store=AsyncMock(),
+        get_checkpointer=MagicMock(return_value=fake_cm),
+        setup_checkpointer=AsyncMock(),
     )
     fake_langfuse_client = MagicMock()
     fake_langfuse_client.flush = MagicMock()
@@ -70,7 +72,7 @@ async def test_subscribe_to_incoming_messages_uses_authoritative_runtime_graph()
     with patch.dict(
         sys.modules,
         {
-            "agent.state.checkpointer": fake_checkpointer_module,
+            "agent.checkpointer": fake_checkpointer_module,
             "agent.utils.monitoring": fake_monitoring_module,
         },
     ):
