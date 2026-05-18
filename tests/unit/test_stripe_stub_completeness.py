@@ -6,8 +6,6 @@ The test fails (RED) if conftest does not wire them into sys.modules["stripe"].
 
 from __future__ import annotations
 
-import sys
-
 
 def test_stripe_invoice_accessible():
     import stripe

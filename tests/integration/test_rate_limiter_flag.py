@@ -6,8 +6,6 @@ return a non-429 response, regardless of how many times the same IP hits it.
 
 from __future__ import annotations
 
-import os
-
 import pytest
 
 
