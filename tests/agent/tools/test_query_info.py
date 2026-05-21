@@ -1,9 +1,10 @@
 """
-Tests for agent/tools/query_info.py — Task 3.1 (RED→GREEN).
+Tests for agent/tools/query_info.py — updated for SalonInfoService delegation (T1.4).
 
 query_info is a @tool-decorated async function that answers catalog/hours/policies queries
-from DB. No LLM calls inside. Returns JSON-parseable ToolResponse.
-DB calls are mocked so tests run without a live Postgres instance.
+from DB via SalonInfoService. No LLM calls inside. Returns JSON-parseable ToolResponse.
+Patches target agent.services.salon_info_service.SalonInfoService methods so no live
+Postgres instance is needed.
 """
 
 import json
@@ -90,7 +91,9 @@ async def test_query_info_services_returns_ok_status():
     from agent.tools.query_info import query_info
 
     with patch(
-        "agent.tools.query_info._load_services", new_callable=AsyncMock, return_value=FAKE_SERVICES
+        "agent.services.salon_info_service.SalonInfoService.get_services",
+        new_callable=AsyncMock,
+        return_value=FAKE_SERVICES,
     ):
         raw = await query_info.ainvoke({"topic": "services"})
 
@@ -107,7 +110,9 @@ async def test_query_info_services_item_shape():
     from agent.tools.query_info import query_info
 
     with patch(
-        "agent.tools.query_info._load_services", new_callable=AsyncMock, return_value=FAKE_SERVICES
+        "agent.services.salon_info_service.SalonInfoService.get_services",
+        new_callable=AsyncMock,
+        return_value=FAKE_SERVICES,
     ):
         raw = await query_info.ainvoke({"topic": "services"})
 
@@ -122,11 +127,13 @@ async def test_query_info_services_item_shape():
 
 @pytest.mark.asyncio
 async def test_query_info_services_sorted_by_category_then_name():
-    """Services list is returned as-is from _load_services (already sorted by DB query)."""
+    """Services list is returned as-is from SalonInfoService.get_services() (already sorted by DB query)."""
     from agent.tools.query_info import query_info
 
     with patch(
-        "agent.tools.query_info._load_services", new_callable=AsyncMock, return_value=FAKE_SERVICES
+        "agent.services.salon_info_service.SalonInfoService.get_services",
+        new_callable=AsyncMock,
+        return_value=FAKE_SERVICES,
     ):
         raw = await query_info.ainvoke({"topic": "services"})
 
@@ -146,7 +153,9 @@ async def test_query_info_hours_returns_ok_status():
     from agent.tools.query_info import query_info
 
     with patch(
-        "agent.tools.query_info._load_hours", new_callable=AsyncMock, return_value=FAKE_HOURS
+        "agent.services.salon_info_service.SalonInfoService.get_hours",
+        new_callable=AsyncMock,
+        return_value=FAKE_HOURS,
     ):
         raw = await query_info.ainvoke({"topic": "hours"})
 
@@ -161,7 +170,9 @@ async def test_query_info_hours_has_all_days():
     from agent.tools.query_info import query_info
 
     with patch(
-        "agent.tools.query_info._load_hours", new_callable=AsyncMock, return_value=FAKE_HOURS
+        "agent.services.salon_info_service.SalonInfoService.get_hours",
+        new_callable=AsyncMock,
+        return_value=FAKE_HOURS,
     ):
         raw = await query_info.ainvoke({"topic": "hours"})
 
@@ -177,7 +188,9 @@ async def test_query_info_hours_closed_days_have_flag():
     from agent.tools.query_info import query_info
 
     with patch(
-        "agent.tools.query_info._load_hours", new_callable=AsyncMock, return_value=FAKE_HOURS
+        "agent.services.salon_info_service.SalonInfoService.get_hours",
+        new_callable=AsyncMock,
+        return_value=FAKE_HOURS,
     ):
         raw = await query_info.ainvoke({"topic": "hours"})
 
@@ -200,7 +213,9 @@ async def test_query_info_policies_returns_ok_when_populated():
     from agent.tools.query_info import query_info
 
     with patch(
-        "agent.tools.query_info._load_policies", new_callable=AsyncMock, return_value=FAKE_POLICIES
+        "agent.services.salon_info_service.SalonInfoService.get_policies",
+        new_callable=AsyncMock,
+        return_value=FAKE_POLICIES,
     ):
         raw = await query_info.ainvoke({"topic": "policies"})
 
@@ -212,7 +227,11 @@ async def test_query_info_policies_returns_ok_when_populated():
 async def test_query_info_policies_returns_partial_when_empty():
     from agent.tools.query_info import query_info
 
-    with patch("agent.tools.query_info._load_policies", new_callable=AsyncMock, return_value={}):
+    with patch(
+        "agent.services.salon_info_service.SalonInfoService.get_policies",
+        new_callable=AsyncMock,
+        return_value={},
+    ):
         raw = await query_info.ainvoke({"topic": "policies"})
 
     data = parse_response(raw)
@@ -224,7 +243,9 @@ async def test_query_info_policies_payload_is_dict():
     from agent.tools.query_info import query_info
 
     with patch(
-        "agent.tools.query_info._load_policies", new_callable=AsyncMock, return_value=FAKE_POLICIES
+        "agent.services.salon_info_service.SalonInfoService.get_policies",
+        new_callable=AsyncMock,
+        return_value=FAKE_POLICIES,
     ):
         raw = await query_info.ainvoke({"topic": "policies"})
 
@@ -260,7 +281,9 @@ async def test_query_info_returns_json_string():
     from agent.tools.query_info import query_info
 
     with patch(
-        "agent.tools.query_info._load_hours", new_callable=AsyncMock, return_value=FAKE_HOURS
+        "agent.services.salon_info_service.SalonInfoService.get_hours",
+        new_callable=AsyncMock,
+        return_value=FAKE_HOURS,
     ):
         raw = await query_info.ainvoke({"topic": "hours"})
 
