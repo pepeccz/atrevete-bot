@@ -119,6 +119,17 @@ async def cleanup_conversation_redis_keys(
             logger.warning(msg)
             errors.append(msg)
 
+    # --- Delete pending_injection:v2:{cid} (set by /resume endpoint, TTL 600s) ---
+    pending_injection_key = f"pending_injection:v2:{conversation_id}"
+    try:
+        if await redis_client.exists(pending_injection_key):
+            all_keys.append(pending_injection_key)
+            by_family["pending_injection"] = 1
+    except Exception as exc:
+        msg = f"exists check failed for pending_injection key: {exc}"
+        logger.warning(msg)
+        errors.append(msg)
+
     if not all_keys:
         logger.debug(
             "redis_conversation_cleanup: no keys found",
