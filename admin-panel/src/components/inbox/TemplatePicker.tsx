@@ -120,7 +120,7 @@ export function TemplatePicker({ conversationId, onSent }: TemplatePickerProps) 
           <SelectContent>
             {approvedTemplates.map((t) => (
               <SelectItem key={t.name} value={t.name}>
-                {t.name}
+                {t.display_name ?? t.name}
               </SelectItem>
             ))}
           </SelectContent>

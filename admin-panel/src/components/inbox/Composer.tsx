@@ -142,10 +142,12 @@ export function Composer({
 
   if (composerState === "DISABLED_AWAIT_APPROVAL") {
     return (
-      <div className="p-4 bg-muted rounded-lg text-center border-t">
-        <p className="text-sm text-muted-foreground font-medium">Plantillas en aprobación</p>
+      <div className="px-4 pb-4 pt-2 bg-muted/60 text-center">
+        <p className="text-sm text-muted-foreground font-medium">
+          Esta conversación está fuera de la ventana de 24h de Meta.
+        </p>
         <p className="text-xs text-muted-foreground mt-1">
-          La ventana de 24h está cerrada y no hay plantillas aprobadas aún.
+          Solo se pueden enviar plantillas aprobadas, y aún no hay ninguna aprobada para este flujo.
         </p>
       </div>
     );
@@ -153,7 +155,7 @@ export function Composer({
 
   if (composerState === "READY_TEMPLATE") {
     return (
-      <div className="border-t p-3">
+      <div className="p-3">
         <TemplatePicker
           conversationId={conversationId}
           onSent={onMessageSent}
@@ -167,7 +169,7 @@ export function Composer({
 
   return (
     <>
-      <div className="border-t p-3 flex gap-2 items-end">
+      <div className="p-3 flex gap-2 items-end">
         <Textarea
           ref={textareaRef}
           value={text}
