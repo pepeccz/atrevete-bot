@@ -19,7 +19,7 @@ metadata:
 
 ## 1. Architecture Overview
 
-Single LangChain `create_agent` tool-calling loop wrapped by a composed middleware chain. No StateGraph, no mode nodes, no intent router. The LLM picks tools directly each turn; middlewares hydrate context into XML-fenced slots that `PromptAssemblyMiddleware` folds into the system prompt.
+Single LangChain `create_agent` tool-calling loop wrapped by a composed middleware chain of 7 middlewares (SSOT: `agent/agent_factory.py:47-55`). Direct tool-calling — no custom graph, no mode dispatch, no keyword classifier. The LLM picks tools directly each turn; middlewares hydrate context into XML-fenced slots that `PromptAssemblyMiddleware` folds into the system prompt.
 
 ### Directory Layout
 
@@ -32,11 +32,12 @@ agent/
 ├── checkpointer.py             # AsyncRedisSaver wiring
 ├── resume_handler.py           # Resume helpers for interrupted runs
 ├── state.py                    # AgentState TypedDict (slim, 7 fields)
-├── middleware/                 # 6 composed middlewares (order matters)
+├── middleware/                 # 7 base middlewares in execution order (agent/agent_factory.py:47-55)
 │   ├── disclosure.py
 │   ├── customer_resolve.py
 │   ├── appointment_context.py
 │   ├── dynamic_prompt.py
+│   ├── availability_context.py
 │   ├── prompt_assembly.py
 │   └── summarize.py
 ├── tools/                      # 6 LangChain tools
@@ -50,8 +51,7 @@ agent/
 │   ├── loader.py               # load_system_prompt()
 │   ├── catalog_builder.py      # build_catalog_prompt_section()
 │   ├── business_hours.py       # load_business_hours_snapshot()
-│   ├── shared/                 # identity, rules, glossary, booking_flow
-│   └── modes/                  # legacy overlays still used as prompt fragments
+│   └── shared/                 # identity, rules, glossary, booking_flow
 ├── routing/
 │   └── intent_types.py         # IntentType enum (legacy, no live router)
 ├── booking/resolvers/          # service / stylist / time resolvers
@@ -73,8 +73,9 @@ build_conversation_agent  (create_agent + state_schema=AgentState)
     2. CustomerResolveMiddleware      (phone → DB → _slot_customer + customer_id)
     3. AppointmentContextMiddleware   (after CustomerResolve; upcoming appts)
     4. DynamicPromptMiddleware        (catalog + business hours)
-    5. PromptAssemblyMiddleware       (fold _slot_* into system_message)
-    6. SummarizeMiddleware            (window=20, keep_tail=10)
+    5. AvailabilityContextMiddleware  (after DynamicPrompt; slot availability)
+    6. PromptAssemblyMiddleware       (fold _slot_* into system_message)
+    7. SummarizeMiddleware            (window=20, keep_tail=10)
     │
     ▼
 LLM tool-calling loop
@@ -181,10 +182,12 @@ return create_agent(
     tools=AGENT_TOOLS,
     system_prompt=load_system_prompt(),
     middleware=[
+        # 7 base middlewares — execution order per agent/agent_factory.py:47-55
         DisclosureMiddleware(),
         CustomerResolveMiddleware(),
         AppointmentContextMiddleware(),  # MUST be after CustomerResolve (reads customer_id)
         DynamicPromptMiddleware(),
+        AvailabilityContextMiddleware(), # MUST be after DynamicPrompt
         PromptAssemblyMiddleware(),      # MUST be after all slot-writers
         SummarizeMiddleware(window=20, keep_tail=10),
     ],
@@ -236,7 +239,7 @@ async def check_availability(service_id: str, day: str) -> dict:
 
 1. Implement async `@tool` function in `agent/tools/<name>.py`.
 2. Append to `AGENT_TOOLS` list in `agent/agent_factory.py`.
-3. Update prompt fragments under `agent/prompts/shared/` (or `prompts/modes/`) to teach the LLM when to call it.
+3. Update prompt fragments under `agent/prompts/shared/` to teach the LLM when to call it.
 4. Add unit test under `tests/unit/test_agent/test_tools_<name>.py`.
 
 ---
@@ -251,7 +254,6 @@ Base prompt loaded once via `load_system_prompt()` at agent build. Dynamic conte
 - `agent/prompts/shared/critical_rules.md` — hard constraints
 - `agent/prompts/shared/booking_flow.md` — booking step-by-step instructions
 - `agent/prompts/shared/glossary.md` — service vocabulary
-- `agent/prompts/modes/*.md` — legacy mode overlays still used as prompt fragments (concatenated into base prompt; not gated by mode anymore)
 - `agent/prompts/catalog_builder.py` — async DB-driven catalog (with TTL cache)
 - `agent/prompts/business_hours.py` — async business hours snapshot
 
