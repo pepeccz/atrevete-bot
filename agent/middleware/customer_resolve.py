@@ -20,6 +20,7 @@ from typing import ClassVar
 from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
 
 from agent.services.customer_memory_service import read_customer_memories
+from shared.config import get_settings
 from shared.redis_client import get_redis_client
 
 logger = logging.getLogger(__name__)
@@ -90,8 +91,11 @@ async def _lookup_customer(phone: str) -> dict | None:
             return {
                 "id": customer.id,
                 "name": customer.name,
+                "phone": customer.phone,
                 "is_returning": has_appointments,
                 "notes": customer.notes,  # D5: staff notes (allergies/restrictions)
+                "policy_accepted_at": customer.policy_accepted_at,  # GDPR consent date
+                "policy_version": customer.policy_version,          # version accepted
             }
     except Exception as exc:
         logger.warning("Customer lookup failed for phone %s: %s", phone, exc)
@@ -211,6 +215,24 @@ class CustomerResolveMiddleware(AgentMiddleware):
         # Append memory lines per D1 field rules
         memory_lines = _build_memory_lines(memories, is_returning=customer["is_returning"])
         body_lines.extend(memory_lines)
+
+        # ── Policy line — three states ────────────────────────────────────────
+        _settings = get_settings()
+        _policy_accepted_at = customer.get("policy_accepted_at")
+        _policy_version = customer.get("policy_version")
+        if _policy_accepted_at is None:
+            body_lines.append("- Política privacidad: no aceptada")
+        elif _policy_version == _settings.POLICY_VERSION:
+            _accepted_date = _policy_accepted_at.strftime("%d/%m/%Y")
+            body_lines.append(
+                f"- Política privacidad: aceptada v{_settings.POLICY_VERSION} el {_accepted_date}"
+            )
+        else:
+            _accepted_date = _policy_accepted_at.strftime("%d/%m/%Y")
+            body_lines.append(
+                f"- Política privacidad: aceptada v{_policy_version} el {_accepted_date}"
+                f" (versión obsoleta)"
+            )
 
         slot_parts = [f"<customer>\n{chr(10).join(body_lines)}\n</customer>"]
 
