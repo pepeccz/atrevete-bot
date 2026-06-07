@@ -49,6 +49,7 @@ from database.models import (
     BusinessHours,
     ConversationHistory,
     Customer,
+    CustomerConsent,
     Escalation,
     EscalationSource,
     EscalationStatus,
@@ -646,7 +647,7 @@ class CustomerResponse(BaseModel):
 
 
 class CustomerDetailResponse(BaseModel):
-    """Enriched customer detail response — includes preferred_stylist_name, memories, chatwoot_id."""
+    """Enriched customer detail response — includes preferred_stylist_name, memories, chatwoot_id, policy fields."""
 
     id: str
     phone: str
@@ -660,6 +661,9 @@ class CustomerDetailResponse(BaseModel):
     chatwoot_conversation_id: str | None
     memories: dict | None
     created_at: datetime
+    # Policy acceptance (GDPR / cancellation policy)
+    policy_accepted_at: datetime | None = None
+    policy_version: str | None = None
 
     class Config:
         from_attributes = True
@@ -678,6 +682,20 @@ class CustomerAppointmentResponse(BaseModel):
     last_name: str | None
     notes: str | None
     created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class CustomerConsentResponse(BaseModel):
+    """Single policy-consent audit entry for a customer."""
+
+    id: str
+    customer_id: str
+    policy_version: str
+    accepted_at: datetime
+    accepted_via: Literal["whatsapp", "admin_panel"]
+    source_message_id: str | None
 
     class Config:
         from_attributes = True
@@ -2017,7 +2035,47 @@ async def get_customer(
             "chatwoot_conversation_id": customer.chatwoot_conversation_id,
             "memories": customer.metadata_.get("memories") if customer.metadata_ else None,
             "created_at": customer.created_at.isoformat(),
+            "policy_accepted_at": customer.policy_accepted_at,
+            "policy_version": customer.policy_version,
         }
+
+
+@router.get("/customers/{customer_id}/consents", response_model=list[CustomerConsentResponse])
+async def list_customer_consents(
+    customer_id: UUID,
+    current_user: Annotated[AdminUser, Depends(require_permission("customers:read"))],
+):
+    """Return all policy-consent events for a customer, ordered by accepted_at DESC (newest first).
+
+    Returns 404 if the customer does not exist.
+    """
+    async with get_async_session() as session:
+        # Verify customer exists
+        customer_check = await session.execute(
+            select(Customer.id).where(Customer.id == customer_id)
+        )
+        if not customer_check.scalar_one_or_none():
+            raise HTTPException(status_code=404, detail="Customer not found")
+
+        # Fetch consents ordered newest-first (uses ix_customer_consents_customer_id_accepted_at)
+        consent_result = await session.execute(
+            select(CustomerConsent)
+            .where(CustomerConsent.customer_id == customer_id)
+            .order_by(CustomerConsent.accepted_at.desc())
+        )
+        consents = consent_result.scalars().all()
+
+        return [
+            {
+                "id": str(c.id),
+                "customer_id": str(c.customer_id),
+                "policy_version": c.policy_version,
+                "accepted_at": c.accepted_at,
+                "accepted_via": c.accepted_via,
+                "source_message_id": c.source_message_id,
+            }
+            for c in consents
+        ]
 
 
 @router.get("/customers/{customer_id}/appointments")
@@ -7018,5 +7076,23 @@ async def inbox_get_sidebar(
         notes=notes_dtos,
         active_escalation=escalation_dto,
     ).model_dump()
+
+
+# =============================================================================
+# System / Config Endpoints
+# =============================================================================
+
+
+@router.get("/system/policy-version")
+async def get_policy_version():
+    """Return the currently configured policy version.
+
+    Used by the admin panel to render the correct badge state without hardcoding
+    the version string in the frontend.
+
+    No per-user auth required — this is project-wide configuration, not user data.
+    """
+    settings = get_settings()
+    return {"version": settings.POLICY_VERSION}
 
 
