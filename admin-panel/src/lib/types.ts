@@ -89,6 +89,9 @@ export interface Customer {
   notes: string | null;
   chatwoot_conversation_id: string | null;
   created_at: string;
+  // Policy acceptance (GDPR / cancellation policy)
+  policy_accepted_at: string | null; // ISO-8601 or null
+  policy_version: string | null;
 }
 
 export interface CustomerMemories {
@@ -107,6 +110,15 @@ export interface CustomerMemories {
 export interface CustomerDetail extends Customer {
   preferred_stylist_name: string | null;
   memories: CustomerMemories | null;
+}
+
+export interface CustomerConsent {
+  id: string;
+  customer_id: string;
+  policy_version: string;
+  accepted_at: string; // ISO-8601
+  accepted_via: "whatsapp" | "admin_panel";
+  source_message_id: string | null;
 }
 
 export interface CustomerAppointment {

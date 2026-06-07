@@ -126,6 +126,9 @@ export default function CustomerDetailPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Policy version state (fetched from backend to avoid hardcoding)
+  const [currentPolicyVersion, setCurrentPolicyVersion] = useState<string | null>(null);
+
   // Appointments state
   const [appointments, setAppointments] = useState<CustomerAppointment[]>([]);
   const [appointmentsPage, setAppointmentsPage] = useState(1);
@@ -141,16 +144,18 @@ export default function CustomerDetailPage() {
   const [notes, setNotes] = useState<string>("");
   const [isSavingNotes, setIsSavingNotes] = useState(false);
 
-  // Fetch customer detail + first page of appointments on mount
+  // Fetch customer detail + first page of appointments + current policy version on mount
   const loadData = useCallback(async () => {
     setIsLoading(true);
     setError(null);
     try {
-      const [customerData, apptData] = await Promise.all([
+      const [customerData, apptData, policyVersion] = await Promise.all([
         api.getCustomerDetail(id),
         api.getCustomerAppointments(id, 1, 20),
+        api.getCurrentPolicyVersion().catch(() => null),
       ]);
       setCustomer(customerData);
+      setCurrentPolicyVersion(policyVersion);
       setMemories(memoriesFromCustomer(customerData));
       setNotes(customerData.notes ?? "");
       setAppointments(apptData.items);
@@ -385,6 +390,28 @@ export default function CustomerDetailPage() {
                     <p className="text-sm">
                       {formatDate(customer.created_at, false)}
                     </p>
+                  </div>
+                  {/* Policy acceptance badge — 3 states */}
+                  <div>
+                    <p className="text-xs text-muted-foreground mb-1">
+                      Política de privacidad
+                    </p>
+                    {customer.policy_accepted_at === null ? (
+                      <Badge className="bg-gray-100 text-gray-700 hover:bg-gray-100">
+                        Política no aceptada
+                      </Badge>
+                    ) : customer.policy_version === currentPolicyVersion ? (
+                      <Badge className="bg-green-100 text-green-800 hover:bg-green-100">
+                        Política v{customer.policy_version} aceptada el{" "}
+                        {formatDate(customer.policy_accepted_at, false)}
+                      </Badge>
+                    ) : (
+                      <Badge className="bg-yellow-100 text-yellow-800 hover:bg-yellow-100">
+                        Política v{customer.policy_version} aceptada el{" "}
+                        {formatDate(customer.policy_accepted_at, false)}{" "}
+                        (versión obsoleta)
+                      </Badge>
+                    )}
                   </div>
                 </CardContent>
               </Card>
