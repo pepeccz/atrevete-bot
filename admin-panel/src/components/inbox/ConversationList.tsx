@@ -154,6 +154,7 @@ export function ConversationList({
   onToggleCollapsed,
 }: ConversationListProps) {
   const [conversations, setConversations] = useState<ConversationHistory[]>([]);
+  const [counts, setCounts] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
 
   // PR-2: search state
@@ -183,6 +184,7 @@ export function ConversationList({
     try {
       const res = await api.list<ConversationHistory>("conversations", { page_size: 100 });
       setConversations(res.items);
+      if (res.counts) setCounts(res.counts);
     } catch {
       // Silent — list is decorative-enough to degrade gracefully
     } finally {
@@ -299,6 +301,7 @@ export function ConversationList({
         {FILTER_TABS.map((tab) => {
           const Icon = tab.icon;
           const isActive = activeFilter === tab.id;
+          const tabCount = counts[tab.id] ?? 0;
           return (
             <Button
               key={tab.id}
@@ -312,6 +315,18 @@ export function ConversationList({
             >
               <Icon className="h-3.5 w-3.5" />
               {tab.label}
+              {tabCount > 0 && (
+                <Badge
+                  className={cn(
+                    "ml-0.5 text-[10px] px-1 py-0 min-w-[1.1rem] text-center leading-none",
+                    isActive
+                      ? "bg-white/30 text-white"
+                      : "bg-muted text-muted-foreground"
+                  )}
+                >
+                  {tabCount}
+                </Badge>
+              )}
             </Button>
           );
         })}

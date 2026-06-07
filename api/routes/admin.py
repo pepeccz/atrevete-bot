@@ -258,7 +258,25 @@ def _resolve_conversation_list_item(row: Any) -> dict[str, Any]:
 
     Reads started_at / ended_at directly from the DB row (not derived from messages).
     Uses _conversation_display_name for customer_name resolution.
+
+    Includes inbox-state fields (atencion_automatica, paused_at) so that the
+    frontend matchesFilter() function and tab counters work correctly on list items.
+    These fields mirror the logic used in the detail endpoint (line ~5424).
+
+    unread_message_count: NOT a DB column — defaults to 0. The frontend already
+    renders this badge per-item (PR-1), but counting requires a message-level
+    read status feature not yet built. Placeholder keeps the response shape stable.
     """
+    # Derive bot-pause state from paused_at / resumed_at columns.
+    # Use hasattr-safe access: ORM rows always have these columns (nullable),
+    # but synthetic/mock objects may return unexpected values.
+    paused_at_raw = getattr(row, "paused_at", None)
+    resumed_at_raw = getattr(row, "resumed_at", None)
+    # Only treat as a real datetime when the value is a datetime instance.
+    paused_at = paused_at_raw if isinstance(paused_at_raw, datetime) else None
+    resumed_at = resumed_at_raw if isinstance(resumed_at_raw, datetime) else None
+    is_paused = paused_at is not None and (resumed_at is None or resumed_at < paused_at)
+
     return {
         "id": str(row.id),
         "conversation_id": row.conversation_id,
@@ -270,6 +288,12 @@ def _resolve_conversation_list_item(row: Any) -> dict[str, Any]:
         "summary": row.summary,
         "created_at": row.created_at.isoformat(),
         "source": "db",
+        # Inbox state fields — required by matchesFilter() and tab counters
+        "atencion_automatica": not is_paused,
+        "paused_at": paused_at.isoformat() if paused_at else None,
+        # unread_message_count: no DB column exists yet (TECH DEBT — needs a
+        # per-message read-status feature). Always 0 to keep response shape stable.
+        "unread_message_count": 0,
     }
 
 
@@ -5160,6 +5184,11 @@ async def list_conversations(
                                 "summary": summary,
                                 "created_at": started_at,
                                 "source": "redis",
+                                # Safe defaults for inbox-state fields — Redis-only
+                                # conversations have not been paused/toggled yet.
+                                "atencion_automatica": True,
+                                "paused_at": None,
+                                "unread_message_count": 0,
                             }
                         )
                 except Exception as e:
@@ -5168,6 +5197,27 @@ async def list_conversations(
             # --- Merge: Redis-active first (most recent), then DB ---
             all_items = redis_items + db_items
             total = len(all_items)
+
+            # --- Tab counters (computed over ALL items BEFORE pagination) ---
+            counts = {
+                "all": total,
+                "bot_on": sum(
+                    1 for i in all_items
+                    if i.get("atencion_automatica", True) and not i.get("paused_at")
+                ),
+                "bot_off": sum(
+                    1 for i in all_items
+                    if not i.get("atencion_automatica", True) or i.get("paused_at")
+                ),
+                "escalated": sum(
+                    1 for i in all_items
+                    if not i.get("atencion_automatica", True) and i.get("paused_at")
+                ),
+                "unread": sum(
+                    1 for i in all_items if (i.get("unread_message_count") or 0) > 0
+                ),
+            }
+
             offset = (page - 1) * page_size
             items = all_items[offset : offset + page_size]
             has_more = (offset + page_size) < total
@@ -5178,6 +5228,7 @@ async def list_conversations(
                 "page": page,
                 "page_size": page_size,
                 "has_more": has_more,
+                "counts": counts,
             }
     except Exception as e:
         logger.error(f"Error listing conversations: {e}", exc_info=True)
