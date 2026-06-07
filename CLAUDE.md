@@ -735,6 +735,26 @@ Rollback: `git revert` this PR's commits + rebuild admin-panel.
 
 ---
 
+### Deploy Runbook (inbox-polish)
+
+Two orthogonal fixes: (Fix #5) tab counters on `/conversations` — backend list endpoint now returns `atencion_automatica`, `paused_at`, `unread_message_count` per item plus a `counts` key with per-filter totals; admin-panel tab buttons show a numeric badge. (Fix #6) orphan `Notification` cleanup — `delete_conversation()` now deletes `entity_type='conversation_history'` rows after removing the `ConversationHistory` parent. **No DB migration, no schema change, no checkpoint flush required.**
+
+```bash
+# Step 1: Restart api to pick up notification cleanup + list endpoint counts
+docker compose -f /home/pepe/Proyectos/atrevete-bot/docker-compose.yml restart api
+
+# Step 2: Rebuild admin-panel to pick up tab counter badges
+docker compose -f /home/pepe/Proyectos/atrevete-bot/docker-compose.yml up -d --build admin-panel
+```
+
+Verification:
+- Open `/conversations` — tab buttons should now show numeric badges (e.g. "Bot ON · 3").
+- Delete a conversation that has a `paused_24h` notification — confirm the notification is also removed (`SELECT * FROM notifications WHERE entity_type='conversation_history' AND entity_id='<uuid>'` should return 0 rows).
+
+Rollback: `git revert` this PR's commits + `docker compose restart api` + rebuild admin-panel.
+
+---
+
 ### Service Catalog Integrity Guard
 
 CI guard that asserts 7 structural invariants over the seeded `services` table. Introduced after the orphan-variant drift found at deploy 2026-05-11 (Engram obs #5260). I7 added by disambiguation-resilience PR-1.
