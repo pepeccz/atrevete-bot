@@ -25,6 +25,8 @@ NextStep = Literal[
     "reoffer_slots",  # book — race conflict on submit; payload: available_slots
     "retry_later",  # any tool — transient DB/GCal failure; no payload required
     "booking_complete",  # book — success; payload: appointment_id, calendar_link
+    "policy_acceptance_required",  # update_booking — customer must accept policy before booking; payload: policy_url, policy_version, policy_rejection_count
+    "policy_escalation_required",  # update_booking — 2 consecutive rejections; LLM calls escalate(reason="policy_rejection"); payload: reason, policy_rejection_count
 ]
 
 # Required payload keys per next_step value.
@@ -37,4 +39,6 @@ NEXT_STEP_PAYLOAD_CONTRACT: dict[str, tuple[str, ...]] = {
     "slot_not_available": ("available_slots",),
     "reoffer_slots": ("available_slots",),
     "booking_complete": ("appointment_id", "calendar_link"),
+    "policy_acceptance_required": ("policy_url", "policy_version", "policy_rejection_count"),
+    "policy_escalation_required": ("reason", "policy_rejection_count"),
 }
