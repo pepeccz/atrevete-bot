@@ -1,8 +1,26 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Loader2, MessageSquare, Paperclip, Download } from "lucide-react";
+import { Loader2, MessageSquare, Paperclip, Download, MoreHorizontal } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { toast } from "sonner";
 import { PausedBanner } from "./PausedBanner";
 import { Composer } from "./Composer";
 import { BotToggle } from "./BotToggle";
@@ -194,6 +212,8 @@ function MessageBubble({ msg, imageIndexMap, onImageClick }: MessageBubbleProps)
 
 interface ConversationThreadProps {
   conversationId: string;
+  /** Called with the deleted conversation's ID after a successful delete. */
+  onDeleted?: (conversationId: string) => void;
 }
 
 /**
@@ -201,9 +221,11 @@ interface ConversationThreadProps {
  * PausedBanner, Composer, and BotToggle in the header.
  * Polls at 3s (focused) / 10s (blurred) cadence (FR-UI-1, FR-UI-6).
  */
-export function ConversationThread({ conversationId }: ConversationThreadProps) {
+export function ConversationThread({ conversationId, onDeleted }: ConversationThreadProps) {
   const [conversation, setConversation] = useState<ConversationHistory | null>(null);
   const [loading, setLoading] = useState(true);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
   const inbox = conversation as unknown as ConversationHistoryInbox | null;
@@ -271,6 +293,21 @@ export function ConversationThread({ conversationId }: ConversationThreadProps) 
     handleBotToggled(false);
   };
 
+  const handleDeleteConfirm = async () => {
+    setDeleting(true);
+    try {
+      await api.deleteConversation(conversationId);
+      toast.success("Conversación eliminada correctamente");
+      onDeleted?.(conversationId);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Error al eliminar la conversación";
+      toast.error(message);
+    } finally {
+      setDeleting(false);
+      setDeleteDialogOpen(false);
+    }
+  };
+
   const messages: ConversationMessage[] = Array.isArray(conversation?.messages)
     ? (conversation!.messages as ConversationMessage[])
     : [];
@@ -290,6 +327,8 @@ export function ConversationThread({ conversationId }: ConversationThreadProps) 
 
   const lightbox = useLightbox(allImages);
 
+  const customerName = conversation?.customer_name ?? "esta conversación";
+
   return (
     <div className="flex flex-col h-full">
       {/* Thread header */}
@@ -300,14 +339,54 @@ export function ConversationThread({ conversationId }: ConversationThreadProps) 
             {conversation?.customer_name ?? "Conversación"}
           </span>
         </div>
-        {conversation && (
-          <BotToggle
-            conversationId={conversationId}
-            botEnabled={botEnabled}
-            onToggled={handleBotToggled}
-          />
-        )}
+        <div className="flex items-center gap-1 flex-shrink-0">
+          {conversation && (
+            <BotToggle
+              conversationId={conversationId}
+              botEnabled={botEnabled}
+              onToggled={handleBotToggled}
+            />
+          )}
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="icon" className="h-8 w-8">
+                <MoreHorizontal className="h-4 w-4" />
+                <span className="sr-only">Más opciones</span>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end">
+              <DropdownMenuItem
+                className="text-destructive focus:text-destructive focus:bg-destructive/10"
+                onClick={() => setDeleteDialogOpen(true)}
+              >
+                Eliminar conversación
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
       </div>
+
+      {/* Delete confirmation dialog */}
+      <AlertDialog open={deleteDialogOpen} onOpenChange={setDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Eliminar conversación</AlertDialogTitle>
+            <AlertDialogDescription>
+              ¿Eliminar conversación de {customerName}? Esta acción es irreversible y borra todos los mensajes asociados.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleDeleteConfirm}
+              disabled={deleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleting ? "Eliminando…" : "Eliminar"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Paused banner */}
       {!botEnabled && !loading && conversation && (

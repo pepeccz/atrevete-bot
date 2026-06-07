@@ -72,6 +72,7 @@ export default function ConversationsPage() {
   const [activeFilter, setActiveFilter] = useState<InboxFilter>(filterParam);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(convIdParam);
   const [activeCustomerId, setActiveCustomerId] = useState<string | null>(null);
+  const [listRefreshKey, setListRefreshKey] = useState(0);
   const [activeWhatsappContact, setActiveWhatsappContact] = useState<
     import("@/lib/types").WhatsappContact | null
   >(null);
@@ -169,6 +170,22 @@ export default function ConversationsPage() {
     updateUrl(undefined, id);
   };
 
+  const handleConversationDeleted = useCallback(
+    (deletedId: string) => {
+      // Clear selection if the deleted conversation was active
+      if (activeConversationId === deletedId) {
+        setActiveConversationId(null);
+        setActiveCustomerId(null);
+        setActiveWhatsappContact(null);
+        updateUrl(undefined, null);
+      }
+      // The list will refetch on its own polling cycle, but trigger immediately
+      // by bumping a refresh key (ConversationList re-mounts on key change).
+      setListRefreshKey((k) => k + 1);
+    },
+    [activeConversationId, updateUrl]
+  );
+
   if (!canRead) return <AccessDenied />;
 
   return (
@@ -188,6 +205,7 @@ export default function ConversationsPage() {
           )}
         >
           <ConversationList
+            key={listRefreshKey}
             activeFilter={activeFilter}
             activeConversationId={activeConversationId}
             onFilterChange={handleFilterChange}
@@ -200,7 +218,10 @@ export default function ConversationsPage() {
         {/* Center — active thread */}
         <div className="flex-1 min-w-0 overflow-hidden border-r border-line">
           {activeConversationId ? (
-            <ConversationThread conversationId={activeConversationId} />
+            <ConversationThread
+              conversationId={activeConversationId}
+              onDeleted={handleConversationDeleted}
+            />
           ) : (
             <EmptyThread />
           )}
@@ -215,6 +236,7 @@ export default function ConversationsPage() {
         >
           <CustomerCard
             customerId={activeCustomerId}
+            conversationId={activeConversationId}
             whatsappContact={activeWhatsappContact}
             collapsed={cardCollapsed}
             onToggleCollapsed={toggleCardCollapsed}
