@@ -8,16 +8,16 @@ conversational agent, enabling:
 - Performance metrics (latency, error rates)
 - Customer behavior analytics (session/user grouping)
 
-NOTE: Langfuse 3.x uses OpenTelemetry and requires environment variables:
-- LANGFUSE_PUBLIC_KEY
-- LANGFUSE_SECRET_KEY
-- LANGFUSE_HOST (optional, defaults to Langfuse cloud)
+NOTE: Langfuse 4.x uses OpenTelemetry. Credentials (public_key, secret_key,
+host) are configured once via env vars set at deploy time.  Per-call values
+(session_id, user_id, tags) are passed through the ``propagate_attributes``
+context manager — never via os.environ mutation, which would be a race
+condition under concurrent workers.
 """
 
 import logging
-import os
 
-from langfuse import Langfuse
+from langfuse import Langfuse, propagate_attributes
 from langfuse.langchain import CallbackHandler
 
 from shared.config import get_settings
@@ -62,66 +62,64 @@ def get_langfuse_handler(
     customer_phone: str,
     customer_name: str | None = None,
     additional_metadata: dict | None = None,
-) -> CallbackHandler:
+) -> tuple[CallbackHandler, object]:
     """
     Create a Langfuse callback handler for tracing agent conversations.
 
-    In Langfuse 3.x, configuration is done via environment variables.
-    This function ensures the environment variables are set before
-    creating the handler.
+    Langfuse 4.x uses OpenTelemetry.  Per-call identifiers (session_id,
+    user_id, tags) are scoped via ``propagate_attributes`` — a context
+    manager that injects OTEL span attributes without touching os.environ.
+    Credentials are read from env vars configured once at deploy time.
 
     Args:
-        conversation_id: Chatwoot conversation ID (used as session_id via env)
-        customer_phone: Customer's phone number (used as user_id via env)
-        customer_name: Optional customer name for metadata enrichment
+        conversation_id: Chatwoot conversation ID — used as session_id
+        customer_phone: Customer's phone number — used as user_id
+        customer_name: Optional customer name for tag enrichment
         additional_metadata: Optional dict with extra metadata to attach
 
     Returns:
-        CallbackHandler: Configured Langfuse callback handler
+        Tuple of (CallbackHandler, propagate_attributes context manager).
+        The caller MUST enter the context manager (``async with ctx:``) around
+        the graph invocation so that all child spans inherit session/user/tags.
 
     Example:
-        >>> handler = get_langfuse_handler(
+        >>> handler, ctx = get_langfuse_handler(
         ...     conversation_id="wa-msg-123",
         ...     customer_phone="+34612345678",
-        ...     customer_name="María García"
+        ...     customer_name="María García",
         ... )
         >>> config = {
         ...     "configurable": {"thread_id": conversation_id},
-        ...     "callbacks": [handler]
+        ...     "callbacks": [handler],
         ... }
-        >>> result = await graph.ainvoke(state, config=config)
-        >>> await handler.flushAsync()  # Ensure traces are sent
+        >>> async with ctx:
+        ...     result = await graph.ainvoke(state, config=config)
     """
     settings = get_settings()
 
-    # Langfuse 3.x uses environment variables for configuration
-    # Set them before creating the handler
-    os.environ["LANGFUSE_PUBLIC_KEY"] = settings.LANGFUSE_PUBLIC_KEY
-    os.environ["LANGFUSE_SECRET_KEY"] = settings.LANGFUSE_SECRET_KEY
-    if settings.LANGFUSE_BASE_URL:
-        os.environ["LANGFUSE_HOST"] = settings.LANGFUSE_BASE_URL
-
-    # Set session and user context via environment (Langfuse 3.x approach)
-    os.environ["LANGFUSE_SESSION_ID"] = conversation_id
-    os.environ["LANGFUSE_USER_ID"] = customer_phone
-
-    # Build metadata tags
+    # Build per-call tags — no os.environ mutation
     tags = ["production", "whatsapp", "langgraph"]
     if customer_name:
         tags.append(f"customer:{customer_name}")
 
-    os.environ["LANGFUSE_TAGS"] = ",".join(tags)
+    # propagate_attributes scopes session_id / user_id / tags to OTEL context.
+    # The caller wraps graph.ainvoke with this context manager so all child
+    # spans inherit the attributes without any global-state side effects.
+    ctx = propagate_attributes(
+        session_id=conversation_id,
+        user_id=customer_phone,
+        tags=tags,
+    )
 
     try:
-        # In Langfuse 3.x, CallbackHandler reads from environment variables
         handler = CallbackHandler(
-            public_key=settings.LANGFUSE_PUBLIC_KEY,  # Still accepts public_key
+            public_key=settings.LANGFUSE_PUBLIC_KEY or None,
         )
         logger.debug(
             f"Langfuse handler created for conversation {conversation_id} "
             f"(customer: {customer_phone})"
         )
-        return handler
+        return handler, ctx
     except Exception as e:
         logger.error(f"Failed to create Langfuse handler: {e}", exc_info=True)
         # Langfuse failures should not break the bot
