@@ -55,10 +55,11 @@ interface ExternalLinkItem {
 
 // ── Nav data ──────────────────────────────────────────────────────────────────
 
-const principalNav: NavItem[] = [
-  { title: "Dashboard",  href: "/dashboard",    icon: LayoutDashboard },
-  { title: "Calendario", href: "/calendar",     icon: Calendar },
-  { title: "Citas",      href: "/appointments", icon: Clock },
+const basePrincipalNav: NavItem[] = [
+  { title: "Dashboard",       href: "/dashboard",     icon: LayoutDashboard },
+  { title: "Calendario",      href: "/calendar",      icon: Calendar },
+  { title: "Citas",           href: "/appointments",  icon: Clock },
+  { title: "Conversaciones",  href: "/conversations", icon: MessageSquare },
 ];
 
 const gestionNav: NavItem[] = [
@@ -71,10 +72,10 @@ const gestionNav: NavItem[] = [
  * Base config nav without badges — badges are applied dynamically in SidebarContent.
  * "Escalaciones" entry removed: FR-MIGRATE-2. Traffic now flows to
  * /conversations?filter=escalated via the 308 redirect.
+ * "Conversaciones" moved to principalNav (PR-3 inbox-customer-context).
  */
 const baseConfigNav: NavItem[] = [
-  { title: "Configuración del Salón", href: "/settings",      icon: Settings },
-  { title: "Conversaciones",          href: "/conversations", icon: MessageSquare },
+  { title: "Configuración del Salón", href: "/settings", icon: Settings },
 ];
 
 interface BadgeCounts {
@@ -304,12 +305,16 @@ function SidebarContent({
   const canAccessSettings = usePermission("system:settings");
   const canManageUsers = usePermission("users:manage");
 
+  // principalNav is built dynamically so "Conversaciones" can carry the badge.
+  // "Configuración del Salón" is admin-only (system:settings) — still in configNav.
+  const principalNav: NavItem[] = [
+    ...basePrincipalNav.slice(0, 3), // Dashboard, Calendario, Citas
+    { ...basePrincipalNav[3], badge: badgeCounts.conversations }, // Conversaciones + badge
+  ];
+
   // "Configuración del Salón" is admin-only (system:settings).
-  // "Conversaciones" is shared (conversations:read — both roles). The badge
-  // includes active conversations + triggered escalations (FR-MIGRATE-2).
   const configNav: NavItem[] = [
     ...(canAccessSettings ? [baseConfigNav[0]] : []),
-    { ...baseConfigNav[1], badge: badgeCounts.conversations },
   ];
 
   // "Usuarios" is admin-only (users:manage).
