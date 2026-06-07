@@ -17,8 +17,11 @@ from uuid import UUID, uuid4
 
 from langchain_core.tools import tool
 
+from agent.middleware.customer_resolve import _invalidate_cached_customer
 from agent.services.customer_memory_service import read_customer_memories, write_customer_memories
+from agent.services.policy_service import PolicyConsentError, accept_policy
 from agent.tools.schemas import ToolResponse
+from shared.config import get_settings
 
 if TYPE_CHECKING:
     from database.models import Customer
@@ -154,6 +157,7 @@ async def book(
     confirmed: bool = False,
     pre_book_validated: bool = False,
     notes: str | None = None,
+    policy_accepted: bool = False,
 ) -> str:
     """
     Book an appointment atomically.
@@ -170,6 +174,8 @@ async def book(
         confirmed: Must be True — the customer has explicitly confirmed the booking.
         pre_book_validated: Must be True — check_availability(slot_time=…) returned exact_match=True.
         notes: Optional appointment notes.
+        policy_accepted: Round-trip flag from update_booking. When True, policy consent is
+            persisted atomically with the appointment. Default False (no consent write).
 
     Returns:
         JSON-serialized ToolResponse with payload containing:
@@ -241,7 +247,7 @@ async def book(
 
     from agent.services.gcal_push_service import fire_and_forget_push_appointment
     from database.connection import get_async_session
-    from database.models import Appointment, AppointmentStatus, Service, Stylist
+    from database.models import Appointment, AppointmentStatus, Customer, Service, Stylist
 
     # --- Sanitize customer-provided notes before any downstream use ---
     notes = _sanitize_notes(notes)
@@ -305,6 +311,28 @@ async def book(
             customer = await _get_or_create_customer(session, customer_phone, first_name, last_name)
             customer_id = customer.id
 
+            # ── Policy consent persistence (atomic with appointment) ─────────
+            # Fires only when update_booking's gate set policy_accepted=True upstream.
+            # Re-check customer's stored version: if already current, skip (idempotency).
+            _consent_written = False
+            if policy_accepted:
+                _settings = get_settings()
+                _fresh_customer = await session.get(Customer, customer.id)
+                _needs_write = (
+                    _fresh_customer is None
+                    or _fresh_customer.policy_accepted_at is None
+                    or _fresh_customer.policy_version != _settings.POLICY_VERSION
+                )
+                if _needs_write:
+                    await accept_policy(
+                        db=session,
+                        customer_id=customer.id,
+                        policy_version=_settings.POLICY_VERSION,
+                        accepted_via="whatsapp",
+                        source_message_id=None,
+                    )
+                    _consent_written = True
+
             # Insert appointment
             appointment = Appointment(
                 id=appointment_id,
@@ -322,6 +350,10 @@ async def book(
 
             # Commit everything — DB is source of truth
             await session.commit()
+
+            # Post-commit: invalidate Redis cache so next <customer> block reflects policy state
+            if _consent_written:
+                await _invalidate_cached_customer(customer.phone)
 
     except Exception as exc:
         logger.error("book() transaction failed: %s", exc, exc_info=True)
