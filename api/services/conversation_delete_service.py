@@ -23,9 +23,10 @@ import logging
 from dataclasses import dataclass, field
 from uuid import UUID
 
+from sqlalchemy import delete as sa_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database.models import ConversationHistory
+from database.models import ConversationHistory, Notification
 from shared.redis_conversation_cleanup import CleanupResult, cleanup_conversation_redis_keys
 
 logger = logging.getLogger(__name__)
@@ -141,6 +142,34 @@ async def delete_conversation(
             redis_status="skipped",
             error=f"DB delete failed: {exc}",
         )
+
+    # -------------------------------------------------------------------------
+    # Step 2.5: Delete orphan Notification rows that reference this conversation.
+    # Notifications created by the paused_24h handler use:
+    #   entity_type="conversation_history", entity_id=<UUID PK of ConversationHistory>
+    # There is no FK constraint on Notification.entity_id, so CASCADE does NOT
+    # cover these rows — we must clean them up explicitly.
+    # -------------------------------------------------------------------------
+    try:
+        await session.execute(
+            sa_delete(Notification).where(
+                Notification.entity_type == "conversation_history",
+                Notification.entity_id == conversation_uuid,
+            )
+        )
+        await session.commit()
+        logger.debug(
+            "conversation_delete_service: orphan notifications removed",
+            extra={"conversation_uuid": str(conversation_uuid)},
+        )
+    except Exception as exc:
+        await session.rollback()
+        logger.warning(
+            "conversation_delete_service: notification cleanup failed (DB already deleted)",
+            extra={"conversation_uuid": str(conversation_uuid), "error": str(exc)},
+        )
+        # Non-fatal: the conversation is already gone; orphan notifications are
+        # cosmetic noise, not data corruption. Continue to Redis cleanup.
 
     # -------------------------------------------------------------------------
     # Step 3: Delete all Redis checkpoint key families via shared helper.

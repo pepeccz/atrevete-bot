@@ -234,7 +234,7 @@ class ApiClient {
   async list<T>(
     resource: string,
     params?: Record<string, string | number | boolean>
-  ): Promise<{ items: T[]; total: number; has_more: boolean }> {
+  ): Promise<{ items: T[]; total: number; has_more: boolean; counts?: Record<string, number> }> {
     const searchParams = new URLSearchParams();
     if (params) {
       Object.entries(params).forEach(([key, value]) => {
