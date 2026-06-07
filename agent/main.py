@@ -145,9 +145,9 @@ async def record_turn(
 
         async with get_async_session() as session:
             count_result = await session.execute(
-                select(func.count()).select_from(ConversationTurn).where(
-                    ConversationTurn.conversation_history_id == conversation_history_id
-                )
+                select(func.count())
+                .select_from(ConversationTurn)
+                .where(ConversationTurn.conversation_history_id == conversation_history_id)
             )
             existing_count: int = count_result.scalar() or 0
             turn_number = existing_count + 1
@@ -197,9 +197,7 @@ async def _persist_assistant_message(conversation_id: str | None, content: str |
 
     async with get_async_session() as session:
         parent_result = await session.execute(
-            select(ConversationHistory).where(
-                ConversationHistory.conversation_id == conv_id_str
-            )
+            select(ConversationHistory).where(ConversationHistory.conversation_id == conv_id_str)
         )
         parent = parent_result.scalar_one_or_none()
         if parent is None:
@@ -390,11 +388,15 @@ async def subscribe_to_incoming_messages():
                 "messages": [HumanMessage(content=truncated_text)] if truncated_text else [],
             }
 
-            # Create Langfuse handler for tracing and token monitoring
+            # Create Langfuse handler for tracing and token monitoring.
+            # get_langfuse_handler returns (CallbackHandler, propagate_attributes_ctx).
+            # The context manager must wrap graph.ainvoke so all child spans
+            # inherit session_id / user_id / tags without os.environ mutation.
             langfuse_handler = None
+            langfuse_ctx = None
             langfuse_client = None
             try:
-                langfuse_handler = get_langfuse_handler(
+                langfuse_handler, langfuse_ctx = get_langfuse_handler(
                     conversation_id=conversation_id,
                     customer_phone=customer_phone,
                     customer_name=sender_name,
@@ -437,9 +439,15 @@ async def subscribe_to_incoming_messages():
 
                 # ================================================================
                 # GRAPH INVOCATION WITH CHECKPOINT FLUSH (ADR-010)
+                # Wrap ainvoke in propagate_attributes so session_id / user_id /
+                # tags flow into every OTEL child span without os.environ mutation.
                 # ================================================================
                 _t0 = perf_counter()
-                result = await graph.ainvoke(invoke_payload, config=config)
+                if langfuse_ctx is not None:
+                    async with langfuse_ctx:
+                        result = await graph.ainvoke(invoke_payload, config=config)
+                else:
+                    result = await graph.ainvoke(invoke_payload, config=config)
                 _latency_ms = int((perf_counter() - _t0) * 1000)
 
                 # ================================================================

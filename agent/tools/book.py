@@ -202,17 +202,6 @@ async def book(
             ],
         ).model_dump_json()
 
-    if not confirmed:
-        logger.info(
-            "tool.response.rejected",
-            extra={"tool_name": "book", "next_step": "confirmation_required"},
-        )
-        return ToolResponse(
-            status="rejected",
-            next_step="confirmation_required",
-            errors=["El cliente aún no ha confirmado la reserva explícitamente."],
-        ).model_dump_json()
-
     # --- Guard 2: slot completeness ---
     missing: list[str] = []
     if not service_ids:
