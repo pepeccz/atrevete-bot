@@ -36,16 +36,21 @@ metadata:
 
 WhatsApp → Chatwoot → Webhook (API) → Redis Streams → Agent
                                             ↓
-                                    LangGraph StateGraph
+                               create_agent + 7 middleware
+                               (SSOT: agent/agent_factory.py:47-55)
                                             ↓
-                              ┌───────────────────────────────┐
-                              │   4-Mode Routing System       │
-                              │                               │
-                              │  GREETING  → Name collection  │
-                              │  BOOKING   → Booking flow     │
-                              │  GENERAL   → FAQs/Info        │
-                              │  ESCALATION→ Human handoff    │
-                              └───────────────────────────────┘
+                              ┌─────────────────────────────────────┐
+                              │  Middleware Stack (per turn)        │
+                              │  1. DisclosureMiddleware            │
+                              │  2. CustomerResolveMiddleware       │
+                              │  3. AppointmentContextMiddleware    │
+                              │  4. DynamicPromptMiddleware         │
+                              │  5. AvailabilityContextMiddleware   │
+                              │  6. PromptAssemblyMiddleware        │
+                              │  7. SummarizeMiddleware             │
+                              └─────────────────────────────────────┘
+                                            ↓
+                                  LLM tool-calling loop (6 tools)
                                             ↓
                                     PostgreSQL (State)
                                             ↓
@@ -53,23 +58,7 @@ WhatsApp → Chatwoot → Webhook (API) → Redis Streams → Agent
 
 
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                         BOOKING FLOW (v6.0)                             │
-└─────────────────────────────────────────────────────────────────────────┘
-
-START → preprocess → router → mode_dispatcher
-                              ↓
-              ┌───────────────┼───────────────┐
-              ↓               ↓               ↓
-        [GREETING]    [BOOKING]        [GENERAL]      [ESCALATION]
-              ↓               ↓               ↓               ↓
-     Name extraction   Multi-step      Read-only      Human handoff
-     Customer create   booking flow    tools only
-              ↓               ↓               ↓               ↓
-            summarize_node (END)
-
-
-┌─────────────────────────────────────────────────────────────────────────┐
-│                    DB-FIRST CALENDAR (v4.1)                             │
+│                    DB-FIRST CALENDAR                                    │
 └─────────────────────────────────────────────────────────────────────────┘
 
 Availability Check (read):
@@ -84,26 +73,23 @@ Booking (write):
 
 1. **Message Reception**: Chatwoot webhook → `api/routes/chatwoot.py`
 2. **Queue**: Redis Streams for reliable async processing
-3. **Processing**: Agent reads from stream, processes with LangGraph
+3. **Processing**: Agent reads from stream, processes via `create_agent` + 7 middleware
 4. **Response**: Agent sends via Chatwoot API → WhatsApp
 
-## Mode-Based Architecture (v6.0)
+## Agent Architecture
 
-**4 independent modes** eliminate infinite loops and simplify flow:
+Single LangChain `create_agent` tool-calling loop. The LLM picks tools directly; middleware hydrates context per turn. No mode dispatch, no keyword router.
 
-| Mode | Purpose | Tools Available |
-|------|---------|-----------------|
-| **GREETING** | First contact, name collection | `manage_customer` (customer_tools) |
-| **BOOKING** | Multi-step appointment booking | `check_availability`, `book`, `manage_appointments` |
-| **GENERAL** | FAQs, service info (catalog in prompt) | `manage_appointments` (read), `escalate` |
-| **ESCALATION** | Human handoff | `escalate` |
+**6 tools:**
 
-**Routing Logic**:
-1. `escalation_triggered=True` → ESCALATION
-2. `error_count >= 3` → ESCALATION
-3. `is_first_interaction=True` OR `customer_name is None` → GREETING
-4. `intent == book` → BOOKING
-5. Everything else → GENERAL
+| Tool | Purpose |
+|------|---------|
+| `check_availability` | Probe slots for service + stylist + day |
+| `get_next_available_options` | Return next N free slots |
+| `book` | Atomic create appointment + push to GCal |
+| `update_booking` | Mutate active booking draft |
+| `manage_appointments` | List / cancel / reschedule existing appointments |
+| `escalate` | Hand off to human agent |
 
 ## Quick Commands
 

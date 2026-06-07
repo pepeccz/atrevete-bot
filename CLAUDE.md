@@ -87,27 +87,28 @@ atrevete-bot/
 │   ├── services/          # Business logic
 │   └── middleware/        # CORS, logging, rate limiting
 │
-├── agent/                 # LangGraph orchestrator
+├── agent/                 # create_agent + 7 middleware orchestrator (SSOT: agent/agent_factory.py:47-55)
 │   ├── AGENTS.md          # Agent-specific guidance
 │   ├── main.py            # Redis Streams consumer
-│   ├── graphs/            # StateGraph definitions
-│   │   └── conversation_flow.py   # v6.0 mode-based graph
-│   ├── modes/             # Mode nodes (v6.0)
-│   │   ├── greeting_mode.py       # GREETING mode
-│   │   ├── booking_mode.py        # BOOKING mode
-│   │   ├── general_mode.py        # GENERAL mode
-│   │   └── escalation_mode.py     # ESCALATION mode
-│   ├── routing/           # Intent router
-│   │   └── intent_router.py       # Keyword + LLM hybrid classifier
-│   ├── tools/             # 4 LangChain tools
-│   │   ├── availability_tools.py  # check_availability
-│   │   ├── booking_tools.py       # book
-│   │   ├── manage_appointments_tool.py  # manage_appointments
-│   │   └── escalation_tools.py    # escalate
-│   ├── prompts/           # System prompts
-│   │   ├── shared/        # Core prompts (identity, rules, glossary)
-│   │   └── modes/         # Mode-specific overlays
-│   ├── state/             # State schemas and checkpointer
+│   ├── graph.py           # Thin wrapper → build_conversation_agent()
+│   ├── agent_factory.py   # build_conversation_agent: create_agent + tools + middleware
+│   ├── middleware/        # 7 base middlewares in execution order (agent/agent_factory.py:47-55)
+│   │   ├── disclosure.py           # DisclosureMiddleware
+│   │   ├── customer_resolve.py     # CustomerResolveMiddleware
+│   │   ├── appointment_context.py  # AppointmentContextMiddleware
+│   │   ├── dynamic_prompt.py       # DynamicPromptMiddleware
+│   │   ├── availability_context.py # AvailabilityContextMiddleware
+│   │   ├── prompt_assembly.py      # PromptAssemblyMiddleware
+│   │   └── summarize.py            # SummarizeMiddleware
+│   ├── tools/             # 6 LangChain tools
+│   │   ├── check_availability.py
+│   │   ├── next_available.py          # get_next_available_options
+│   │   ├── book.py                    # atomic create + GCal push
+│   │   ├── update_booking.py          # mutate active draft
+│   │   ├── manage_appointments_tool.py # view/cancel/reschedule
+│   │   └── escalation_tools.py
+│   ├── prompts/           # Base prompt + dynamic loaders
+│   │   └── shared/        # Core prompts (identity, rules, glossary, booking_flow)
 │   ├── services/          # Business logic (availability, GCal push)
 │   └── workers/           # Background workers (archiver)
 │
@@ -161,14 +162,20 @@ atrevete-bot/
 
 ---
 
-## Architecture Status (2026-04-21)
+## Architecture Status (2026-06-07)
 
-StateGraph v6.0 migration complete. Graph: `preprocess → router → [greeting | general | booking | escalation | appointment_management | confirmation_reply] → summarize → END`. All modes, tools, prompts, services wired.
+Current architecture: `create_agent + 7 middleware + 6 tools` (SSOT: `agent/agent_factory.py:47-55`).
 
-E1 scaffolding partially reverted:
-- `agent/core/` — REMOVED (commit 02acbea, 2026-04-20). `state_delivery.py` + `status_line.py` never wired; concepts covered by `ConversationState` TypedDict + mode_context.
-- `infra/resolvers/negation.py` — kept (hard-rename of `shared/negation_phrases.py`, P8).
-- `scripts/check_layers.py` — kept (AST layer-import gate, CI-only).
+Middleware stack (execution order):
+1. DisclosureMiddleware
+2. CustomerResolveMiddleware
+3. AppointmentContextMiddleware
+4. DynamicPromptMiddleware
+5. AvailabilityContextMiddleware
+6. PromptAssemblyMiddleware
+7. SummarizeMiddleware
+
+No custom StateGraph, no mode nodes, no intent router. Single LLM tool-calling loop; middlewares hydrate context into XML-fenced slots assembled per turn by PromptAssemblyMiddleware.
 
 Full architecture docs: `docs/system/`.
 
@@ -180,7 +187,7 @@ Each component has its own AGENTS.md with specific guidance:
 
 | Component | Location | AGENTS.md | Purpose |
 |-----------|----------|-----------|---------|
-| **Agent** | `agent/` | [agent/AGENTS.md](agent/AGENTS.md) | LangGraph orchestrator, modes, routing, tools |
+| **Agent** | `agent/` | [agent/AGENTS.md](agent/AGENTS.md) | `create_agent` + middleware stack, tools, prompts |
 | **API** | `api/` | [api/AGENTS.md](api/AGENTS.md) | FastAPI routes, webhooks, services |
 | **Database** | `database/` | [database/AGENTS.md](database/AGENTS.md) | SQLAlchemy models, migrations |
 | **Shared** | `shared/` | N/A (use `atrevete-shared` skill) | Config, clients, utilities |
@@ -203,7 +210,7 @@ When performing these actions, ALWAYS invoke the corresponding skill FIRST:
 | Creating new prompt module | `atrevete-prompts` |
 | Creating utilities | `atrevete-shared` |
 | Creating webhooks | `atrevete-api` |
-| Creating/modifying mode nodes | `atrevete-agent` |
+| Creating/modifying middleware | `atrevete-agent` |
 | Creating/modifying models | `atrevete-database` |
 | Creating/modifying services | `atrevete-api` |
 | Editing agent system prompts | `atrevete-prompts` |

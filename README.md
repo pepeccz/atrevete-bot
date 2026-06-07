@@ -83,22 +83,20 @@ atrevete-bot/
 ├── CLAUDE.md                  # Comprehensive development guide
 ├── README.md                  # This file - quick start and overview
 │
-├── agent/                     # LangGraph v6.0 orchestrator
+├── agent/                     # create_agent + 7 middleware orchestrator (SSOT: agent/agent_factory.py:47-55)
 │   ├── AGENTS.md              # Agent component documentation
-│   ├── graphs/
-│   │   └── conversation_flow.py   # v6.0 mode-based StateGraph
-│   ├── modes/                 # Mode implementations
-│   │   ├── base.py            # BaseModeNode
-│   │   ├── greeting_mode.py   # GREETING mode
-│   │   ├── booking_mode.py    # BOOKING mode
-│   │   ├── general_mode.py    # GENERAL mode
-│   │   └── escalation_mode.py # ESCALATION mode
-│   ├── routing/
-│   │   └── intent_router.py   # Keyword + LLM hybrid classifier
+│   ├── agent_factory.py       # build_conversation_agent: create_agent + tools + middleware
+│   ├── middleware/            # 7 base middlewares in execution order
+│   │   ├── disclosure.py
+│   │   ├── customer_resolve.py
+│   │   ├── appointment_context.py
+│   │   ├── dynamic_prompt.py
+│   │   ├── availability_context.py
+│   │   ├── prompt_assembly.py
+│   │   └── summarize.py
 │   ├── prompts/               # System prompts
-│   │   ├── shared/            # Core prompts (identity, rules, glossary)
-│   │   └── modes/             # Mode-specific overlays
-│   └── tools/                 # LangChain tools
+│   │   └── shared/            # Core prompts (identity, rules, glossary, booking_flow)
+│   └── tools/                 # 6 LangChain tools
 │
 ├── api/                       # FastAPI webhook receiver
 │   ├── AGENTS.md              # API component documentation

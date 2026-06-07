@@ -95,7 +95,7 @@ atrevete-bot/
 │   ├── llm.py             # get_llm() — OpenRouter gpt-5.4-mini
 │   ├── checkpointer.py    # AsyncRedisSaver wiring
 │   ├── state.py           # AgentState TypedDict (slim)
-│   ├── middleware/        # 6 composed middlewares
+│   ├── middleware/        # 7 base middlewares in execution order (agent/agent_factory.py:47-55)
 │   │   ├── disclosure.py
 │   │   ├── customer_resolve.py
 │   │   ├── appointment_context.py
@@ -373,5 +373,5 @@ These rules apply across ALL components:
 
 ---
 
-**Last Updated**: March 2026  
-**Version**: 1.0 (Mode-based architecture v6.0)
+**Last Updated**: 2026-06-07  
+**Version**: 2.0 (create_agent + 7 middleware — SSOT: agent/agent_factory.py:47-55)
