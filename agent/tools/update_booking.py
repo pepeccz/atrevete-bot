@@ -33,6 +33,7 @@ from agent.tools._booking_validators import (
     validate_booking_date,
 )
 from agent.tools.schemas import ToolResponse
+from shared.config import get_settings
 
 _MADRID_TZ = ZoneInfo("Europe/Madrid")
 
@@ -138,6 +139,8 @@ async def update_booking(
     slot_iso: str | None = None,
     variant_resolved: bool = False,
     pre_resolved_service_ids: list[str] | None = None,
+    policy_accepted: bool = False,
+    policy_rejection_count: int = 0,
     state: Annotated[dict, InjectedState] = None,
 ) -> str:
     """Slot collector for the booking flow.
@@ -178,15 +181,21 @@ async def update_booking(
             Each UUID is validated against the active service catalog before merge.
             Default None (treated as empty list) preserves current behavior.
             Refs: REQ-TL-2, ADR-DR-2.
+        policy_accepted: Round-trip flag — set True when the customer has accepted the
+            privacy/booking policy. Gate clears and flow continues. Default False.
+        policy_rejection_count: Round-trip counter of how many times the customer has
+            declined the policy. Gate escalates at >= 2. Default 0.
 
     Returns:
         JSON-serialized ToolResponse with status, collected, missing, next_step.
         Valid next_step values: service_required | category_mix_required |
         audience_required | variant_required | stylist_required | offer_slots |
         date_required | closed_day_required | advance_policy_violated | name_required | extras_loop_required |
-        notes_optional | pre_book_validation_required | date_clarification_required | booking_ready.
+        notes_optional | pre_book_validation_required | date_clarification_required | booking_ready |
+        policy_acceptance_required | policy_escalation_required.
     """
-    messages = (state or {}).get("messages", [])
+    _state = state or {}
+    messages = _state.get("messages", [])
     try:
         return await _update_booking_impl(
             services=services,
@@ -205,6 +214,9 @@ async def update_booking(
             variant_resolved=variant_resolved,
             pre_resolved_service_ids=pre_resolved_service_ids,
             messages=messages,
+            policy_accepted=policy_accepted,
+            policy_rejection_count=policy_rejection_count,
+            customer_id=_state.get("customer_id"),
         )
     except Exception as exc:
         logger.error("update_booking unhandled exception: %s", exc, exc_info=True)
@@ -232,6 +244,9 @@ async def _update_booking_impl(
     variant_resolved: bool = False,
     pre_resolved_service_ids: list[str] | None = None,
     messages: list | None = None,
+    policy_accepted: bool = False,
+    policy_rejection_count: int = 0,
+    customer_id: str | None = None,
 ) -> str:
     from agent.booking.resolvers.time_resolver import MIN_BOOKING_DAYS
     from agent.tools._booking_helpers import (
@@ -245,6 +260,10 @@ async def _update_booking_impl(
         _validate_full_name,
     )
     from database.connection import get_async_session
+
+    # C1 fix: callers using pre_resolved_service_ids only may pass services=None.
+    # Default to [] so subsequent iteration (Steps 1/2 audience/variant loops) is safe.
+    services = services or []
 
     async with get_async_session() as session:
         collected: dict = {}
@@ -638,6 +657,71 @@ async def _update_booking_impl(
         # Validation passed — use the canonical resolved date
         date_iso = _date_validation.date_iso
         collected["date_iso"] = date_iso
+
+        # ── Step 6c: policy acceptance gate ──────────────────────────────────
+        # Fires when slot_iso is set and the customer has not yet accepted the
+        # current POLICY_VERSION. policy_accepted is the round-trip flag the LLM
+        # sets after the customer's "sí". policy_rejection_count rolls forward from
+        # the LLM with prior rejections; escalation triggers at >= 2.
+        if slot_iso is not None:
+            _settings = get_settings()
+            _customer_obj = None
+            if customer_id:
+                from database.models import Customer as _Customer
+
+                _customer_obj = await session.get(_Customer, customer_id)
+
+            needs_policy = (
+                _customer_obj is None
+                or _customer_obj.policy_accepted_at is None
+                or _customer_obj.policy_version != _settings.POLICY_VERSION
+            )
+
+            if needs_policy and not policy_accepted:
+                if policy_rejection_count >= 2:
+                    logger.info(
+                        "tool.response.partial",
+                        extra={
+                            "tool_name": "update_booking",
+                            "next_step": "policy_escalation_required",
+                            "policy_rejection_count": policy_rejection_count,
+                        },
+                    )
+                    return ToolResponse(
+                        status="partial",
+                        collected=collected,
+                        missing=[],
+                        next_step="policy_escalation_required",
+                        payload={
+                            "reason": "policy_rejection",
+                            "policy_rejection_count": policy_rejection_count,
+                        },
+                    ).model_dump_json()
+
+                logger.info(
+                    "tool.response.partial",
+                    extra={
+                        "tool_name": "update_booking",
+                        "next_step": "policy_acceptance_required",
+                        "policy_rejection_count": policy_rejection_count,
+                    },
+                )
+                return ToolResponse(
+                    status="partial",
+                    collected=collected,
+                    missing=[],
+                    next_step="policy_acceptance_required",
+                    payload={
+                        "policy_url": _settings.POLICY_URL,
+                        "policy_version": _settings.POLICY_VERSION,
+                        "policy_rejection_count": policy_rejection_count,
+                    },
+                ).model_dump_json()
+
+            # Gate cleared — carry the flag forward in collected
+            if policy_accepted:
+                collected["policy_accepted"] = True
+                collected["policy_version_accepted"] = _settings.POLICY_VERSION
 
         # ── Step 7: name required — after stylist+date+closed-day-check ──────
         # name_required intentionally fires AFTER date_iso is resolved AND closed-day-validated.
