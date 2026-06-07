@@ -11,7 +11,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import api from "@/lib/api";
+import api, { ApiRequestError } from "@/lib/api";
 import { toast } from "sonner";
 
 interface TakeoverModalProps {
@@ -43,8 +43,14 @@ export function TakeoverModal({
       await api.pauseConversation(conversationId, "manual", "Takeover manual desde el panel");
       toast.success("Bot pausado. Puedes enviar tu mensaje ahora.");
       onConfirmed();
-    } catch {
-      toast.error("Error al pausar el bot");
+    } catch (err) {
+      if (err instanceof ApiRequestError && err.status === 409) {
+        toast.error("La conversación ya está pausada — recarga para ver el estado actual.");
+      } else if (err instanceof ApiRequestError && err.status === 502) {
+        toast.error("No se pudo contactar con Chatwoot. Intenta nuevamente en unos segundos.");
+      } else {
+        toast.error("Error al pausar el bot");
+      }
       onCancelled();
     } finally {
       setLoading(false);
