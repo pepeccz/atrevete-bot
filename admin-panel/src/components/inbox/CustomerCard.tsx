@@ -92,7 +92,7 @@ export function CustomerCard({
     setLoading(true);
     Promise.all([
       api.getCustomerDetail(customerId),
-      api.getCustomerAppointments(customerId, 1, 5),
+      api.getCustomerAppointments(customerId, 1, 3),
     ])
       .then(([cust, appts]) => {
         if (cancelled) return;
@@ -252,27 +252,36 @@ export function CustomerCard({
     );
   }
 
+  // ─── Helpers ─────────────────────────────────────────────────────────────────
+  const totalSpentFormatted = (() => {
+    const val = parseFloat(customer.total_spent ?? "0");
+    return isNaN(val) ? "0,00 €" : `${val.toFixed(2).replace(".", ",")} €`;
+  })();
+
+  const truncatedNotes =
+    customer.notes && customer.notes.length > 120
+      ? `${customer.notes.slice(0, 120)}…`
+      : customer.notes;
+
   // ─── Expanded: full customer detail ─────────────────────────────────────
   return (
     <div className="flex flex-col h-full border-l border-gold/40 bg-gold-soft/10">
       <CardToggleHeader onToggleCollapsed={onToggleCollapsed} />
       <ScrollArea className="flex-1">
         <div className="p-4 space-y-5">
-          {/* Header */}
+          {/* Header — name links to /customers/[id] */}
           <div className="flex items-start justify-between gap-2">
             <div className="flex items-start gap-3">
               <div className="flex h-10 w-10 items-center justify-center rounded-full bg-gold-soft text-gold-dark font-bold text-sm flex-shrink-0">
                 {fullName.slice(0, 2).toUpperCase() || "??"}
               </div>
               <div className="min-w-0">
-                <p className="font-semibold text-sm truncate">
+                <Link
+                  href={`/customers/${customerId}`}
+                  className="font-semibold text-sm truncate hover:underline hover:text-gold-dark transition-colors"
+                >
                   {fullName || "Sin nombre"}
-                </p>
-                {customer.preferred_stylist_name && (
-                  <p className="text-xs text-muted-foreground truncate">
-                    Estilista preferida: {customer.preferred_stylist_name}
-                  </p>
-                )}
+                </Link>
               </div>
             </div>
             <Button
@@ -289,7 +298,7 @@ export function CustomerCard({
 
           <Separator />
 
-          {/* Contact */}
+          {/* Contacto */}
           <div className="space-y-2">
             <p className="text-[11px] font-bold tracking-widest text-muted-foreground uppercase">
               Contacto
@@ -306,10 +315,79 @@ export function CustomerCard({
             )}
           </div>
 
+          <Separator />
+
+          {/* Política */}
+          <div className="space-y-2">
+            <p className="text-[11px] font-bold tracking-widest text-muted-foreground uppercase">
+              Política
+            </p>
+            {customer.policy_accepted_at ? (
+              <Badge className="bg-green-100 text-green-800 border-green-200 text-xs font-normal">
+                Política aceptada el {formatDate(customer.policy_accepted_at, false)}
+              </Badge>
+            ) : (
+              <Badge variant="outline" className="text-muted-foreground text-xs font-normal">
+                Política no aceptada
+              </Badge>
+            )}
+          </div>
+
+          <Separator />
+
+          {/* Preferencias */}
+          <div className="space-y-2">
+            <p className="text-[11px] font-bold tracking-widest text-muted-foreground uppercase">
+              Preferencias
+            </p>
+            <p className="text-sm text-foreground/80">
+              {customer.preferred_stylist_name ?? "Sin estilista preferido"}
+            </p>
+          </div>
+
+          <Separator />
+
+          {/* Última actividad */}
+          <div className="space-y-2">
+            <p className="text-[11px] font-bold tracking-widest text-muted-foreground uppercase">
+              Última actividad
+            </p>
+            {appointments.length === 0 ? (
+              <p className="text-xs text-muted-foreground">Sin citas previas</p>
+            ) : (
+              <div className="space-y-2">
+                {appointments.map((appt) => (
+                  <div
+                    key={appt.id}
+                    className="text-xs rounded-md border border-line p-2 bg-muted/30 space-y-0.5"
+                  >
+                    <div className="flex items-center justify-between gap-1">
+                      <span className="font-medium truncate">
+                        {appt.service_names.join(", ")}
+                      </span>
+                      <Badge
+                        variant={
+                          appt.status === "completed" ? "secondary" : "outline"
+                        }
+                        className="text-[10px] px-1 py-0 flex-shrink-0"
+                      >
+                        {appt.status}
+                      </Badge>
+                    </div>
+                    <p className="text-muted-foreground">
+                      {formatDate(appt.start_time)} · {appt.stylist_name}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <Separator />
+
           {/* Agent notes */}
           {customer.memories?.agent_notes && (
             <>
-              <Separator />
               <div className="space-y-1.5">
                 <p className="text-[11px] font-bold tracking-widest text-muted-foreground uppercase">
                   Notas del agente
@@ -318,8 +396,47 @@ export function CustomerCard({
                   {customer.memories.agent_notes}
                 </p>
               </div>
+              <Separator />
             </>
           )}
+
+          {/* Notas del cliente */}
+          <div className="space-y-1.5">
+            <p className="text-[11px] font-bold tracking-widest text-muted-foreground uppercase">
+              Notas
+            </p>
+            {customer.notes ? (
+              <p className="text-sm text-foreground/80">
+                {truncatedNotes}
+                {customer.notes.length > 120 && (
+                  <>
+                    {" "}
+                    <Link
+                      href={`/customers/${customerId}`}
+                      className="text-xs text-gold-dark hover:underline"
+                    >
+                      ver más
+                    </Link>
+                  </>
+                )}
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground">Sin notas</p>
+            )}
+          </div>
+
+          <Separator />
+
+          {/* Resumen */}
+          <div className="space-y-1.5">
+            <p className="text-[11px] font-bold tracking-widest text-muted-foreground uppercase">
+              Resumen
+            </p>
+            <p className="text-sm font-semibold text-foreground">{totalSpentFormatted}</p>
+            <p className="text-xs text-muted-foreground">
+              Cliente desde {formatDate(customer.created_at, false)}
+            </p>
+          </div>
 
           {/* Operator notes panel (PR-2) */}
           {conversationId && (
@@ -333,7 +450,7 @@ export function CustomerCard({
                 >
                   <StickyNote className="h-3.5 w-3.5 text-muted-foreground" />
                   <p className="text-[11px] font-bold tracking-widest text-muted-foreground uppercase flex-1">
-                    Notas
+                    Notas del operador
                   </p>
                   <ChevronDown
                     className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${
@@ -465,43 +582,6 @@ export function CustomerCard({
                     )}
                   </div>
                 )}
-              </div>
-            </>
-          )}
-
-          {/* Recent appointments */}
-          {appointments.length > 0 && (
-            <>
-              <Separator />
-              <div className="space-y-2">
-                <p className="text-[11px] font-bold tracking-widest text-muted-foreground uppercase">
-                  Últimas citas
-                </p>
-                <div className="space-y-2">
-                  {appointments.map((appt) => (
-                    <div
-                      key={appt.id}
-                      className="text-xs rounded-md border border-line p-2 bg-muted/30 space-y-0.5"
-                    >
-                      <div className="flex items-center justify-between gap-1">
-                        <span className="font-medium truncate">
-                          {appt.service_names.join(", ")}
-                        </span>
-                        <Badge
-                          variant={
-                            appt.status === "completed" ? "secondary" : "outline"
-                          }
-                          className="text-[10px] px-1 py-0 flex-shrink-0"
-                        >
-                          {appt.status}
-                        </Badge>
-                      </div>
-                      <p className="text-muted-foreground">
-                        {formatDate(appt.start_time)} · {appt.stylist_name}
-                      </p>
-                    </div>
-                  ))}
-                </div>
               </div>
             </>
           )}
