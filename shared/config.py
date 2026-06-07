@@ -416,6 +416,19 @@ class Settings(BaseSettings):
         ),
     )
 
+    # Policy Acceptance (GDPR / cancellation policy gate)
+    POLICY_VERSION: str = Field(
+        default="1.0",
+        description=(
+            "Opaque policy version string (e.g. '1.0', '1.1'). Compared as string equality only. "
+            "Bumping this value re-triggers the policy gate for ALL customers on their next booking."
+        ),
+    )
+    POLICY_URL: str = Field(
+        default="https://atrevetepeluqueria.com/politica-privacidad/",
+        description="Public URL for the salon's privacy and cancellation policy page.",
+    )
+
     # Rate Limiting (disable in tests and maintenance windows)
     RATE_LIMITING_ENABLED: bool = Field(
         default=True,
