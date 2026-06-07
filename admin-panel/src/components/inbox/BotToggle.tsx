@@ -5,7 +5,7 @@ import { Bot, BotOff, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { usePermission } from "@/hooks/use-permission";
 import { TakeoverModal } from "./TakeoverModal";
-import api from "@/lib/api";
+import api, { ApiRequestError } from "@/lib/api";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 
@@ -48,8 +48,14 @@ export function BotToggle({ conversationId, botEnabled, onToggled }: BotTogglePr
       await api.resumeConversation(conversationId);
       toast.success("Bot reanudado correctamente.");
       onToggled(true);
-    } catch {
-      toast.error("Error al reanudar el bot");
+    } catch (err) {
+      if (err instanceof ApiRequestError && err.status === 409) {
+        toast.error("La conversación ya está activa — recarga para ver el estado actual.");
+      } else if (err instanceof ApiRequestError && err.status === 502) {
+        toast.error("No se pudo contactar con Chatwoot. Intenta nuevamente en unos segundos.");
+      } else {
+        toast.error("Error al reanudar el bot");
+      }
     } finally {
       setLoading(false);
     }
@@ -74,11 +80,12 @@ export function BotToggle({ conversationId, botEnabled, onToggled }: BotTogglePr
         onClick={handleClick}
         disabled={isDisabled}
         className={cn(
-          "gap-1.5 text-sm font-medium",
+          "gap-1.5 text-sm font-medium cursor-pointer",
           botEnabled
             ? "border-green-400 text-green-700 hover:bg-green-50"
             : "border-amber-400 text-amber-700 hover:bg-amber-50"
         )}
+        aria-label={botEnabled ? "Pausar bot" : "Reanudar bot"}
         title={botEnabled ? "El bot está activo — hacer clic para pausar" : "El bot está pausado — hacer clic para reanudar"}
       >
         {loading ? (

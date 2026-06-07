@@ -29,7 +29,7 @@ import { formatDate } from "@/components/shared/format-utils";
 import { useConversationPolling } from "@/hooks/useConversationPolling";
 import { useLightbox } from "@/hooks/useLightbox";
 import api from "@/lib/api";
-import type { Attachment, ConversationHistory, ConversationMessage, ConversationHistoryInbox } from "@/lib/types";
+import type { Attachment, ConversationHistory, ConversationMessage, ConversationHistoryInbox, InboxWindowStatusResponse } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 // ─── Attachment helpers ────────────────────────────────────────────────────────
@@ -454,8 +454,36 @@ export function ConversationThread({ conversationId, onDeleted }: ConversationTh
 
 // ─── Window-status-aware Composer wrapper ──────────────────────────────────────
 
+// ─── Window status label ───────────────────────────────────────────────────────
+
+function WindowStatusLabel({ status }: { status: InboxWindowStatusResponse }) {
+  if (!status.window_open) {
+    return (
+      <p className="text-xs text-muted-foreground px-3 pt-2 pb-0">
+        Ventana cerrada — solo plantillas aprobadas pueden enviarse
+      </p>
+    );
+  }
+  const hours = status.hours_until_close;
+  if (hours !== null && hours < 1) {
+    return (
+      <p className="text-xs text-amber-500 px-3 pt-2 pb-0">
+        Ventana abierta · cierra en menos de 1h
+      </p>
+    );
+  }
+  const rounded = hours !== null ? Math.round(hours) : null;
+  return (
+    <p className="text-xs text-muted-foreground px-3 pt-2 pb-0">
+      {rounded !== null ? `Ventana abierta · quedan ${rounded}h` : "Ventana abierta"}
+    </p>
+  );
+}
+
 /**
  * Fetches the 24h window status from the API and passes it to Composer.
+ * Re-fetches on every poll tick (matching thread cadence: 3s focused / 10s blurred)
+ * so the window-status row stays up to date without a manual page refresh.
  * Separated so the thread itself doesn't need to manage window-status polling.
  */
 function WindowStatusComposer({
@@ -469,24 +497,73 @@ function WindowStatusComposer({
   onMessageSent: () => void;
   onBotPaused: () => void;
 }) {
-  const [windowOpen, setWindowOpen] = useState<boolean | null>(null);
+  const [windowStatus, setWindowStatus] = useState<InboxWindowStatusResponse | null>(null);
+  const isFocusedRef = useRef<boolean>(
+    typeof document !== "undefined" ? document.hasFocus() : true
+  );
 
-  useEffect(() => {
-    let cancelled = false;
-    api
-      .getWindowStatus(conversationId)
-      .then((res) => {
-        if (!cancelled) setWindowOpen(res.window_open);
-      })
-      .catch(() => {
-        if (!cancelled) setWindowOpen(false); // conservative default
-      });
-    return () => {
-      cancelled = true;
-    };
+  const fetchWindowStatus = useCallback(async () => {
+    try {
+      const res = await api.getWindowStatus(conversationId);
+      setWindowStatus(res);
+    } catch {
+      // Conservative default: treat window as closed to avoid accidental sends.
+      setWindowStatus((prev) => prev ?? { window_open: false, last_user_message_at: null, hours_until_close: null });
+    }
   }, [conversationId]);
 
-  if (windowOpen === null) {
+  useEffect(() => {
+    // Fetch immediately on mount / conversationId change.
+    fetchWindowStatus();
+  }, [fetchWindowStatus]);
+
+  useEffect(() => {
+    // Poll window status on the same cadence as the thread polling hook
+    // (3s focused / 10s blurred). Uses an independent setInterval because
+    // useConversationPolling does not expose a tick callback.
+    const getInterval = () => (isFocusedRef.current ? 3_000 : 10_000);
+
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+    const schedule = () => {
+      timeoutId = setTimeout(async () => {
+        if (typeof document !== "undefined" && document.hidden) {
+          schedule();
+          return;
+        }
+        await fetchWindowStatus();
+        schedule();
+      }, getInterval());
+    };
+
+    const handleFocus = () => { isFocusedRef.current = true; };
+    const handleBlur = () => { isFocusedRef.current = false; };
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        if (timeoutId !== null) { clearTimeout(timeoutId); timeoutId = null; }
+        fetchWindowStatus().then(schedule);
+      }
+    };
+
+    if (typeof window !== "undefined") {
+      window.addEventListener("focus", handleFocus);
+      window.addEventListener("blur", handleBlur);
+      document.addEventListener("visibilitychange", handleVisibilityChange);
+    }
+
+    schedule();
+
+    return () => {
+      if (timeoutId !== null) clearTimeout(timeoutId);
+      if (typeof window !== "undefined") {
+        window.removeEventListener("focus", handleFocus);
+        window.removeEventListener("blur", handleBlur);
+        document.removeEventListener("visibilitychange", handleVisibilityChange);
+      }
+    };
+  }, [fetchWindowStatus]);
+
+  if (windowStatus === null) {
     return (
       <div className="border-t p-3 flex items-center gap-2 text-sm text-muted-foreground">
         <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -496,12 +573,15 @@ function WindowStatusComposer({
   }
 
   return (
-    <Composer
-      conversationId={conversationId}
-      windowOpen={windowOpen}
-      botEnabled={botEnabled}
-      onMessageSent={onMessageSent}
-      onBotPaused={onBotPaused}
-    />
+    <div className="border-t border-border">
+      <WindowStatusLabel status={windowStatus} />
+      <Composer
+        conversationId={conversationId}
+        windowOpen={windowStatus.window_open}
+        botEnabled={botEnabled}
+        onMessageSent={onMessageSent}
+        onBotPaused={onBotPaused}
+      />
+    </div>
   );
 }

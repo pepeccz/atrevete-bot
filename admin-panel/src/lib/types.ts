@@ -951,6 +951,8 @@ export interface InboxTemplateParamDef {
 
 export interface InboxTemplateDef {
   name: string;
+  /** Human-readable label returned by the API. Falls back to `name` when absent. */
+  display_name?: string;
   status: "approved" | "pending";
   params: InboxTemplateParamDef[];
 }

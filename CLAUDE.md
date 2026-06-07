@@ -722,6 +722,19 @@ Rollback: `git revert` this PR's commits + rebuild admin-panel + `docker compose
 
 ---
 
+### Deploy Runbook (inbox-operator-takeover)
+
+UI polish only: window-status polling cadence fix, `hours_until_close` label above composer, 409/502 error toasts on pause/resume, `display_name` in template picker, improved closed-window message, and BotToggle `aria-label`. **No DB migration, no schema change, no checkpoint flush required.**
+
+```bash
+# Rebuild and redeploy admin-panel only
+docker compose -f /home/pepe/Proyectos/atrevete-bot/docker-compose.yml up -d --build admin-panel
+```
+
+Rollback: `git revert` this PR's commits + rebuild admin-panel.
+
+---
+
 ### Service Catalog Integrity Guard
 
 CI guard that asserts 7 structural invariants over the seeded `services` table. Introduced after the orphan-variant drift found at deploy 2026-05-11 (Engram obs #5260). I7 added by disambiguation-resilience PR-1.
