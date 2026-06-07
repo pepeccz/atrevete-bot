@@ -329,6 +329,55 @@ Do NOT add a button in the admin panel for this endpoint. See JSDoc in `admin-pa
 
 ---
 
+### Deploy Runbook (policy-acceptance)
+
+Adds `policy_accepted_at` / `policy_version` columns to `customers` and a new `customer_consents` audit table. Wires the policy acceptance gate into the booking flow (agent) and exposes policy fields in the admin API. **DB migration must run BEFORE deploying the new api/agent images.**
+
+```bash
+# Step 1: Apply the migration (revision b9d4e8f1c2a3, parent c7d8e9f0a1b2)
+DATABASE_URL="postgresql+psycopg://atrevete:changeme_min16chars_secure_password@localhost:5432/atrevete_db" \
+  ./venv/bin/alembic upgrade b9d4e8f1c2a3
+
+# Step 2: Confirm env vars are set in the deploy environment
+#   POLICY_VERSION (default "1.0") — opaque string, compared with ==, not semver-parsed
+#   POLICY_URL (default "https://atrevetepeluqueria.com/politica-privacidad/")
+# Both have sensible defaults in shared/config.py; set them explicitly in production .env.
+
+# Step 3: Restart api and agent containers to pick up new endpoints, prompts, and gate logic
+docker compose -f /home/pepe/Proyectos/atrevete-bot/docker-compose.yml restart api agent
+```
+
+**⚠ VERSION-BUMP UX WARNING**: bumping `POLICY_VERSION` (e.g. `"1.0"` → `"1.1"`) re-triggers the policy gate for EVERY returning customer on their next booking interaction. Existing rows with `policy_version = "1.0"` will mismatch the new setting and must re-accept. **Coordinate with Pilar before any POLICY_VERSION bump in production.**
+
+No checkpoint flush required. Policy acceptance fields are additive (`NotRequired` from the agent's perspective); in-flight conversations continue normally on the next turn.
+
+Verification queries (run against production DB post-migration):
+
+```sql
+-- New columns exist
+SELECT column_name FROM information_schema.columns
+WHERE table_name='customers' AND column_name IN ('policy_accepted_at', 'policy_version');
+-- expect: 2 rows
+
+-- Audit table exists and is empty right after migration
+SELECT COUNT(*) FROM customer_consents;
+-- expect: 0
+
+-- Smoke: a consent row after first WhatsApp acceptance
+SELECT customer_id, policy_version, accepted_at, accepted_via
+FROM customer_consents ORDER BY accepted_at DESC LIMIT 5;
+```
+
+Rollback:
+```bash
+DATABASE_URL="postgresql+psycopg://atrevete:changeme_min16chars_secure_password@localhost:5432/atrevete_db" \
+  ./venv/bin/alembic downgrade -1
+```
+
+Revision: `b9d4e8f1c2a3` (parent: `c7d8e9f0a1b2`).
+
+---
+
 ### Deploy Runbook (customer-notes-vs-memories)
 
 Renames `memories.notes` → `memories.agent_notes` in the JSONB column and wires customer memory read/write into the booking flow. **DB migration must run BEFORE deploying the new agent/API images.**

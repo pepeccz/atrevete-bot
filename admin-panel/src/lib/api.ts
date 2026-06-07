@@ -1083,6 +1083,20 @@ class ApiClient {
     );
   }
 
+  // System / config endpoints
+
+  /**
+   * Return the currently active POLICY_VERSION from the backend config.
+   * Used by the customer detail page to determine badge state without
+   * hardcoding the version string in the frontend.
+   */
+  async getCurrentPolicyVersion(): Promise<string> {
+    const result = await this.request<{ version: string }>(
+      "/api/admin/system/policy-version"
+    );
+    return result.version;
+  }
+
   // Admin user management endpoints (users:manage gated on backend)
 
   async listUsers(params?: { limit?: number; offset?: number }): Promise<AdminUserListResponse> {
