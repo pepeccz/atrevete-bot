@@ -693,6 +693,35 @@ Rollback: `git revert` the PR-3 commits + rebuild admin-panel previous version +
 
 ---
 
+### Deploy Runbook (inbox-customer-context)
+
+Admin inbox enrichment: "Conversaciones" moved to PRINCIPAL sidebar section with badge, delete-conversation button (⋯ → AlertDialog), CustomerCard enriched with Política / Última actividad / Preferencias / Notas / Resumen sections, and `pending_injection:v2:{id}` Redis key cleanup added to conversation delete flow. **No DB migration, no schema change.**
+
+```bash
+# Step 1: Rebuild and redeploy admin-panel
+cd /home/pepe/Proyectos/atrevete-bot/admin-panel && npm run build
+# Then serve the new build (e.g. via your Next.js start command or nginx static)
+
+# Step 2: Restart api container to pick up the Redis cleanup change
+# (shared/redis_conversation_cleanup.py now deletes pending_injection:v2:{id})
+docker compose -f /home/pepe/Proyectos/atrevete-bot/docker-compose.yml restart api
+
+# Step 3: Smoke tests
+# a) Sidebar: "Conversaciones" entry visible under PRINCIPAL with badge count
+# b) Open /conversations → select a conversation → ⋯ button visible in thread header
+# c) Click ⋯ → "Eliminar conversación" → AlertDialog with customer name
+# d) Confirm delete → conversation disappears from list, thread clears
+# e) Right panel: linked customer shows Política badge (green/gray), last 3 appointments,
+#    preferred stylist, truncated notes, total_spent, and "Cliente desde" date
+# f) Right panel: unlinked customer → "Sin identificar" state preserved
+# g) Delete a resumed conversation and verify pending_injection:v2:{id} key is gone:
+#    redis-cli EXISTS "pending_injection:v2:{conversation_id}"  # expect: 0
+```
+
+Rollback: `git revert` this PR's commits + rebuild admin-panel + `docker compose restart api`.
+
+---
+
 ### Service Catalog Integrity Guard
 
 CI guard that asserts 7 structural invariants over the seeded `services` table. Introduced after the orphan-variant drift found at deploy 2026-05-11 (Engram obs #5260). I7 added by disambiguation-resilience PR-1.
