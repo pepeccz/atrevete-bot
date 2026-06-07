@@ -277,6 +277,13 @@ class Customer(Base):
     # Customer notes (allergies, preferences, special requests)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
+    # Policy acceptance (GDPR / cancellation policy)
+    # Both nullable — existing rows need no backfill; gate triggers on next booking.
+    policy_accepted_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+    policy_version: Mapped[str | None] = mapped_column(String(16), nullable=True)
+
     # External integration IDs
     chatwoot_conversation_id: Mapped[str | None] = mapped_column(String(50), nullable=True)
 
@@ -316,6 +323,61 @@ class Customer(Base):
 
     def __repr__(self) -> str:
         return f"<Customer(id={self.id}, phone='{self.phone}', name='{self.first_name} {self.last_name}')>"
+
+
+class CustomerConsent(Base):
+    """Append-only audit log of policy acceptance events.
+
+    One row per (customer_id, policy_version, accepted_at) event.
+    Never UPDATE or DELETE in app code (GDPR audit-trail immutability).
+    Erasure-of-personal-data handled out-of-band by manual GDPR flow.
+    """
+
+    __tablename__ = "customer_consents"
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), primary_key=True, default=uuid4)
+    customer_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("customers.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+    policy_version: Mapped[str] = mapped_column(String(16), nullable=False)
+    accepted_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=func.now(),
+        default=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+    accepted_via: Mapped[str] = mapped_column(String(16), nullable=False)
+    source_message_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=func.now(),
+        default=lambda: datetime.now(UTC),
+        nullable=False,
+    )
+
+    customer: Mapped["Customer"] = relationship("Customer", foreign_keys=[customer_id])
+
+    __table_args__ = (
+        CheckConstraint(
+            "accepted_via IN ('whatsapp', 'admin_panel')",
+            name="ck_customer_consents_accepted_via",
+        ),
+        Index(
+            "ix_customer_consents_customer_id_accepted_at",
+            "customer_id",
+            "accepted_at",
+            postgresql_using="btree",
+        ),
+    )
+
+    def __repr__(self) -> str:
+        return (
+            f"<CustomerConsent(id={self.id}, customer_id={self.customer_id}, "
+            f"policy_version='{self.policy_version}', accepted_via='{self.accepted_via}')>"
+        )
 
 
 class Service(Base):
