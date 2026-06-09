@@ -22,6 +22,7 @@ from agent.middleware.customer_resolve import _invalidate_cached_customer
 from agent.services.availability_service import check_slot_availability
 from agent.services.customer_memory_service import read_customer_memories, write_customer_memories
 from agent.services.policy_service import PolicyConsentError, accept_policy
+from agent.tools._booking_validators import validate_service_ids_exist, validate_stylist_id_exists
 from agent.tools.schemas import ToolResponse
 from shared.config import get_settings
 
@@ -298,6 +299,33 @@ async def book(
 
     try:
         async with get_async_session() as session:
+            # --- FK existence guards (I1) — reject before any writes ---
+            svc_result = await validate_service_ids_exist(session, parsed_service_ids)
+            if not svc_result.ok:
+                logger.info(
+                    "tool.response.rejected",
+                    extra={"tool_name": "book", "next_step": "invalid_service_ids"},
+                )
+                return ToolResponse(
+                    status="rejected",
+                    next_step="invalid_service_ids",
+                    payload={"missing_service_ids": [str(u) for u in svc_result.missing_ids]},
+                    errors=[svc_result.error_message],
+                ).model_dump_json()
+
+            sty_result = await validate_stylist_id_exists(session, parsed_stylist_id)
+            if not sty_result.ok:
+                logger.info(
+                    "tool.response.rejected",
+                    extra={"tool_name": "book", "next_step": "invalid_stylist_id"},
+                )
+                return ToolResponse(
+                    status="rejected",
+                    next_step="invalid_stylist_id",
+                    payload={"missing_stylist_id": str(parsed_stylist_id)},
+                    errors=[sty_result.error_message],
+                ).model_dump_json()
+
             # Fetch service duration
             try:
                 total_duration = await _fetch_service_duration(session, parsed_service_ids)

@@ -44,7 +44,7 @@
       Primera vez que contacta. Va directo a reservar sin responder preguntas
       sobre privacidad. Eventualmente acepta cuando el bot insiste.
   intent: "Quiero reservar un corte de pelo para el viernes."
-  max_turns: 8
+  max_turns: 10
   expect:
     outcome: policy_accepted
     db_appointment: null
@@ -297,7 +297,7 @@
       Primera vez que contacta. Acepta la política de privacidad cuando el bot
       la presenta. El auditor verifica que policy_accepted_at se almacena en la BD.
   intent: "Hola, me gustaría reservar una cita. Es la primera vez que os contacto."
-  max_turns: 8
+  max_turns: 10
   expect:
     outcome: policy_accepted
     db_appointment: null

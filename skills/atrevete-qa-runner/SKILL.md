@@ -188,7 +188,7 @@ next. Be natural — real customers don't front-load all info at once.
 ```bash
 python tests/e2e/harness/qa_turn_helper.py turn \
   --conversation-id <conversation_id> \
-  --message "<your_message>" \
+  --user-message "<your_message>" \
   --phone <scenario.persona.phone> \
   --name "<scenario.persona.name>" \
   --timeout 90

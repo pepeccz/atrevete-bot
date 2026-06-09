@@ -18,11 +18,65 @@ import json
 import os
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from shared.config import get_settings
 from tests.e2e.harness.redis_harness import RedisTestHarness
+
+# ---------------------------------------------------------------------------
+# I5 — Repeated sentence detector (QA post-hoc validator)
+# ---------------------------------------------------------------------------
+
+
+def detect_repeated_sentences(text: str) -> list[str]:
+    """Detect sentences that appear two or more times in a bot response.
+
+    Rules (per ADR-I5.1 — detect in QA harness, not in production middleware):
+    - Split on sentence-ending punctuation: '.', '!', '?'
+    - Strip leading/trailing whitespace from each fragment
+    - Flag any sentence that appears >= 2 times AND has > 5 words
+    - Short fragments (<= 5 words) are intentionally NOT flagged to avoid
+      false positives from common fillers ('Hola.', 'Sí.', 'Ok.', etc.)
+
+    Returns:
+        List of sentence strings that are repeated. Empty list if none.
+
+    Usage in run JSON output (T15 wires this into the turn output dict):
+        output["repeated_sentences"] = detect_repeated_sentences(agent_response)
+    """
+    import re
+
+    if not text:
+        return []
+
+    # Split on '.', '!', '?' while keeping the delimiter attached
+    fragments = re.split(r"(?<=[.!?])\s+", text)
+
+    # Normalize: strip punctuation tails and whitespace, lowercase for comparison
+    normalized: list[str] = []
+    for frag in fragments:
+        cleaned = frag.strip().rstrip(".!?").strip()
+        if cleaned:
+            normalized.append(cleaned)
+
+    # Count occurrences (case-insensitive)
+    counts: dict[str, int] = {}
+    originals: dict[str, str] = {}  # lowercase → original casing
+    for sentence in normalized:
+        key = sentence.lower()
+        counts[key] = counts.get(key, 0) + 1
+        if key not in originals:
+            originals[key] = sentence
+
+    # Flag sentences that appear >= 2x AND have > 5 words
+    repeated = [
+        originals[key]
+        for key, count in counts.items()
+        if count >= 2 and len(originals[key].split()) > 5
+    ]
+
+    return repeated
 
 
 def _json_out(data: dict[str, Any]) -> None:
@@ -93,7 +147,7 @@ async def _cmd_turn(args: Any) -> int:
             conversation_id=args.conversation_id,
             customer_phone=args.customer_phone,
             sender_name=args.persona_name,
-            run_started_at=datetime.now(timezone.utc),
+            run_started_at=datetime.now(UTC),
         )
         session = QARunSession(
             identity=identity,
@@ -221,20 +275,38 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # turn
     p_turn = sub.add_parser("turn", help="Execute an atomic conversation turn")
-    p_turn.add_argument("--conversation-id", required=True, dest="conversation_id", help="Conversation UUID")
-    p_turn.add_argument("--user-message", required=True, dest="user_message", help="User message text")
-    p_turn.add_argument("--customer-phone", default="+34999000000", dest="customer_phone", help="Customer phone (must start with TEST_PHONE_PREFIX)")
-    p_turn.add_argument("--persona-name", default="QA Test Client", dest="persona_name", help="Customer display name")
+    p_turn.add_argument(
+        "--conversation-id", required=True, dest="conversation_id", help="Conversation UUID"
+    )
+    p_turn.add_argument(
+        "--user-message", required=True, dest="user_message", help="User message text"
+    )
+    p_turn.add_argument(
+        "--customer-phone",
+        default="+34999000000",
+        dest="customer_phone",
+        help="Customer phone (must start with TEST_PHONE_PREFIX)",
+    )
+    p_turn.add_argument(
+        "--persona-name",
+        default="QA Test Client",
+        dest="persona_name",
+        help="Customer display name",
+    )
     p_turn.add_argument("--timeout", type=float, default=60.0, help="Response timeout (seconds)")
 
     # reset
     p_reset = sub.add_parser("reset", help="Reset Redis state for a conversation")
-    p_reset.add_argument("--conversation-id", required=True, dest="conversation_id", help="Conversation UUID")
+    p_reset.add_argument(
+        "--conversation-id", required=True, dest="conversation_id", help="Conversation UUID"
+    )
     p_reset.add_argument("--phone", default="+34999000000", help="Customer phone")
 
     # state
     p_state = sub.add_parser("state", help="Fetch checkpoint state")
-    p_state.add_argument("--conversation-id", required=True, dest="conversation_id", help="Conversation UUID")
+    p_state.add_argument(
+        "--conversation-id", required=True, dest="conversation_id", help="Conversation UUID"
+    )
 
     return parser
 

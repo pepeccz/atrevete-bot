@@ -146,8 +146,10 @@ Check:
 - [ ] No Python traceback leaked: `rg "Traceback|Internal server error|Exception:" agent_response`
 - [ ] No raw JSON or tool output leaked to user (agent_response doesn't start with `{` or contain `"tool_calls"`)
 - [ ] `outcome` field is present and is one of: `booked`, `cancelled`, `rescheduled`, `escalated`, `policy_accepted`, `rejected`, `timeout`, `error`, `stuck`, `info_provided`, `multi_completed`, `partial_completed`, `out_of_scope_handled` (v1 + v2 union — see Canonical Outcome Enum section)
+- [ ] **repeated_sentences check (WARN-level, Change I)**: if any turn's `repeated_sentences` field is non-empty, flag as WARN (not FAIL). `repeated_sentences` is populated by `detect_repeated_sentences()` in `qa_turn_helper.py` when it finds sentences > 5 words appearing >= 2× in a single bot reply. A non-empty list indicates a likely prompt-assembly duplicate or LLM generation artifact. Document in the WARN section; do not escalate to FAIL unless the repetition is severe (>= 3 occurrences of the same sentence).
 
 **If any L1 check fails, mark this scenario `FAIL (L1)` and skip L2–L5.**
+**If only `repeated_sentences` is non-empty, mark as `WARN` and continue L2–L5.**
 
 ---
 

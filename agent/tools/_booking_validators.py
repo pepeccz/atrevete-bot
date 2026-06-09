@@ -173,6 +173,124 @@ async def validate_booking_date(
 
 
 # ---------------------------------------------------------------------------
+# Booking FK existence guards (I1)
+# ---------------------------------------------------------------------------
+
+ERROR_INVALID_SERVICE_IDS = "invalid_service_ids"
+"""Returned when one or more service_id values are not found in the services table."""
+
+ERROR_INVALID_STYLIST_ID = "invalid_stylist_id"
+"""Returned when the stylist_id value is not found in the stylists table."""
+
+
+@dataclass
+class FKValidationResult:
+    """Result of a FK existence check.
+
+    On success: ok=True, error_code=None, error_message=None, missing_ids=[].
+    On failure: ok=False, error_code set, error_message is a Spanish instruction
+                for the LLM so it can self-correct by re-reading <catalog>.
+    """
+
+    ok: bool
+    error_code: str | None
+    error_message: str | None
+    missing_ids: list = field(default_factory=list)
+
+
+async def validate_service_ids_exist(session, service_ids: list) -> FKValidationResult:
+    """Check that every UUID in service_ids exists in the services table.
+
+    Executes a single SELECT id FROM services WHERE id = ANY(:ids).
+    Returns a FKValidationResult with missing_ids populated on failure.
+
+    Args:
+        session:     An open async SQLAlchemy session (injected from the caller's block).
+        service_ids: List of UUID objects to validate. Empty list returns ok=True.
+
+    Returns:
+        FKValidationResult with ok=True when all IDs exist; ok=False when any are missing.
+    """
+    from uuid import UUID as _UUID
+
+    if not service_ids:
+        return FKValidationResult(ok=True, error_code=None, error_message=None)
+
+    from sqlalchemy import text as _text
+
+    id_strings = [str(sid) for sid in service_ids]
+    result = await session.execute(
+        _text("SELECT id FROM services WHERE id = ANY(:ids)"),
+        {"ids": id_strings},
+    )
+    found_ids = {row[0] for row in result.fetchall()}
+
+    # Normalize to UUID objects for comparison
+    found_uuids = set()
+    for fid in found_ids:
+        try:
+            found_uuids.add(_UUID(str(fid)))
+        except (ValueError, AttributeError):
+            pass
+
+    input_uuids = []
+    for sid in service_ids:
+        try:
+            input_uuids.append(_UUID(str(sid)))
+        except (ValueError, AttributeError):
+            pass
+
+    missing = [uid for uid in input_uuids if uid not in found_uuids]
+
+    if not missing:
+        return FKValidationResult(ok=True, error_code=None, error_message=None)
+
+    missing_str = ", ".join(str(m) for m in missing)
+    return FKValidationResult(
+        ok=False,
+        error_code=ERROR_INVALID_SERVICE_IDS,
+        error_message=(
+            f"service_id inválido: {missing_str}. "
+            "Vuelve a leer el <catalog> y usa solo UUIDs que aparezcan tras id=."
+        ),
+        missing_ids=missing,
+    )
+
+
+async def validate_stylist_id_exists(session, stylist_id) -> FKValidationResult:
+    """Check that stylist_id exists in the stylists table.
+
+    Args:
+        session:    An open async SQLAlchemy session.
+        stylist_id: UUID object to validate.
+
+    Returns:
+        FKValidationResult with ok=True if found; ok=False if not.
+    """
+    from uuid import UUID as _UUID
+    from sqlalchemy import text as _text
+
+    result = await session.execute(
+        _text("SELECT id FROM stylists WHERE id = :id"),
+        {"id": str(stylist_id)},
+    )
+    row = result.fetchone()
+
+    if row is not None:
+        return FKValidationResult(ok=True, error_code=None, error_message=None)
+
+    return FKValidationResult(
+        ok=False,
+        error_code=ERROR_INVALID_STYLIST_ID,
+        error_message=(
+            f"stylist_id inválido: {stylist_id}. "
+            "Vuelve a leer el <catalog> y usa solo UUIDs de estilistas que aparezcan en el catálogo."
+        ),
+        missing_ids=[stylist_id],
+    )
+
+
+# ---------------------------------------------------------------------------
 # Private helpers
 # ---------------------------------------------------------------------------
 
