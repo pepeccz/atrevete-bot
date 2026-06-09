@@ -224,6 +224,15 @@ class Settings(BaseSettings):
             "(e.g. 'openai/gpt-4.1-nano'). Empty string → fall back to LLM_MODEL."
         ),
     )
+    LLM_PROVIDER_ORDER: str = Field(
+        default="openai",
+        description=(
+            "Comma-separated OpenRouter provider order for sticky routing. "
+            "Pins the provider so the static prompt prefix stays cache-eligible across turns. "
+            "Empty string disables the routing hint (OpenRouter chooses freely). "
+            "Example: 'openai' or 'openai,anthropic'."
+        ),
+    )
 
     # State Delivery — synthetic message primitive (E1 seed)
     STATE_DELIVERY_SYNTHETIC_ENABLED: bool = Field(
@@ -427,6 +436,23 @@ class Settings(BaseSettings):
     POLICY_URL: str = Field(
         default="https://atrevetepeluqueria.com/politica-privacidad/",
         description="Public URL for the salon's privacy and cancellation policy page.",
+    )
+
+    # QA test harness sandbox
+    TEST_MODE_GCAL_SKIP: bool = Field(
+        default=False,
+        description=(
+            "When true, GCal push functions early-return without making any API call. "
+            "QA harness only. Default False so production behavior is unchanged."
+        ),
+    )
+    TEST_PHONE_PREFIX: str = Field(
+        default="+34999",
+        description=(
+            "Sandbox phone prefix for QA harness scenarios. "
+            "All test phones must start with this value to prevent accidental "
+            "cleanup of real customer data."
+        ),
     )
 
     # Rate Limiting (disable in tests and maintenance windows)

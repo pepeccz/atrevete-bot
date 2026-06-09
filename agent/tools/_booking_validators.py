@@ -85,6 +85,7 @@ async def validate_booking_date(
     date_text: str | None,
     *,
     ref_date: date | None = None,
+    min_days: int | None = None,
 ) -> DateValidationResult:
     """Validate a booking date through G1 → G2 → G3 pipeline.
 
@@ -97,6 +98,8 @@ async def validate_booking_date(
         ref_date:   Reference date for G3 comparison and relative resolution.
                     Defaults to today in Europe/Madrid when not provided.
                     Pass explicitly for deterministic tests (ADR-4).
+        min_days:   Override for minimum lead-time days (B6: settings drift fix).
+                    When None, falls back to the module-level MIN_BOOKING_DAYS constant.
 
     Returns:
         DateValidationResult — .ok=True on success, .error_code set on failure.
@@ -143,19 +146,20 @@ async def validate_booking_date(
         )
 
     # ── G3: Advance policy (lead-time) ────────────────────────────────────────
-    min_date: date = ref + timedelta(days=MIN_BOOKING_DAYS)
+    effective_min_days: int = min_days if min_days is not None else MIN_BOOKING_DAYS
+    min_date: date = ref + timedelta(days=effective_min_days)
     if resolved < min_date:
         return DateValidationResult(
             date_iso=None,
             error_code=ERROR_ADVANCE_POLICY_VIOLATED,
             error_message=(
                 f"La fecha {resolved.isoformat()} viola la política de antelación mínima "
-                f"({MIN_BOOKING_DAYS} días). "
+                f"({effective_min_days} días). "
                 f"La primera fecha válida es el {min_date.isoformat()}."
             ),
             payload={
                 "min_date": min_date.isoformat(),
-                "min_days": MIN_BOOKING_DAYS,
+                "min_days": effective_min_days,
             },
         )
 

@@ -33,6 +33,7 @@ from agent.tools._booking_validators import (
     validate_booking_date,
 )
 from agent.tools.schemas import ToolResponse
+from agent.services.availability_service import _load_lead_time_min_days
 from shared.config import get_settings
 
 _MADRID_TZ = ZoneInfo("Europe/Madrid")
@@ -598,9 +599,11 @@ async def _update_booking_impl(
         # validate_booking_date resolves relative text (G1), checks closed days (G2),
         # and enforces lead-time policy (G3). Short-circuits on first failure.
         # The adapter maps canonical error codes to this tool's wire-format next_step values.
+        _min_days = await _load_lead_time_min_days()
         _date_validation = await validate_booking_date(
             date_iso=date_iso,
             date_text=date_text,
+            min_days=_min_days,
         )
 
         if not _date_validation.ok:

@@ -6,7 +6,7 @@ format_service_list (or any other function that was removed when the module
 was consolidated into booking_mode.py or deleted entirely).
 
 If agent.modes.booking_context still exists as a module, it must NOT export
-format_service_list — that helper was removed in the v6.0 simplification.
+format_service_list — that helper was removed in an earlier architecture simplification.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ class TestBookingContextModuleRemoved:
     def test_no_format_service_list_from_booking_context(self):
         """format_service_list must NOT be importable from agent.modes.booking_context.
 
-        The module was deleted (or gutted) in the v6.0 mode-based architecture.
+        The module was deleted (or gutted) in an earlier architecture refactor.
         Importing format_service_list from it must raise ImportError or AttributeError.
         """
         try:
@@ -33,7 +33,7 @@ class TestBookingContextModuleRemoved:
         # Module still exists (maybe as a stub) — ensure format_service_list is gone
         assert not hasattr(module, "format_service_list"), (
             "format_service_list found in agent.modes.booking_context — "
-            "this function was removed in the v6.0 architecture refactor. "
+            "this function was removed in an earlier architecture refactor. "
             "BookingContext no longer has a format_service_list helper."
         )
 

@@ -96,6 +96,14 @@ async def run_cache_signal_listener() -> None:
                     if entity == "services":
                         invalidate_catalog_cache()
 
+                    # Business hours — invalidate when admin mutates opening hours.
+                    # Publisher in api/routes/admin.py must publish entity="business_hours".
+                    # TTL (15 min) is the safety net when no publisher exists yet.
+                    if entity == "business_hours":
+                        from agent.prompts.business_hours import invalidate_business_hours_cache
+
+                        invalidate_business_hours_cache()
+
                     logger.info(
                         "In-memory caches cleared after invalidation signal: "
                         f"entity={entity}, action={action}"

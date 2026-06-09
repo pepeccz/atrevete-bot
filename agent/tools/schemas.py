@@ -1,4 +1,4 @@
-"""Tool protocol schema for MVP v7 agent tools.
+"""Tool protocol schema for agent tools.
 
 All tools return ToolResponse serialized as JSON string via LangChain tool protocol.
 errors[] must never start with imperative verbs (P5-aligned lint enforced in tests).

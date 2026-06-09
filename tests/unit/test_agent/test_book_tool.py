@@ -93,6 +93,8 @@ async def test_book_returns_calendar_link_on_success():
 
     mock_customer = MagicMock()
     mock_customer.id = customer_uuid
+    mock_customer.policy_accepted_at = datetime(2026, 1, 1, tzinfo=UTC)
+    mock_customer.policy_version = "1.0"
 
     mock_stylist = MagicMock()
     mock_stylist.name = "María"
@@ -110,9 +112,9 @@ async def test_book_returns_calendar_link_on_success():
     # Duration query result
     mock_dur_rows = MagicMock()
     mock_dur_rows.fetchall = MagicMock(return_value=[(60,)])
-    # Customer lookup
+    # Customer lookup — returns existing customer with policy already accepted
     mock_cust_rows = MagicMock()
-    mock_cust_rows.scalar_one_or_none = MagicMock(return_value=None)  # new customer
+    mock_cust_rows.scalar_one_or_none = MagicMock(return_value=mock_customer)
     # Stylist get (after commit)
     mock_sty_get_rows = MagicMock()
 
@@ -154,6 +156,10 @@ async def test_book_returns_calendar_link_on_success():
             return mock_gcal_session
         return mock_sty_session
 
+    settings_mock = MagicMock()
+    settings_mock.POLICY_VERSION = "1.0"
+    settings_mock.POLICY_URL = "https://example.com"
+
     with (
         patch("database.connection.get_async_session", side_effect=make_session),
         patch(
@@ -161,18 +167,22 @@ async def test_book_returns_calendar_link_on_success():
             new_callable=AsyncMock,
         ),
         patch("agent.tools.book.uuid4", return_value=appointment_uuid),
+        patch(
+            "agent.tools.book.check_slot_availability",
+            new_callable=AsyncMock,
+            return_value={"available": True},
+        ),
+        patch("agent.tools.book.get_settings", return_value=settings_mock),
     ):
-        result = await book.ainvoke(
-            {
-                "service_ids": [str(service_uuid)],
-                "stylist_id": str(stylist_uuid),
-                "start_iso": "2026-05-01T10:00:00+00:00",
-                "customer_phone": "+5491112345678",
-                "customer_full_name": "Ana García",
-                "confirmed": True,
-                "pre_book_validated": True,
-                "notes": "Sin fragancia",
-            }
+        result = await book.coroutine(
+            service_ids=[str(service_uuid)],
+            stylist_id=str(stylist_uuid),
+            start_iso="2026-05-01T10:00:00+00:00",
+            customer_full_name="Ana García",
+            confirmed=True,
+            pre_book_validated=True,
+            notes="Sin fragancia",
+            state={"customer_phone": "+5491112345678"},
         )
 
     payload = json.loads(result)

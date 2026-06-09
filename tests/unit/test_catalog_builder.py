@@ -364,3 +364,94 @@ async def test_build_catalog_markdown_and_services_share_cache(monkeypatch):
     assert md == "MARKDOWN-BODY"
     assert len(rows) == 1 and rows[0].name == "X"
     assert call_count["n"] == 1, "markdown + services must share ONE cache entry"
+
+
+# ---------------------------------------------------------------------------
+# T4 — prompt-section cache (O2) — RED until T7 impl
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_prompt_section_cache_hit_no_second_db_call(monkeypatch):
+    """Two calls within TTL must NOT issue a second DB query.
+
+    RED: fails until _prompt_section_cache is wired into build_catalog_prompt_section.
+    """
+    from agent.prompts import catalog_builder
+    from agent.prompts.catalog_builder import build_catalog_prompt_section
+
+    call_count = {"n": 0}
+
+    async def fake_loader() -> str:
+        call_count["n"] += 1
+        return "CATALOG_SECTION"
+
+    catalog_builder._prompt_section_cache.invalidate()
+    monkeypatch.setattr(catalog_builder, "_load_prompt_section", fake_loader)
+
+    r1 = await build_catalog_prompt_section()
+    r2 = await build_catalog_prompt_section()
+
+    assert r1 == r2 == "CATALOG_SECTION"
+    assert call_count["n"] == 1, (
+        "DB loader must be called ONCE within TTL — second call must use cached value"
+    )
+
+
+@pytest.mark.asyncio
+async def test_prompt_section_cache_evicted_after_invalidate(monkeypatch):
+    """invalidate_catalog_cache must also evict _prompt_section_cache.
+
+    RED: fails until invalidate_catalog_cache also calls _prompt_section_cache.invalidate().
+    """
+    from agent.prompts import catalog_builder
+    from agent.prompts.catalog_builder import build_catalog_prompt_section, invalidate_catalog_cache
+
+    call_count = {"n": 0}
+
+    async def fake_loader() -> str:
+        call_count["n"] += 1
+        return f"SECTION_{call_count['n']}"
+
+    catalog_builder._prompt_section_cache.invalidate()
+    monkeypatch.setattr(catalog_builder, "_load_prompt_section", fake_loader)
+
+    await build_catalog_prompt_section()
+    assert call_count["n"] == 1
+
+    invalidate_catalog_cache()
+
+    await build_catalog_prompt_section()
+    assert call_count["n"] == 2, "Loader must re-run after invalidate_catalog_cache()"
+
+
+@pytest.mark.asyncio
+async def test_prompt_section_cache_concurrent_populate_idempotent(monkeypatch):
+    """Concurrent calls with empty cache produce at most 2 DB hits (idempotent double-populate).
+
+    RED: fails until _prompt_section_cache.get_or_load is used in build_catalog_prompt_section.
+    """
+    import asyncio
+
+    from agent.prompts import catalog_builder
+    from agent.prompts.catalog_builder import build_catalog_prompt_section
+
+    call_count = {"n": 0}
+
+    async def slow_loader() -> str:
+        call_count["n"] += 1
+        await asyncio.sleep(0)  # yield to allow concurrent coroutine to race
+        return "SECTION"
+
+    catalog_builder._prompt_section_cache.invalidate()
+    monkeypatch.setattr(catalog_builder, "_load_prompt_section", slow_loader)
+
+    results = await asyncio.gather(
+        build_catalog_prompt_section(),
+        build_catalog_prompt_section(),
+    )
+
+    assert all(r == "SECTION" for r in results), "All callers must receive a valid string"
+    assert call_count["n"] <= 2, (
+        "At most 2 DB hits allowed for concurrent populate (idempotent double-populate OK)"
+    )

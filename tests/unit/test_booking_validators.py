@@ -376,3 +376,66 @@ async def test_manana_regression_resolver_fails_returns_invalid():
 
     assert result.ok is False
     assert result.error_code == "invalid_relative_date"
+
+
+# ---------------------------------------------------------------------------
+# T16 — B6: validate_booking_date must honor min_days kwarg
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_validate_booking_date_respects_settings_min_days():
+    """B6: validate_booking_date must respect min_days kwarg from caller.
+
+    When min_days=5 is passed, a date 4 days ahead must be rejected with advance_policy_violated.
+    Without the fix, the module-constant MIN_BOOKING_DAYS=3 would be used and 4 days ahead
+    would PASS (4 >= 3) when it should FAIL (4 < 5).
+    """
+    from agent.tools._booking_validators import validate_booking_date
+
+    ref = date(2026, 6, 1)
+    # 4 days ahead: passes MIN_BOOKING_DAYS=3 but fails min_days=5
+    date_4_days = "2026-06-05"
+
+    with patch(
+        "agent.tools._booking_validators.is_date_closed",
+        new=AsyncMock(return_value=False),
+    ):
+        result = await validate_booking_date(
+            date_iso=date_4_days,
+            date_text=None,
+            ref_date=ref,
+            min_days=5,  # override: 5-day policy
+        )
+
+    assert result.ok is False, (
+        f"Expected advance_policy_violated with min_days=5 for +4 days, got ok=True"
+    )
+    assert result.error_code == "advance_policy_violated", (
+        f"Expected advance_policy_violated, got: {result.error_code}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_validate_booking_date_default_min_days():
+    """B6: when min_days is not passed, the module constant fallback still works."""
+    from agent.tools._booking_validators import validate_booking_date, MIN_BOOKING_DAYS
+
+    ref = date(2026, 6, 1)
+    # Date that is past the module constant (MIN_BOOKING_DAYS days + 1 ahead = safe)
+    date_safe = (ref + __import__('datetime').timedelta(days=MIN_BOOKING_DAYS + 1)).isoformat()
+
+    with patch(
+        "agent.tools._booking_validators.is_date_closed",
+        new=AsyncMock(return_value=False),
+    ):
+        result = await validate_booking_date(
+            date_iso=date_safe,
+            date_text=None,
+            ref_date=ref,
+            # no min_days kwarg → use module constant
+        )
+
+    assert result.ok is True, (
+        f"Expected ok=True with default min_days={MIN_BOOKING_DAYS} for +{MIN_BOOKING_DAYS + 1} days, got: {result}"
+    )

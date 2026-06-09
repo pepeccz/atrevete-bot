@@ -11,42 +11,19 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from langchain_core.tools import tool
-from pydantic import BaseModel, Field
+from langgraph.prebuilt import InjectedState
 
 from agent.tools._booking_validators import validate_booking_date
+from agent.services.availability_service import _load_lead_time_min_days
 
 logger = logging.getLogger(__name__)
 
 MADRID_TZ = ZoneInfo("Europe/Madrid")
-
-
-class ManageAppointmentsSchema(BaseModel):
-    """Input schema for manage_appointments tool."""
-
-    action: Literal["list", "cancel", "reschedule", "confirm", "decline"] = Field(
-        description=(
-            "Action to perform: list (view upcoming), cancel, reschedule, "
-            "confirm (accept a pending confirmation), or decline (reject a pending confirmation)."
-        )
-    )
-    customer_phone: str = Field(description="Customer phone number (E.164 format).")
-    appointment_id: str | None = Field(
-        default=None,
-        description="Appointment UUID — required for cancel and reschedule actions.",
-    )
-    new_date: str | None = Field(
-        default=None,
-        description="New date (YYYY-MM-DD) — required for reschedule action.",
-    )
-    new_time: str | None = Field(
-        default=None,
-        description="New time slot (HH:MM) — required for reschedule action.",
-    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -171,6 +148,7 @@ async def _cancel_appointment(
 
         result = await execute_cancellation(
             appointment_id=appt_uuid,
+            customer_phone=customer_phone,
             reason=reason,
             conversation_id=None,
         )
@@ -276,7 +254,10 @@ async def _reschedule_appointment(
 
         # Step 1b — booking-date validation (G1 → G2 → G3)
         # Called before datetime.strptime so guard errors are caught early without DB writes.
-        date_validation = await validate_booking_date(date_iso=new_date, date_text=new_date)
+        _min_days = await _load_lead_time_min_days()
+        date_validation = await validate_booking_date(
+            date_iso=new_date, date_text=new_date, min_days=_min_days
+        )
         if not date_validation.ok:
             return {
                 "success": False,
@@ -409,25 +390,36 @@ async def _decline_appointment(customer_phone: str, appointment_id: str) -> dict
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-@tool(args_schema=ManageAppointmentsSchema)
+@tool
 async def manage_appointments(
     action: Literal["list", "cancel", "reschedule", "confirm", "decline"],
-    customer_phone: str,
     appointment_id: str | None = None,
     new_date: str | None = None,
     new_time: str | None = None,
+    state: Annotated[dict, InjectedState] = None,
 ) -> str:
     """Manage customer appointments: list, cancel, reschedule, confirm or decline.
 
-    Use 'list' to show upcoming appointments, 'cancel' to cancel (requires
-    appointment_id), 'reschedule' to change date/time (requires appointment_id,
-    new_date, new_time), 'confirm' to accept a pending 48h confirmation
-    (requires appointment_id), or 'decline' to reject a pending confirmation
-    (requires appointment_id).
+    customer_phone is injected from session state; it is not a tool argument.
+
+    Args:
+        action: Action to perform — list (view upcoming), cancel, reschedule,
+            confirm (accept a pending confirmation), or decline (reject one).
+        appointment_id: Appointment UUID — required for cancel, reschedule, confirm, decline.
+        new_date: New date (YYYY-MM-DD) — required for reschedule action.
+        new_time: New time slot (HH:MM) — required for reschedule action.
 
     Reprogramar solo cambia fecha y hora. El cambio de estilista no está
     disponible por chat; si el cliente lo pide, escala a un humano.
     """
+    customer_phone = (state or {}).get("customer_phone") or ""
+    if not customer_phone:
+        logger.error(
+            "manage_appointments.state.missing_customer_phone",
+            extra={"tool_name": "manage_appointments"},
+        )
+        return "Estado de conversación incompleto. No puedo gestionar la cita."
+
     try:
         if action == "list":
             result = await _list_appointments(customer_phone=customer_phone)

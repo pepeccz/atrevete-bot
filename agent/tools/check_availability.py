@@ -7,9 +7,10 @@ Returns JSON-serialized ToolResponse.
 """
 
 import logging
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from typing import Literal
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from langchain_core.tools import tool
 
@@ -18,6 +19,8 @@ from agent.tools.schemas import ToolResponse
 from shared.date_format import format_date_spanish
 
 logger = logging.getLogger(__name__)
+
+_MADRID_TZ = ZoneInfo("Europe/Madrid")
 
 
 async def _load_lead_time_settings() -> tuple[int, int]:
@@ -202,7 +205,7 @@ async def check_availability(
             ],
         ).model_dump_json()
 
-    today = date.today()
+    today = datetime.now(_MADRID_TZ).date()
     if target_date < today:
         return ToolResponse(
             status="rejected",

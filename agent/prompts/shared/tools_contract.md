@@ -54,7 +54,7 @@ Antes de llamar a `book`, DEBES llamar a `check_availability(slot_time=HH:MM, �
 **book** — crear la reserva. [→R21] requiere dos turnos de confirmación.
 - Cuándo llamar: con datos confirmados y `next_step="booking_ready"` ya alcanzado.
 - Nunca llamar: sin confirmación explícita del cliente ni sin haber re-validado el hueco.
-- Args requeridos: `service_ids`, `stylist_id`, `start_iso`, `customer_phone`, `customer_full_name`, `confirmed=true`, `pre_book_validated=true`.
+- Args requeridos: `service_ids`, `stylist_id`, `start_iso`, `customer_full_name`, `confirmed=true`, `pre_book_validated=true`. (`customer_phone` es inyectado automáticamente desde el estado de sesión; no es un argumento de herramienta.)
 - `pre_book_validated=true` SOLO se puede pasar si `check_availability(slot_time=HH:MM, …)` devolvió `exact_match=true` en este turno o el inmediatamente anterior. Sin esa re-validación, `book` rechaza con `next_step="pre_book_validation_required"`.
 - Args opcionales: `notes` (str|null).
 

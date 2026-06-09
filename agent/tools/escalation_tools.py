@@ -7,37 +7,42 @@ the request, call this tool to hand off the conversation.
 from __future__ import annotations
 
 import logging
+from typing import Annotated
 
 from langchain_core.tools import tool
-from pydantic import BaseModel, Field
+from langgraph.prebuilt import InjectedState
 
 from agent.services.escalation_service import perform_escalation
 
 logger = logging.getLogger(__name__)
 
 
-class EscalateSchema(BaseModel):
-    """Input schema for escalate tool."""
-
-    reason: str = Field(
-        description="Brief reason for escalation (e.g., 'customer request', 'complex inquiry')."
-    )
-    conversation_id: str = Field(description="Conversation ID to escalate.")
-    customer_phone: str = Field(description="Customer phone number (E.164 format).")
-
-
-@tool(args_schema=EscalateSchema)
+@tool
 async def escalate(
     reason: str,
     conversation_id: str,
-    customer_phone: str,
+    state: Annotated[dict, InjectedState] = None,
 ) -> str:
     """Escalate the conversation to a human agent.
+
+    customer_phone is injected from session state; it is not a tool argument.
+
+    Args:
+        reason: Brief reason for escalation (e.g., 'customer request', 'complex inquiry').
+        conversation_id: Conversation ID to escalate.
 
     Call this tool when the customer explicitly asks to speak with a person,
     or when the bot cannot handle the request adequately.
     After calling this tool, stop responding to booking requests for this conversation.
     """
+    customer_phone = (state or {}).get("customer_phone") or ""
+    if not customer_phone:
+        logger.error(
+            "escalate.state.missing_customer_phone",
+            extra={"tool_name": "escalate"},
+        )
+        return "Estado de conversación incompleto. No puedo transferir la conversación."
+
     try:
         result = await perform_escalation(
             conversation_id=conversation_id,

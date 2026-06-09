@@ -755,6 +755,32 @@ Rollback: `git revert` this PR's commits + `docker compose restart api` + rebuil
 
 ---
 
+### Deploy Runbook (gcal-sync-resilience)
+
+Adds 4 new columns to `appointments` (`gcal_sync_status`, `gcal_last_attempt_at`, `gcal_last_error`, `gcal_operation`), writes sync state inside the push functions, exposes a `POST /api/admin/appointments/{id}/gcal-retry` endpoint, and adds a red badge + retry button in the appointments table. **DB migration must run BEFORE deploying the new api/agent/admin-panel images.**
+
+```bash
+# Step 1: Apply the migration (revision e1f2a3b4c5d6, parent b9d4e8f1c2a3)
+DATABASE_URL="postgresql+psycopg://atrevete:changeme_min16chars_secure_password@localhost:5432/atrevete_db" \
+  ./venv/bin/alembic upgrade head
+
+# Step 2: Verify columns
+PGPASSWORD="changeme_min16chars_secure_password" psql -h localhost -U atrevete -d atrevete_db -c \
+  "SELECT column_name FROM information_schema.columns
+   WHERE table_name='appointments' AND column_name LIKE 'gcal_%';"
+# expect: 5 rows (existing google_calendar_event_id + 4 new)
+
+# Step 3: Restart api and agent containers + rebuild admin-panel
+docker compose -f /home/pepe/Proyectos/atrevete-bot/docker-compose.yml restart api agent
+docker compose -f /home/pepe/Proyectos/atrevete-bot/docker-compose.yml up -d --build admin-panel
+```
+
+No checkpoint flush required. Revision: `e1f2a3b4c5d6` (parent: `b9d4e8f1c2a3`).
+
+Rollback: `alembic downgrade -1` + revert image. Existing rows lose the columns; no user-visible data loss (GCal+DB are the source of truth).
+
+---
+
 ### Service Catalog Integrity Guard
 
 CI guard that asserts 7 structural invariants over the seeded `services` table. Introduced after the orphan-variant drift found at deploy 2026-05-11 (Engram obs #5260). I7 added by disambiguation-resilience PR-1.
@@ -889,6 +915,79 @@ These rules apply across ALL components:
 The testing deploy of this project is by SSH server by *pepe@server* in the folder */home/pepe/Proyectos/atrevete-bot* by **docker compose**
 
 YOU CAN'T RUN THIS PROJECT IN OTHER MACHINES, just in the up said
+---
+
+## QA Test Harness
+
+Declarative scenario runner for regression testing the live bot pipeline.
+Skills: `atrevete-qa-runner` (single scenario) and `atrevete-qa-auditor` (batch audit).
+
+### Sandbox Conventions
+
+- `TEST_MODE_GCAL_SKIP=true` — MUST be set before any run. Bypasses all Google Calendar
+  API calls; created appointments get `gcal_sync_status = 'not_applicable'`.
+- `TEST_PHONE_PREFIX=+34999` — All sandbox customer phones MUST start with `+34999`.
+  Phones in `tests/e2e/harness/scenarios.yaml` use `+34999000001` through `+34999000015`.
+  The `+349` guard in `cleanup.py` and `state_reset.py` prevents accidental deletion of
+  real production customers.
+
+### Where Runs Live
+
+```
+tests/e2e/runs/{YYYYMMDD_HHMMSS}/
+  {scenario_id}.json          # turn log, db_delta, bugs, final_state, outcome
+  {scenario_id}_traces.json   # Langfuse traces (nullable if Langfuse unavailable)
+  audit.md                    # batch audit report (written by atrevete-qa-auditor)
+  diff.md                     # regression diff vs baseline (optional)
+```
+
+### Running a Full Regression Batch
+
+```bash
+# 1. Set sandbox env
+export TEST_MODE_GCAL_SKIP=true
+export TEST_PHONE_PREFIX=+34999
+
+# 2. Clean up any prior sandbox data
+python tests/e2e/harness/cleanup.py --dry-run  # confirm counts first
+python tests/e2e/harness/cleanup.py
+
+# 3. Generate a timestamp for this run
+TS=$(date +%Y%m%d_%H%M%S)
+mkdir -p tests/e2e/runs/$TS
+
+# 4. Spawn one atrevete-qa-runner subagent per scenario (parallelizable).
+#    The orchestrator reads tests/e2e/harness/scenarios.yaml, generates a UUID4
+#    per scenario, passes scenario JSON + conv_id + output path to each runner.
+
+# 5. After all runners complete, spawn one atrevete-qa-auditor subagent:
+#    Input: run directory tests/e2e/runs/$TS/
+#    Output: tests/e2e/runs/$TS/audit.md
+```
+
+Approximate cost: ~$2.50 per full 15-scenario run (15 runners + 1 auditor).
+
+### Reading Audit Output
+
+`tests/e2e/runs/{ts}/audit.md` contains:
+- Summary table: scenario | outcome | expected | verdict | L1–L5 scores
+- CRITICAL / WARNING / detailed FAIL findings with `file:line` root causes
+- Regression list vs baseline (if `--baseline` was provided to auditor)
+- Prioritized recommendations
+
+A scenario is **PASS** when all of L1–L4 pass and L5 >= 3.0.
+A scenario is **WARN** when L1–L4 pass but traces are missing (L2 skipped) or L5 < 3.0.
+A scenario is **FAIL** when any deterministic check in L1–L4 fails.
+
+For regression comparison between two runs:
+
+```bash
+python tests/e2e/harness/diff.py \
+  --base tests/e2e/runs/<baseline_ts>/ \
+  --head tests/e2e/runs/<new_ts>/ \
+  --out tests/e2e/runs/<new_ts>/diff.md
+```
+
 ---
 
 ## Resources

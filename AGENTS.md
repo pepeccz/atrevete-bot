@@ -187,7 +187,7 @@ When performing these actions, ALWAYS invoke the corresponding skill FIRST:
 | Action | Skill |
 |--------|-------|
 | After creating/modifying a skill | `skill-sync` |
-| Building tester sub-agent prompt | `atrevete-qa-context` |
+| Auditing QA run results | `atrevete-qa-auditor` |
 | Creating React components | `atrevete-admin` |
 | Creating UI components | `atrevete-admin` |
 | Creating agent tools | `atrevete-agent` |
@@ -198,28 +198,20 @@ When performing these actions, ALWAYS invoke the corresponding skill FIRST:
 | Creating/modifying middleware | `atrevete-agent` |
 | Creating/modifying models | `atrevete-database` |
 | Creating/modifying services | `atrevete-api` |
+| Driving multi-turn bot conversation autonomously | `atrevete-qa-runner` |
 | Editing agent system prompts | `atrevete-prompts` |
 | Editing identity.md or critical_rules.md | `atrevete-prompts` |
-| Evaluating a QA conversation | `atrevete-qa-evaluator` |
-| Executing a conversational QA run | `atrevete-qa-tester` |
+| Executing a QA scenario regression | `atrevete-qa-runner` |
 | General Atrévete Bot development questions | `atrevete` |
-| Generating a QA report | `atrevete-qa-evaluator` |
-| Investigating QA test failures | `atrevete-qa-evaluator` |
+| Generating QA audit report with file:line root causes | `atrevete-qa-auditor` |
 | Modifying core prompt rules | `atrevete-prompts` |
 | Modifying files in agent/prompts/ | `atrevete-prompts` |
 | Modifying mode prompt instructions | `atrevete-prompts` |
-| Preparing a QA testing scenario | `atrevete-qa-context` |
 | Project overview and architecture | `atrevete` |
 | Regenerate AGENTS.md Auto-invoke tables | `skill-sync` |
 | Reviewing prompt quality | `atrevete-prompts` |
-| Root cause analysis of bot behavior | `atrevete-qa-evaluator` |
-| Running a QA tester sub-agent | `atrevete-qa-tester` |
-| Scoring a conversational flow | `atrevete-qa-evaluator` |
-| Selecting a QA persona | `atrevete-qa-context` |
-| Simulating a WhatsApp user | `atrevete-qa-tester` |
-| Testing the live bot as a customer | `atrevete-qa-tester` |
+| Reviewing QA batch evidence | `atrevete-qa-auditor` |
 | Troubleshoot missing skill in auto-invoke | `skill-sync` |
-| Validating a QA flow end to end | `atrevete-qa-tester` |
 | Working on API routes | `atrevete-api` |
 | Working on Chatwoot | `atrevete-api` |
 | Working on Chatwoot client | `atrevete-shared` |

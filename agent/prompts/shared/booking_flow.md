@@ -12,7 +12,7 @@ Llama `check_availability` solo para re-validar el hueco exacto elegido o cuando
 **Paso 1 — Servicios**: el cliente enumera los servicios que quiere. Llama `update_booking(services=[...])` ANTES de pedir nada más.
 Si `next_step` trae `*_required`, haz esa pregunta exacta antes de avanzar.
 
-**Paso 2 — Desambiguación** (`audience_required` / `variant_required`): si `next_step` lo pide, pregunta la dimensión faltante (audiencia o variante) en un solo turno antes de continuar. Ver R9/R9b.
+**Paso 2 — Desambiguación** (`audience_required` / `variant_required`): si `next_step` lo pide, pregunta la dimensión faltante (audiencia o variante) en un solo turno antes de continuar. Ver R9b.
 
 **Paso 2.5 — Mezcla de categorías** (`category_mix_required`): presenta los dos grupos del payload; pregunta cuál reservar primero. Nunca combines peluquería y estética en un solo `book`.
 

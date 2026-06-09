@@ -1,9 +1,9 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ColumnDef } from "@tanstack/react-table";
-import { MoreHorizontal, Calendar, User, Scissors, Clock, Edit } from "lucide-react";
+import { MoreHorizontal, Calendar, User, Scissors, Clock, Edit, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { DataTable, SortableHeader } from "@/components/ui/data-table";
@@ -13,8 +13,10 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { toast } from "sonner";
 import { formatDate } from "@/components/shared/format-utils";
 import { StatusBadge } from "@/components/shared/status-badge";
+import api from "@/lib/api";
 import type { Appointment, AppointmentStatus } from "@/lib/types";
 
 interface AppointmentsTableProps {
@@ -23,6 +25,49 @@ interface AppointmentsTableProps {
   serviceMap: Record<string, string>;
   isLoading: boolean;
   onDeleteRequest: (id: string) => void;
+}
+
+/** Inline badge + retry button for appointments whose GCal sync failed. */
+function GcalFailedCell({ appointment }: { appointment: Appointment }) {
+  const [retrying, setRetrying] = useState(false);
+
+  if (appointment.gcal_sync_status !== "failed") return null;
+
+  const handleRetry = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setRetrying(true);
+    try {
+      const result = await api.retryGcalSync(appointment.id);
+      if (result.status === "synced") {
+        toast.success("GCal sincronizado correctamente");
+        window.dispatchEvent(new CustomEvent("atrevete:gcal-synced"));
+      } else {
+        toast.error(`Error GCal: ${result.error ?? "Sin detalles"}`);
+      }
+    } catch {
+      toast.error("Error al reintentar la sincronización con GCal");
+    } finally {
+      setRetrying(false);
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-2" onClick={(e) => e.stopPropagation()}>
+      <Badge variant="destructive" className="text-xs whitespace-nowrap">
+        GCal: error
+      </Badge>
+      <Button
+        variant="outline"
+        size="sm"
+        className="h-7 px-2 text-xs"
+        disabled={retrying}
+        onClick={handleRetry}
+      >
+        <RefreshCw className={`mr-1 h-3 w-3 ${retrying ? "animate-spin" : ""}`} />
+        Reintentar GCal
+      </Button>
+    </div>
+  );
 }
 
 export function AppointmentsTable({
@@ -142,6 +187,11 @@ export function AppointmentsTable({
         cell: ({ row }) => (
           <StatusBadge status={row.getValue("status") as AppointmentStatus} />
         ),
+      },
+      {
+        id: "gcal_status",
+        header: "GCal",
+        cell: ({ row }) => <GcalFailedCell appointment={row.original} />,
       },
       {
         id: "actions",

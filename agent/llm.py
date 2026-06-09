@@ -26,10 +26,19 @@ def _build_llm(model: str, temperature: float = 0.0) -> ChatOpenAI:
 
     When LLM_TRACE_ENABLED=True, injects a traced httpx.AsyncClient.
     When False, http_async_client=None uses LangChain's default client.
+
+    When LLM_PROVIDER_ORDER is non-empty, passes an OpenRouter 'provider' routing
+    hint so the static prompt prefix stays eligible for cross-turn caching.
+    allow_fallbacks=True degrades gracefully to a cold-cache turn on provider outage.
     """
     s = get_settings()
     traced_client = _traced_client_singleton()
-    return ChatOpenAI(
+
+    # Build sticky-provider routing hint for OpenRouter prompt-cache eligibility.
+    order = [p.strip() for p in s.LLM_PROVIDER_ORDER.split(",") if p.strip()]
+    extra_body = {"provider": {"order": order, "allow_fallbacks": True}} if order else None
+
+    kwargs: dict = dict(
         model=model,
         temperature=temperature,
         api_key=s.OPENROUTER_API_KEY,
@@ -40,6 +49,10 @@ def _build_llm(model: str, temperature: float = 0.0) -> ChatOpenAI:
         },
         http_async_client=traced_client,
     )
+    if extra_body is not None:
+        kwargs["extra_body"] = extra_body
+
+    return ChatOpenAI(**kwargs)
 
 
 def get_llm(

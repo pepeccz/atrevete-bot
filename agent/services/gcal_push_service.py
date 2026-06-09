@@ -38,11 +38,16 @@ from zoneinfo import ZoneInfo
 
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
-from sqlalchemy import update
+from sqlalchemy import select, update
 
 from agent.services.gcal_credential_factory import get_google_credentials
+from agent.services.notification_service import (
+    create_gcal_push_failed_notification,
+    resolve_gcal_push_failed_notification,
+)
 from database.connection import get_async_session
 from database.models import Appointment, BlockingEvent, Stylist
+from shared.config import get_settings
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +56,53 @@ MADRID_TZ = ZoneInfo("Europe/Madrid")
 # Retry configuration for GCal API calls
 GCAL_MAX_RETRIES = 3
 GCAL_RETRY_BASE_DELAY = 1.0  # seconds
+
+
+async def _write_gcal_status(
+    appointment_id: UUID,
+    status: str,
+    operation: str,
+    error: str | None,
+) -> None:
+    """Write gcal sync status to the appointment row.
+
+    Opens a fresh short-lived session (never shares caller's session — fire-and-forget
+    callers run detached and the caller's session is already closed).
+
+    On success (status='synced'), resolves any open GCAL_PUSH_FAILED notification.
+    On failure (status='failed'), creates a GCAL_PUSH_FAILED notification if none exists.
+
+    Design: D2 (gcal-sync-resilience).
+    """
+    try:
+        async with get_async_session() as session:
+            # Check prior status for notification logic
+            prior_result = await session.execute(
+                select(Appointment.gcal_sync_status).where(Appointment.id == appointment_id)
+            )
+            prior_status = prior_result.scalar_one_or_none()
+
+            await session.execute(
+                update(Appointment)
+                .where(Appointment.id == appointment_id)
+                .values(
+                    gcal_sync_status=status,
+                    gcal_last_attempt_at=datetime.now(MADRID_TZ),
+                    gcal_last_error=error[:1000] if error else None,
+                    gcal_operation=operation,
+                )
+            )
+
+            if status == "synced" and prior_status == "failed":
+                await resolve_gcal_push_failed_notification(session, appointment_id)
+            elif status == "failed":
+                await create_gcal_push_failed_notification(session, appointment_id)
+
+            await session.commit()
+    except Exception as exc:
+        logger.error(
+            "Failed to write gcal sync status for appointment %s: %s", appointment_id, exc
+        )
 
 
 async def _retry_with_backoff(
@@ -203,6 +255,13 @@ async def push_appointment_to_gcal(
         ... )
         >>> print(event_id)  # "abc123xyz..."
     """
+    if get_settings().TEST_MODE_GCAL_SKIP:
+        logger.info(
+            "gcal_push.skipped op=push_appointment appointment_id=%s reason=TEST_MODE_GCAL_SKIP",
+            appointment_id,
+        )
+        await _write_gcal_status(appointment_id, "not_applicable", "push_appointment", None)
+        return None
     try:
         # Get stylist's calendar ID
         calendar_id = await _get_stylist_calendar_id(stylist_id)
@@ -283,17 +342,20 @@ async def push_appointment_to_gcal(
         if event_id:
             await _update_appointment_gcal_id(appointment_id, event_id)
 
+        await _write_gcal_status(appointment_id, "synced", "book", None)
         return event_id
 
     except HttpError as e:
         logger.error(
             f"Google Calendar API error pushing appointment {appointment_id}: {e}", exc_info=True
         )
+        await _write_gcal_status(appointment_id, "failed", "book", str(e))
         return None
     except Exception as e:
         logger.error(
             f"Error pushing appointment {appointment_id} to Google Calendar: {e}", exc_info=True
         )
+        await _write_gcal_status(appointment_id, "failed", "book", str(e))
         return None
 
 
@@ -345,6 +407,12 @@ async def push_blocking_event_to_gcal(
     Returns:
         Google Calendar event ID if successful, None if failed
     """
+    if get_settings().TEST_MODE_GCAL_SKIP:
+        logger.info(
+            "gcal_push.skipped op=push_blocking_event blocking_event_id=%s reason=TEST_MODE_GCAL_SKIP",
+            blocking_event_id,
+        )
+        return None
     try:
         # Get stylist's calendar ID
         calendar_id = await _get_stylist_calendar_id(stylist_id)
@@ -486,6 +554,13 @@ async def update_appointment_in_gcal(
     Returns:
         True if updated successfully, False otherwise
     """
+    if get_settings().TEST_MODE_GCAL_SKIP:
+        logger.info(
+            "gcal_push.skipped op=update_appointment appointment_id=%s reason=TEST_MODE_GCAL_SKIP",
+            appointment_id,
+        )
+        await _write_gcal_status(appointment_id, "not_applicable", "update_appointment", None)
+        return None
     try:
         # Get stylist's calendar ID
         calendar_id = await _get_stylist_calendar_id(stylist_id)
@@ -556,6 +631,7 @@ async def update_appointment_in_gcal(
         await loop.run_in_executor(None, update_event)
 
         logger.info(f"Updated appointment {appointment_id} in Google Calendar: event_id={event_id}")
+        await _write_gcal_status(appointment_id, "synced", "reschedule", None)
         return True
 
     except HttpError as e:
@@ -564,15 +640,18 @@ async def update_appointment_in_gcal(
                 f"Appointment {appointment_id} not found in Google Calendar "
                 f"(event_id={event_id}). Event may have been deleted externally."
             )
+            await _write_gcal_status(appointment_id, "failed", "reschedule", str(e))
             return False
         logger.error(
             f"Google Calendar API error updating appointment {appointment_id}: {e}", exc_info=True
         )
+        await _write_gcal_status(appointment_id, "failed", "reschedule", str(e))
         return False
     except Exception as e:
         logger.error(
             f"Error updating appointment {appointment_id} in Google Calendar: {e}", exc_info=True
         )
+        await _write_gcal_status(appointment_id, "failed", "reschedule", str(e))
         return False
 
 
@@ -688,6 +767,7 @@ async def update_blocking_event_in_gcal(
 async def delete_gcal_event(
     stylist_id: UUID,
     event_id: str,
+    appointment_id: UUID | None = None,
 ) -> bool:
     """
     Delete an event from Google Calendar.
@@ -695,10 +775,27 @@ async def delete_gcal_event(
     Args:
         stylist_id: UUID of the stylist (to get calendar ID)
         event_id: Google Calendar event ID to delete
+        appointment_id: Optional appointment UUID. When provided, writes gcal_sync_status
+                        to the appointment row after the operation (D2, gcal-sync-resilience).
+                        404 from GCal is treated as success (event already gone = synced).
 
     Returns:
         True if deleted successfully, False otherwise
     """
+    if get_settings().TEST_MODE_GCAL_SKIP:
+        if appointment_id is not None:
+            logger.info(
+                "gcal_push.skipped op=delete_event appointment_id=%s event_id=%s reason=TEST_MODE_GCAL_SKIP",
+                appointment_id,
+                event_id,
+            )
+            await _write_gcal_status(appointment_id, "not_applicable", "delete_event", None)
+        else:
+            logger.info(
+                "gcal_push.skipped op=delete_event event_id=%s reason=TEST_MODE_GCAL_SKIP",
+                event_id,
+            )
+        return None
     try:
         # Get stylist's calendar ID
         calendar_id = await _get_stylist_calendar_id(stylist_id)
@@ -721,16 +818,25 @@ async def delete_gcal_event(
         await loop.run_in_executor(None, delete_event)
 
         logger.info(f"Deleted Google Calendar event: {event_id}")
+        if appointment_id is not None:
+            await _write_gcal_status(appointment_id, "synced", "cancel", None)
         return True
 
     except HttpError as e:
         if e.resp.status == 404:
             logger.warning(f"Event {event_id} not found in Google Calendar (already deleted?)")
-            return True  # Consider it deleted if not found
+            # 404 = event already gone — matches DB intent, treat as synced (D2)
+            if appointment_id is not None:
+                await _write_gcal_status(appointment_id, "synced", "cancel", None)
+            return True
         logger.error(f"Google Calendar API error deleting event {event_id}: {e}")
+        if appointment_id is not None:
+            await _write_gcal_status(appointment_id, "failed", "cancel", str(e))
         return False
     except Exception as e:
         logger.error(f"Error deleting Google Calendar event {event_id}: {e}", exc_info=True)
+        if appointment_id is not None:
+            await _write_gcal_status(appointment_id, "failed", "cancel", str(e))
         return False
 
 
@@ -757,6 +863,12 @@ async def update_gcal_event_status(
     Returns:
         True if updated successfully, False otherwise
     """
+    if get_settings().TEST_MODE_GCAL_SKIP:
+        logger.info(
+            "gcal_push.skipped op=update_gcal_event_status event_id=%s reason=TEST_MODE_GCAL_SKIP",
+            event_id,
+        )
+        return None
     try:
         # Get stylist's calendar ID
         calendar_id = await _get_stylist_calendar_id(stylist_id)

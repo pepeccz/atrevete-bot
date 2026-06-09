@@ -703,15 +703,23 @@ async def get_soonest_slot_any_stylist(
         >>> slot
         {"time": "10:00", "stylist_name": "Ana", ...}
     """
-    from agent.tools.calendar_tools import get_stylists_by_category
     from agent.transactions.validators.transaction_validators import MINIMUM_DAYS
 
     # Spanish day names
     day_names_es = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
 
     try:
-        # Get all stylists in category
-        stylists = await get_stylists_by_category(category)
+        # Get all stylists in category (mirrors pattern in _resolve_active_stylists)
+        if category == ServiceCategory.HAIRDRESSING:
+            cat_filter = Stylist.category.in_([ServiceCategory.HAIRDRESSING, ServiceCategory.BOTH])
+        else:
+            cat_filter = Stylist.category.in_([ServiceCategory.AESTHETICS, ServiceCategory.BOTH])
+
+        async with get_async_session() as session:
+            _result = await session.execute(
+                select(Stylist).where(Stylist.is_active == True, cat_filter)  # noqa: E712
+            )
+            stylists = list(_result.scalars().all())
         if excluded_stylist_id:
             stylists = [s for s in stylists if s.id != excluded_stylist_id]
 

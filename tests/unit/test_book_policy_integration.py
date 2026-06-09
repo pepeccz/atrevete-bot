@@ -32,17 +32,20 @@ FUTURE_ISO = (datetime.now(UTC) + timedelta(days=7)).strftime("%Y-%m-%dT10:00:00
 
 
 def _base_book_kwargs(*, policy_accepted: bool = False):
-    """Kwargs for calling book.func directly (bypasses LangChain wrapper)."""
+    """Kwargs for calling book.coroutine directly (bypasses LangChain wrapper).
+
+    customer_phone is passed via state (InjectedState) — not as an LLM arg.
+    """
     return {
         "service_ids": [str(FAKE_SERVICE_ID)],
         "stylist_id": str(FAKE_STYLIST_ID),
         "start_iso": FUTURE_ISO,
-        "customer_phone": CUSTOMER_PHONE,
         "customer_full_name": "Ana García",
         "confirmed": True,
         "pre_book_validated": True,
         "notes": None,
         "policy_accepted": policy_accepted,
+        "state": {"customer_phone": CUSTOMER_PHONE},
     }
 
 
@@ -125,6 +128,7 @@ async def test_book_rolls_back_on_policy_service_failure():
     with (
         patch("database.connection.get_async_session", return_value=ctx),
         patch("agent.tools.book.get_settings", return_value=settings_mock),
+        patch("agent.tools.book.check_slot_availability", AsyncMock(return_value={"available": True})),
         patch(
             "agent.tools.book.accept_policy",
             AsyncMock(side_effect=PolicyConsentError("DB write failed")),
@@ -170,6 +174,7 @@ async def test_book_calls_policy_service_when_accepted():
     with (
         patch("database.connection.get_async_session", return_value=ctx),
         patch("agent.tools.book.get_settings", return_value=settings_mock),
+        patch("agent.tools.book.check_slot_availability", AsyncMock(return_value={"available": True})),
         patch("agent.tools.book.accept_policy", accept_policy_mock),
         patch("agent.tools.book.read_customer_memories", AsyncMock(return_value=None)),
         patch("agent.tools.book.write_customer_memories", AsyncMock()),
@@ -217,6 +222,7 @@ async def test_book_does_not_call_policy_service_when_already_accepted():
     with (
         patch("database.connection.get_async_session", return_value=ctx),
         patch("agent.tools.book.get_settings", return_value=settings_mock),
+        patch("agent.tools.book.check_slot_availability", AsyncMock(return_value={"available": True})),
         patch("agent.tools.book.accept_policy", accept_policy_mock),
         patch("agent.tools.book.read_customer_memories", AsyncMock(return_value=None)),
         patch("agent.tools.book.write_customer_memories", AsyncMock()),
@@ -249,6 +255,7 @@ async def test_book_does_not_call_policy_service_when_not_accepted():
     with (
         patch("database.connection.get_async_session", return_value=ctx),
         patch("agent.tools.book.get_settings", return_value=settings_mock),
+        patch("agent.tools.book.check_slot_availability", AsyncMock(return_value={"available": True})),
         patch("agent.tools.book.accept_policy", accept_policy_mock),
         patch("agent.tools.book.read_customer_memories", AsyncMock(return_value=None)),
         patch("agent.tools.book.write_customer_memories", AsyncMock()),
@@ -259,3 +266,91 @@ async def test_book_does_not_call_policy_service_when_not_accepted():
 
     # policy_accepted=False → accept_policy must NOT be called
     accept_policy_mock.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# T12 — B4: Policy gate blocks book when policy not accepted
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_book_rejects_when_policy_not_accepted():
+    """B4: book rejects when customer has stale policy version and policy_accepted=False.
+
+    Given customer.policy_version="0.9" (stale) and policy_accepted=False,
+    book() must return rejected + next_step=policy_acceptance_required
+    without creating an appointment.
+    """
+    from agent.tools.book import book
+
+    # Customer with stale policy (version mismatch)
+    customer = _make_customer_mock(
+        policy_accepted_at=datetime.now(UTC) - timedelta(days=30),
+        policy_version="0.9",  # stale — settings is "1.0"
+    )
+    ctx, session = _make_session_ctx(customer=customer)
+
+    settings_mock = MagicMock()
+    settings_mock.POLICY_VERSION = "1.0"
+    settings_mock.POLICY_URL = "https://atrevetepeluqueria.com/politica-privacidad/"
+
+    with (
+        patch("database.connection.get_async_session", return_value=ctx),
+        patch("agent.tools.book.get_settings", return_value=settings_mock),
+        patch("agent.tools.book.check_slot_availability", AsyncMock(return_value={"available": True})),
+        patch("agent.tools.book.read_customer_memories", AsyncMock(return_value=None)),
+        patch("agent.tools.book.write_customer_memories", AsyncMock()),
+        patch("agent.services.gcal_push_service.fire_and_forget_push_appointment", AsyncMock()),
+        patch("agent.tools.book.asyncio.create_task"),
+    ):
+        # policy_accepted=False — customer hasn't consented in this call
+        result_json = await book.coroutine(**_base_book_kwargs(policy_accepted=False))
+
+    result = json.loads(result_json)
+    assert result["status"] == "rejected", (
+        f"Expected rejected when policy not accepted, got: {result}"
+    )
+    assert result.get("next_step") == "policy_acceptance_required", (
+        f"Expected next_step=policy_acceptance_required, got: {result}"
+    )
+    # Appointment must NOT have been inserted
+    session.add.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_book_passes_when_policy_accepted():
+    """B4: book proceeds when customer has current policy version.
+
+    Given customer.policy_version="1.0" (current), policy_accepted=True,
+    booking proceeds and appointment is created.
+    """
+    from agent.tools.book import book
+
+    customer = _make_customer_mock(
+        policy_accepted_at=datetime.now(UTC) - timedelta(days=1),
+        policy_version="1.0",  # current
+    )
+    ctx, session = _make_session_ctx(customer=customer)
+
+    settings_mock = MagicMock()
+    settings_mock.POLICY_VERSION = "1.0"
+    settings_mock.POLICY_URL = "https://atrevetepeluqueria.com/politica-privacidad/"
+
+    with (
+        patch("database.connection.get_async_session", return_value=ctx),
+        patch("agent.tools.book.get_settings", return_value=settings_mock),
+        patch("agent.tools.book.check_slot_availability", AsyncMock(return_value={"available": True})),
+        patch("agent.tools.book.accept_policy", AsyncMock(return_value=MagicMock())),
+        patch("agent.tools.book.read_customer_memories", AsyncMock(return_value=None)),
+        patch("agent.tools.book.write_customer_memories", AsyncMock()),
+        patch("agent.services.gcal_push_service.fire_and_forget_push_appointment", AsyncMock()),
+        patch("agent.tools.book._invalidate_cached_customer", AsyncMock()),
+        patch("agent.tools.book.asyncio.create_task"),
+    ):
+        result_json = await book.coroutine(**_base_book_kwargs(policy_accepted=True))
+
+    result = json.loads(result_json)
+    # Should NOT be rejected with policy_acceptance_required
+    assert result.get("next_step") != "policy_acceptance_required", (
+        f"Policy gate incorrectly fired for current version: {result}"
+    )

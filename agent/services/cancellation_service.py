@@ -439,20 +439,24 @@ async def select_appointment_for_cancellation(
 
 async def execute_cancellation(
     appointment_id: UUID,
+    customer_phone: str = "",
     reason: str | None = None,
     conversation_id: str | None = None,
 ) -> CancellationResult:
     """
     Execute appointment cancellation.
 
-    1. Update DB status to CANCELLED
-    2. Set cancelled_at and cancellation_reason
-    3. Delete Google Calendar event (fire-and-forget)
-    4. Create admin notification
-    5. Return result for response generation
+    1. Verify ownership: appointment must belong to customer_phone.
+    2. Update DB status to CANCELLED
+    3. Set cancelled_at and cancellation_reason
+    4. Delete Google Calendar event (fire-and-forget)
+    5. Create admin notification
+    6. Return result for response generation
 
     Args:
         appointment_id: UUID of appointment to cancel
+        customer_phone: Phone of the requesting customer (E.164). Used for ownership check.
+            Pass empty string only from admin/internal callers that bypass ownership.
         reason: Optional cancellation reason from customer
         conversation_id: Optional conversation ID for logging
 
@@ -475,6 +479,22 @@ async def execute_cancellation(
             appointment = result.scalars().first()
 
             if not appointment:
+                return CancellationResult(
+                    success=False,
+                    error_message="No se encontró la cita. Por favor, intenta de nuevo.",
+                )
+
+            # Ownership check (mirrors reschedule_service.py:196-205)
+            # Skip when customer_phone is empty (admin/internal callers).
+            if customer_phone and (
+                not appointment.customer
+                or appointment.customer.phone != customer_phone
+            ):
+                logger.warning(
+                    "Cancellation ownership mismatch: appointment=%s requester=%s",
+                    appointment_id,
+                    customer_phone,
+                )
                 return CancellationResult(
                     success=False,
                     error_message="No se encontró la cita. Por favor, intenta de nuevo.",

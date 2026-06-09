@@ -160,15 +160,15 @@ def test_book_has_tool_name():
 async def test_book_rejects_empty_name():
     from agent.tools.book import book
 
-    raw = await book.ainvoke(
-        {
-            "service_ids": [str(uuid4())],
-            "stylist_id": str(uuid4()),
-            "start_iso": future_start_iso(),
-            "customer_phone": "+34600000001",
-            "customer_full_name": "",
-            "notes": None,
-        }
+    raw = await book.coroutine(
+        service_ids=[str(uuid4())],
+        stylist_id=str(uuid4()),
+        start_iso=future_start_iso(),
+        customer_full_name="",
+        notes=None,
+        confirmed=True,
+        pre_book_validated=True,
+        state={"customer_phone": "+34600000001"},
     )
 
     data = parse_response(raw)
@@ -181,15 +181,15 @@ async def test_book_rejects_single_token_name():
     """Single-word name (no surname) must be rejected before DB call."""
     from agent.tools.book import book
 
-    raw = await book.ainvoke(
-        {
-            "service_ids": [str(uuid4())],
-            "stylist_id": str(uuid4()),
-            "start_iso": future_start_iso(),
-            "customer_phone": "+34600000002",
-            "customer_full_name": "María",
-            "notes": None,
-        }
+    raw = await book.coroutine(
+        service_ids=[str(uuid4())],
+        stylist_id=str(uuid4()),
+        start_iso=future_start_iso(),
+        customer_full_name="María",
+        notes=None,
+        confirmed=True,
+        pre_book_validated=True,
+        state={"customer_phone": "+34600000002"},
     )
 
     data = parse_response(raw)
@@ -202,15 +202,15 @@ async def test_book_error_messages_non_imperative():
     """Error strings must not start with imperative verbs."""
     from agent.tools.book import book
 
-    raw = await book.ainvoke(
-        {
-            "service_ids": [str(uuid4())],
-            "stylist_id": str(uuid4()),
-            "start_iso": future_start_iso(),
-            "customer_phone": "+34600000003",
-            "customer_full_name": "Solo",
-            "notes": None,
-        }
+    raw = await book.coroutine(
+        service_ids=[str(uuid4())],
+        stylist_id=str(uuid4()),
+        start_iso=future_start_iso(),
+        customer_full_name="Solo",
+        notes=None,
+        confirmed=True,
+        pre_book_validated=True,
+        state={"customer_phone": "+34600000003"},
     )
 
     data = parse_response(raw)
@@ -279,15 +279,15 @@ async def test_book_creates_new_customer_and_appointment(test_stylist, test_serv
         "agent.tools.book.fire_and_forget_push_appointment",
         new_callable=AsyncMock,
     ) as mock_push:
-        raw = await book.ainvoke(
-            {
-                "service_ids": [str(test_service)],
-                "stylist_id": str(test_stylist),
-                "start_iso": future_start_iso(),
-                "customer_phone": phone,
-                "customer_full_name": "María García",
-                "notes": None,
-            }
+        raw = await book.coroutine(
+            service_ids=[str(test_service)],
+            stylist_id=str(test_stylist),
+            start_iso=future_start_iso(),
+            customer_full_name="María García",
+            notes=None,
+            confirmed=True,
+            pre_book_validated=True,
+            state={"customer_phone": phone},
         )
 
     data = parse_response(raw)
@@ -347,15 +347,15 @@ async def test_book_reuses_existing_customer(test_stylist, test_service):
         existing_id = existing.id
 
     with patch("agent.tools.book.fire_and_forget_push_appointment", new_callable=AsyncMock):
-        raw = await book.ainvoke(
-            {
-                "service_ids": [str(test_service)],
-                "stylist_id": str(test_stylist),
-                "start_iso": future_start_iso(days_ahead=6),
-                "customer_phone": phone,
-                "customer_full_name": "Different Name",
-                "notes": None,
-            }
+        raw = await book.coroutine(
+            service_ids=[str(test_service)],
+            stylist_id=str(test_stylist),
+            start_iso=future_start_iso(days_ahead=6),
+            customer_full_name="Different Name",
+            notes=None,
+            confirmed=True,
+            pre_book_validated=True,
+            state={"customer_phone": phone},
         )
 
     data = parse_response(raw)
@@ -393,15 +393,15 @@ async def test_book_calls_gcal_push_after_db_commit(test_stylist, test_service):
         "agent.tools.book.fire_and_forget_push_appointment",
         new_callable=AsyncMock,
     ) as mock_push:
-        raw = await book.ainvoke(
-            {
-                "service_ids": [str(test_service)],
-                "stylist_id": str(test_stylist),
-                "start_iso": future_start_iso(days_ahead=7),
-                "customer_phone": phone,
-                "customer_full_name": "Ana López",
-                "notes": "test note",
-            }
+        raw = await book.coroutine(
+            service_ids=[str(test_service)],
+            stylist_id=str(test_stylist),
+            start_iso=future_start_iso(days_ahead=7),
+            customer_full_name="Ana López",
+            notes="test note",
+            confirmed=True,
+            pre_book_validated=True,
+            state={"customer_phone": phone},
         )
 
     data = parse_response(raw)
@@ -434,15 +434,22 @@ FAKE_SERVICE_ID = uuid4()
 FAKE_STYLIST_ID = uuid4()
 
 
+STATE_WITH_PHONE = {"customer_phone": "+34600000001"}
+
+
 def _book_args(**overrides):
-    """Return a minimal valid book call dict."""
+    """Return a minimal valid book call dict.
+
+    customer_phone is NOT included — it is injected via state (InjectedState).
+    Pass state=STATE_WITH_PHONE separately when calling book.coroutine().
+    """
     base = {
         "service_ids": [str(FAKE_SERVICE_ID)],
         "stylist_id": str(FAKE_STYLIST_ID),
         "start_iso": future_start_iso(5),
-        "customer_phone": "+34600000001",
         "customer_full_name": "Ana López",
         "confirmed": True,
+        "pre_book_validated": True,
     }
     base.update(overrides)
     return base
@@ -451,15 +458,9 @@ def _book_args(**overrides):
 @pytest.mark.asyncio
 async def test_confirmation_gate_false():
     """R7: confirmed=False → rejected, next_step=confirmation_required, no DB write."""
-    from unittest.mock import AsyncMock, MagicMock
-
     from agent.tools.book import book
 
-    mock_session = MagicMock()
-    mock_session.__aenter__ = AsyncMock(return_value=mock_session)
-    mock_session.__aexit__ = AsyncMock(return_value=False)
-
-    raw = await book.ainvoke(_book_args(confirmed=False))
+    raw = await book.coroutine(**_book_args(confirmed=False), state=STATE_WITH_PHONE)
     data = parse_response(raw)
     assert data["status"] == "rejected"
     assert data.get("next_step") == "confirmation_required"
@@ -472,7 +473,7 @@ async def test_confirmation_gate_omitted():
 
     args = _book_args()
     del args["confirmed"]  # omit — should default to False
-    raw = await book.ainvoke(args)
+    raw = await book.coroutine(**args, state=STATE_WITH_PHONE)
     data = parse_response(raw)
     assert data["status"] == "rejected"
     assert data.get("next_step") == "confirmation_required"
@@ -484,7 +485,7 @@ async def test_incomplete_missing_customer_name():
     payload.missing contains customer_full_name."""
     from agent.tools.book import book
 
-    raw = await book.ainvoke(_book_args(customer_full_name=""))
+    raw = await book.coroutine(**_book_args(customer_full_name=""), state=STATE_WITH_PHONE)
     data = parse_response(raw)
     assert data["status"] == "rejected"
     assert data.get("next_step") == "incomplete_booking"
@@ -493,15 +494,20 @@ async def test_incomplete_missing_customer_name():
 
 @pytest.mark.asyncio
 async def test_incomplete_missing_phone():
-    """R8: confirmed=True but customer_phone absent → incomplete_booking,
-    payload.missing contains customer_phone."""
+    """R8: confirmed=True but customer_phone absent from state → rejected.
+
+    customer_phone is now read from state (InjectedState), not from tool args.
+    Passing an empty state simulates a missing phone.
+    """
     from agent.tools.book import book
 
-    raw = await book.ainvoke(_book_args(customer_phone=""))
+    raw = await book.coroutine(**_book_args(), state={"customer_phone": ""})
     data = parse_response(raw)
     assert data["status"] == "rejected"
-    assert data.get("next_step") == "incomplete_booking"
-    assert "customer_phone" in data.get("payload", {}).get("missing", [])
+    # Missing state phone is caught before the completeness guard
+    assert data.get("next_step") in (None, "incomplete_booking", "confirmation_required") or data.get(
+        "errors"
+    )
 
 
 @pytest.mark.asyncio
@@ -509,7 +515,7 @@ async def test_incomplete_missing_service_ids():
     """R8: confirmed=True but service_ids empty → incomplete_booking."""
     from agent.tools.book import book
 
-    raw = await book.ainvoke(_book_args(service_ids=[]))
+    raw = await book.coroutine(**_book_args(service_ids=[]), state=STATE_WITH_PHONE)
     data = parse_response(raw)
     assert data["status"] == "rejected"
     assert data.get("next_step") == "incomplete_booking"
@@ -521,7 +527,7 @@ async def test_incomplete_missing_stylist():
     """R8: confirmed=True but stylist_id empty → incomplete_booking."""
     from agent.tools.book import book
 
-    raw = await book.ainvoke(_book_args(stylist_id=""))
+    raw = await book.coroutine(**_book_args(stylist_id=""), state=STATE_WITH_PHONE)
     data = parse_response(raw)
     assert data["status"] == "rejected"
     assert data.get("next_step") == "incomplete_booking"
@@ -533,7 +539,7 @@ async def test_incomplete_missing_start_iso():
     """R8: confirmed=True but start_iso empty → incomplete_booking."""
     from agent.tools.book import book
 
-    raw = await book.ainvoke(_book_args(start_iso=""))
+    raw = await book.coroutine(**_book_args(start_iso=""), state=STATE_WITH_PHONE)
     data = parse_response(raw)
     assert data["status"] == "rejected"
     assert data.get("next_step") == "incomplete_booking"

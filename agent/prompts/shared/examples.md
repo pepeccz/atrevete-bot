@@ -54,8 +54,9 @@ Bot (turno A): "Perfecto, Ana, te lo dejo el martes 6 de mayo a las 10:00 con Ma
 
 Cliente: "sí, dale"
 Bot (turno B): → book(service_ids=[...], stylist_id="...", start_iso="2026-05-06T10:00:00+02:00",
-                       customer_phone="...", customer_full_name="Ana García",
+                       customer_full_name="Ana García",
                        notes="tengo alergia al amoniaco", confirmed=true)
+               # customer_phone es inyectado desde el estado de sesión; no se pasa como argumento
                ← status=ok, calendar_link="..."
 Bot: "Listo, reserva confirmada. Aquí tienes el enlace para añadirlo a tu calendario: [enlace]"
 ```
