@@ -36,6 +36,14 @@ class AgentState(TypedDict):
     last_summarized_msg_count: NotRequired[int | None]
     # customer_memories — raw dict from read_customer_memories, populated by middleware
     customer_memories: NotRequired[dict | None]
+    # J3 — recently_offered_slots: slots materialized from check_availability /
+    # get_next_available_options ToolMessages by AvailabilityContextMiddleware.
+    # NOT a slot field — no _slot_ prefix, not in SLOT_REGISTRY.
+    # Each dict: {"start_iso": str, "stylist_id": str | None,
+    #             "expires_at": str (ISO), "turn_index": int}
+    # TTL: expires_at > now AND turn_index >= current_turn - 2 (hybrid D1).
+    recently_offered_slots: NotRequired[list[dict]]
+
     # T7 — 7 slot fields, NotRequired[str] (absence encodes "not set")
     _slot_today: NotRequired[str]
     _slot_customer: NotRequired[str]
@@ -53,6 +61,7 @@ class AgentState(TypedDict):
 # Raises RuntimeError (survives python -O) if SLOT_REGISTRY and the _slot_*
 # fields declared in AgentState fall out of sync.
 # ---------------------------------------------------------------------------
+
 
 def _validate_registry() -> None:
     """Compare SLOT_REGISTRY against AgentState._slot_* declarations.

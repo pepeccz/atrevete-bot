@@ -17,7 +17,7 @@ import hashlib
 import json
 import logging
 from collections.abc import Awaitable, Callable
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import Any, ClassVar
 from uuid import UUID
 
@@ -41,8 +41,19 @@ _WEEKDAYS_ES_LONG = {
 }
 
 _MONTH_NAMES_ES = [
-    "", "enero", "febrero", "marzo", "abril", "mayo", "junio",
-    "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+    "",
+    "enero",
+    "febrero",
+    "marzo",
+    "abril",
+    "mayo",
+    "junio",
+    "julio",
+    "agosto",
+    "septiembre",
+    "octubre",
+    "noviembre",
+    "diciembre",
 ]
 
 
@@ -125,6 +136,123 @@ def _count_day_lines(window: dict) -> int:
     return sum(len(day_entries) for day_entries in window.values())
 
 
+# ---------------------------------------------------------------------------
+# J3: recently_offered_slots producer helpers
+# ---------------------------------------------------------------------------
+
+_OFFERED_SLOT_TTL_MINUTES = 15
+_OFFERED_SLOT_MAX_TURNS = 2  # purge entries older than current_turn - this
+
+
+def _extract_offered_slots_from_messages(messages: list) -> list[dict]:
+    """Scan message history for check_availability / get_next_available_options ToolMessages.
+
+    Returns a list of slot dicts: {start_iso, stylist_id} for each confirmed slot.
+    Only considers messages with name in ('check_availability', 'get_next_available_options').
+    """
+    slots: list[dict] = []
+    for msg in messages:
+        name = getattr(msg, "name", None)
+        if name not in ("check_availability", "get_next_available_options"):
+            continue
+        try:
+            data = json.loads(msg.content) if isinstance(msg.content, str) else msg.content
+        except (json.JSONDecodeError, TypeError):
+            continue
+
+        # check_availability: {status: ok, payload: {slots: [...]}}
+        if name == "check_availability":
+            if data.get("status") != "ok":
+                continue
+            raw_slots = data.get("payload", {}).get("slots", [])
+        else:
+            # get_next_available_options: {slots: [...]}
+            raw_slots = data.get("slots", [])
+
+        for s in raw_slots:
+            start_iso = s.get("start_iso") or s.get("start") or s.get("datetime")
+            if not start_iso:
+                continue
+            stylist_id = s.get("stylist_id") or s.get("stylist") or None
+            slots.append({"start_iso": start_iso, "stylist_id": stylist_id})
+
+    return slots
+
+
+def _materialize_offered_slots(
+    new_raw_slots: list[dict],
+    existing_slots: list[dict],
+    current_turn_index: int,
+    now: datetime,
+) -> list[dict]:
+    """Merge new raw slots with existing, applying TTL + turn-index purge.
+
+    Purge rules (hybrid D1):
+      - Wall-clock TTL: expires_at <= now → purge
+      - Turn staleness: turn_index < current_turn_index - _OFFERED_SLOT_MAX_TURNS → purge
+
+    New slots get:
+      - expires_at = now + 15 min
+      - turn_index = current_turn_index
+    """
+    expires_at = (now + timedelta(minutes=_OFFERED_SLOT_TTL_MINUTES)).isoformat()
+    min_turn = current_turn_index - _OFFERED_SLOT_MAX_TURNS
+
+    # Purge stale existing entries
+    kept_existing: list[dict] = []
+    for entry in existing_slots:
+        # Wall-clock check
+        expires_str = entry.get("expires_at", "")
+        if expires_str:
+            try:
+                exp_dt = datetime.fromisoformat(expires_str.replace("Z", "+00:00")).astimezone(UTC)
+                if exp_dt <= now:
+                    continue
+            except ValueError:
+                continue
+        # Turn-index check
+        if entry.get("turn_index", 0) < min_turn:
+            continue
+        kept_existing.append(entry)
+
+    # Build new entries (de-duplicate by start_iso + stylist_id)
+    existing_keys = {(e["start_iso"], e.get("stylist_id")) for e in kept_existing}
+
+    for raw in new_raw_slots:
+        key = (raw["start_iso"], raw.get("stylist_id"))
+        if key not in existing_keys:
+            kept_existing.append(
+                {
+                    "start_iso": raw["start_iso"],
+                    "stylist_id": raw.get("stylist_id"),
+                    "expires_at": expires_at,
+                    "turn_index": current_turn_index,
+                }
+            )
+            existing_keys.add(key)
+
+    return kept_existing
+
+
+def _update_offered_slots_in_state(state: dict, messages: list) -> dict:
+    """Materialize recently_offered_slots from ToolMessages and merge with existing state slots.
+
+    Returns a new state dict if any update is needed, otherwise returns the same dict.
+    This is a pure-data transformation: no I/O.
+    """
+    new_raw = _extract_offered_slots_from_messages(messages)
+    existing = state.get("recently_offered_slots") or []
+    current_turn_index = len(messages)
+    now = datetime.now(UTC)
+
+    merged = _materialize_offered_slots(new_raw, existing, current_turn_index, now)
+
+    # Only update state if something actually changed
+    if merged != existing:
+        return {**state, "recently_offered_slots": merged}
+    return state
+
+
 class AvailabilityContextMiddleware(AgentMiddleware):
     """Inject grounded <availability> XML block when booking context is active.
 
@@ -144,7 +272,10 @@ class AvailabilityContextMiddleware(AgentMiddleware):
 
         service_ids = _extract_service_ids_from_messages(messages)
         if not service_ids:
-            # Early-turn lean: no service resolved yet — skip injection
+            # Early-turn lean: no service resolved yet — still update offered slots
+            updated_state = _update_offered_slots_in_state(state, messages)
+            if updated_state is not state:
+                return await handler(request.override(state=updated_state))
             return await handler(request)
 
         audience: str | None = None  # audience not tracked in state post-rework
@@ -172,9 +303,7 @@ class AvailabilityContextMiddleware(AgentMiddleware):
                 cached = await redis.get(cache_key)
                 if cached:
                     slot_xml = cached if isinstance(cached, str) else cached.decode()
-                    logger.debug(
-                        "AvailabilityContextMiddleware: cache hit for key %s", cache_key
-                    )
+                    logger.debug("AvailabilityContextMiddleware: cache hit for key %s", cache_key)
             except Exception as exc:
                 logger.debug("AvailabilityContextMiddleware: cache get failed: %s", exc)
 
@@ -187,7 +316,9 @@ class AvailabilityContextMiddleware(AgentMiddleware):
                     "AvailabilityContextMiddleware: invalid service_ids, skipping: %s",
                     service_ids,
                 )
-                return await handler(request)
+                updated = _update_offered_slots_in_state(state, messages)
+                req = request.override(state=updated) if updated is not state else request
+                return await handler(req)
 
             try:
                 window = await get_availability_window(
@@ -200,7 +331,9 @@ class AvailabilityContextMiddleware(AgentMiddleware):
                 logger.warning(
                     "AvailabilityContextMiddleware: get_availability_window failed: %s", exc
                 )
-                return await handler(request)
+                updated = _update_offered_slots_in_state(state, messages)
+                req = request.override(state=updated) if updated is not state else request
+                return await handler(req)
 
             # Token-budget guard (ADR-3): too many day-lines → reduce window
             if _count_day_lines(window) > _MAX_DAY_LINES:
@@ -215,7 +348,9 @@ class AvailabilityContextMiddleware(AgentMiddleware):
                     pass  # Use original window if reduced call fails
 
             if not window:
-                return await handler(request)
+                updated = _update_offered_slots_in_state(state, messages)
+                req = request.override(state=updated) if updated is not state else request
+                return await handler(req)
 
             slot_xml = _format_availability_xml(window)
 
@@ -224,10 +359,11 @@ class AvailabilityContextMiddleware(AgentMiddleware):
                 try:
                     await redis.set(cache_key, slot_xml, ex=_CACHE_TTL)
                 except Exception as exc:
-                    logger.debug(
-                        "AvailabilityContextMiddleware: cache set failed: %s", exc
-                    )
+                    logger.debug("AvailabilityContextMiddleware: cache set failed: %s", exc)
 
         new_state = {**state, "_slot_availability": slot_xml}
         logger.debug("AvailabilityContextMiddleware: injected _slot_availability")
+
+        # J3: also materialize recently_offered_slots from ToolMessages
+        new_state = _update_offered_slots_in_state(new_state, messages)
         return await handler(request.override(state=new_state))
