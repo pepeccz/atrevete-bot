@@ -26,7 +26,6 @@ from agent.services.notification_service import (
 )
 from database.models import Notification, NotificationType
 
-
 # ─── Helpers ───────────────────────────────────────────────────────────────────
 
 
@@ -198,8 +197,9 @@ async def test_push_appointment_to_gcal_failure_writes_failed():
 @pytest.mark.asyncio
 async def test_delete_gcal_event_404_writes_synced_no_notification():
     """D2: 404 on cancel delete_gcal_event writes synced, returns True, no notification."""
-    from agent.services import gcal_push_service as svc
     from googleapiclient.errors import HttpError
+
+    from agent.services import gcal_push_service as svc
 
     stylist_id = uuid4()
 

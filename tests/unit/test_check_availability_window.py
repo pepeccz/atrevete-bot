@@ -6,7 +6,7 @@ Covers AS15 (preferred_window in schema), AS16 (afternoon filter), E3 (glossary 
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 

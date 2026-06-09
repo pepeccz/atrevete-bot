@@ -19,7 +19,7 @@ async def test_manage_ignores_llm_supplied_customer_phone():
     When state['customer_phone'] = STATE_PHONE and action='list',
     the tool must forward STATE_PHONE to _list_appointments.
     """
-    from unittest.mock import AsyncMock, patch
+    from unittest.mock import patch
 
     captured = {}
 

@@ -6,11 +6,11 @@ Covers:
 - delete_conversation — orphan Notification cleanup (inbox-polish Fix #6).
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch, call
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
-import pytest
 import fakeredis.aioredis as fakeredis_async
+import pytest
 
 from shared.redis_conversation_cleanup import cleanup_conversation_redis_keys
 
@@ -170,8 +170,8 @@ async def test_delete_conversation_does_not_remove_unrelated_notifications():
     We verify this by inspecting the compiled SQL of the statement passed to
     session.execute(), which must reference the specific entity_type value.
     """
+
     from api.services.conversation_delete_service import delete_conversation
-    from sqlalchemy import Delete
 
     conv_id = "v2:test-scoped-delete"
     record = _make_fake_record(conv_id)

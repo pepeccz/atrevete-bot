@@ -18,10 +18,10 @@ Refs: Spec §1, Design §1.1-1.3, Task T03/T04
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
-from sqlalchemy import CheckConstraint, Index, inspect
+from sqlalchemy import CheckConstraint, Index
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 
 
@@ -45,8 +45,9 @@ class TestCustomerConsentFields:
 
     def test_id_field_exists_uuid_pk(self):
         """id must be a UUID primary key with auto-default."""
-        from database.models import CustomerConsent
         from sqlalchemy import inspect as sa_inspect
+
+        from database.models import CustomerConsent
 
         mapper = sa_inspect(CustomerConsent)
         col = mapper.columns["id"]
@@ -55,8 +56,9 @@ class TestCustomerConsentFields:
 
     def test_customer_id_field_exists_not_nullable(self):
         """customer_id must exist and must NOT be nullable."""
-        from database.models import CustomerConsent
         from sqlalchemy import inspect as sa_inspect
+
+        from database.models import CustomerConsent
 
         mapper = sa_inspect(CustomerConsent)
         col = mapper.columns["customer_id"]
@@ -64,8 +66,9 @@ class TestCustomerConsentFields:
 
     def test_policy_version_field_not_nullable(self):
         """policy_version must NOT be nullable."""
-        from database.models import CustomerConsent
         from sqlalchemy import inspect as sa_inspect
+
+        from database.models import CustomerConsent
 
         mapper = sa_inspect(CustomerConsent)
         col = mapper.columns["policy_version"]
@@ -73,8 +76,9 @@ class TestCustomerConsentFields:
 
     def test_accepted_at_field_not_nullable(self):
         """accepted_at must NOT be nullable."""
-        from database.models import CustomerConsent
         from sqlalchemy import inspect as sa_inspect
+
+        from database.models import CustomerConsent
 
         mapper = sa_inspect(CustomerConsent)
         col = mapper.columns["accepted_at"]
@@ -82,8 +86,9 @@ class TestCustomerConsentFields:
 
     def test_accepted_via_field_not_nullable(self):
         """accepted_via must NOT be nullable."""
-        from database.models import CustomerConsent
         from sqlalchemy import inspect as sa_inspect
+
+        from database.models import CustomerConsent
 
         mapper = sa_inspect(CustomerConsent)
         col = mapper.columns["accepted_via"]
@@ -91,8 +96,9 @@ class TestCustomerConsentFields:
 
     def test_source_message_id_is_nullable(self):
         """source_message_id must be nullable (optional field)."""
-        from database.models import CustomerConsent
         from sqlalchemy import inspect as sa_inspect
+
+        from database.models import CustomerConsent
 
         mapper = sa_inspect(CustomerConsent)
         col = mapper.columns["source_message_id"]
@@ -100,8 +106,9 @@ class TestCustomerConsentFields:
 
     def test_created_at_field_exists(self):
         """created_at must exist with server_default."""
-        from database.models import CustomerConsent
         from sqlalchemy import inspect as sa_inspect
+
+        from database.models import CustomerConsent
 
         mapper = sa_inspect(CustomerConsent)
         col = mapper.columns["created_at"]
@@ -114,8 +121,9 @@ class TestCustomerConsentForeignKey:
 
     def test_customer_id_fk_references_customers(self):
         """customer_id FK must reference customers.id."""
-        from database.models import CustomerConsent
         from sqlalchemy import inspect as sa_inspect
+
+        from database.models import CustomerConsent
 
         mapper = sa_inspect(CustomerConsent)
         col = mapper.columns["customer_id"]
@@ -126,8 +134,9 @@ class TestCustomerConsentForeignKey:
 
     def test_customer_id_fk_is_on_delete_restrict(self):
         """customer_id FK must have ondelete='RESTRICT'."""
-        from database.models import CustomerConsent
         from sqlalchemy import inspect as sa_inspect
+
+        from database.models import CustomerConsent
 
         mapper = sa_inspect(CustomerConsent)
         col = mapper.columns["customer_id"]
@@ -249,8 +258,9 @@ class TestCustomerModelPolicyColumns:
 
     def test_customer_has_policy_accepted_at(self):
         """Customer model must have policy_accepted_at column."""
-        from database.models import Customer
         from sqlalchemy import inspect as sa_inspect
+
+        from database.models import Customer
 
         mapper = sa_inspect(Customer)
         assert "policy_accepted_at" in mapper.columns, (
@@ -259,8 +269,9 @@ class TestCustomerModelPolicyColumns:
 
     def test_customer_policy_accepted_at_nullable(self):
         """Customer.policy_accepted_at must be nullable."""
-        from database.models import Customer
         from sqlalchemy import inspect as sa_inspect
+
+        from database.models import Customer
 
         mapper = sa_inspect(Customer)
         col = mapper.columns["policy_accepted_at"]
@@ -268,8 +279,9 @@ class TestCustomerModelPolicyColumns:
 
     def test_customer_has_policy_version(self):
         """Customer model must have policy_version column."""
-        from database.models import Customer
         from sqlalchemy import inspect as sa_inspect
+
+        from database.models import Customer
 
         mapper = sa_inspect(Customer)
         assert "policy_version" in mapper.columns, (
@@ -278,8 +290,9 @@ class TestCustomerModelPolicyColumns:
 
     def test_customer_policy_version_nullable(self):
         """Customer.policy_version must be nullable (backward compat — no backfill)."""
-        from database.models import Customer
         from sqlalchemy import inspect as sa_inspect
+
+        from database.models import Customer
 
         mapper = sa_inspect(Customer)
         col = mapper.columns["policy_version"]

@@ -13,7 +13,7 @@ not UTC date. When UTC is 23:30 (Madrid is 01:30 next day), today must resolve t
 from __future__ import annotations
 
 import json
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 from zoneinfo import ZoneInfo

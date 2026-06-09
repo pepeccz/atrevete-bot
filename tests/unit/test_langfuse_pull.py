@@ -11,12 +11,9 @@ Covers:
 from __future__ import annotations
 
 import json
-import time
 import uuid
 from pathlib import Path
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 
 def _make_mock_trace(trace_id: str | None = None) -> MagicMock:

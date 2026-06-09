@@ -409,7 +409,7 @@ async def test_validate_booking_date_respects_settings_min_days():
         )
 
     assert result.ok is False, (
-        f"Expected advance_policy_violated with min_days=5 for +4 days, got ok=True"
+        "Expected advance_policy_violated with min_days=5 for +4 days, got ok=True"
     )
     assert result.error_code == "advance_policy_violated", (
         f"Expected advance_policy_violated, got: {result.error_code}"
@@ -419,7 +419,7 @@ async def test_validate_booking_date_respects_settings_min_days():
 @pytest.mark.asyncio
 async def test_validate_booking_date_default_min_days():
     """B6: when min_days is not passed, the module constant fallback still works."""
-    from agent.tools._booking_validators import validate_booking_date, MIN_BOOKING_DAYS
+    from agent.tools._booking_validators import MIN_BOOKING_DAYS, validate_booking_date
 
     ref = date(2026, 6, 1)
     # Date that is past the module constant (MIN_BOOKING_DAYS days + 1 ahead = safe)

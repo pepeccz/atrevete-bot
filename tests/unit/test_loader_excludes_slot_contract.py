@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
 # Sentinel phrase unique to slot_contract.md (first meaningful line)
 _SLOT_CONTRACT_SENTINEL = "Contexto dinámico (inyectado por turno)"
 
@@ -30,7 +29,6 @@ class TestLoaderExcludesSlotContract:
 
     def test_slot_contract_sentinel_absent_from_prompt(self) -> None:
         """load_system_prompt() must not include slot_contract.md content."""
-        import functools
 
         from agent.prompts import loader
 
@@ -40,8 +38,8 @@ class TestLoaderExcludesSlotContract:
         prompt = loader.load_system_prompt()
 
         assert _SLOT_CONTRACT_SENTINEL not in prompt, (
-            f"slot_contract.md sentinel found in assembled system prompt. "
-            f"Remove _read('slot_contract.md') from loader.py load list."
+            "slot_contract.md sentinel found in assembled system prompt. "
+            "Remove _read('slot_contract.md') from loader.py load list."
         )
 
         # Cleanup cache so other tests are not affected

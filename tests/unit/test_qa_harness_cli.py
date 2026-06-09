@@ -11,12 +11,10 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime, timezone
-from io import StringIO
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # _cmd_turn
@@ -35,8 +33,8 @@ async def test_cmd_turn_uses_qarunidentity_and_session() -> None:
         "turn_number": 1,
         "user_message": message,
         "agent_response": "Hola, con gusto te ayudo.",
-        "timestamp_sent": datetime.now(timezone.utc).isoformat(),
-        "timestamp_received": datetime.now(timezone.utc).isoformat(),
+        "timestamp_sent": datetime.now(UTC).isoformat(),
+        "timestamp_received": datetime.now(UTC).isoformat(),
         "response_latency_ms": 500,
         "timed_out": False,
         "raw_payloads": [],
@@ -101,8 +99,8 @@ async def test_cmd_turn_output_has_required_fields() -> None:
         "turn_number": 1,
         "user_message": "Hola",
         "agent_response": "Hola, ¿en qué te puedo ayudar?",
-        "timestamp_sent": datetime.now(timezone.utc).isoformat(),
-        "timestamp_received": datetime.now(timezone.utc).isoformat(),
+        "timestamp_sent": datetime.now(UTC).isoformat(),
+        "timestamp_received": datetime.now(UTC).isoformat(),
         "response_latency_ms": 123,
         "timed_out": False,
         "raw_payloads": [],

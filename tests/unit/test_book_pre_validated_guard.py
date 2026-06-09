@@ -16,7 +16,6 @@ import pytest
 
 from agent.tools.book import book
 
-
 STATE_WITH_PHONE = {"customer_phone": "+5491112345678"}
 
 

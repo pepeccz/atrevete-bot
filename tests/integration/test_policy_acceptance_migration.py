@@ -22,7 +22,6 @@ from sqlalchemy import text
 
 from database.connection import AsyncSessionLocal
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -176,7 +175,6 @@ class TestPolicyAcceptanceMigrationSchema:
     @pytest.mark.asyncio
     async def test_accepted_via_check_constraint_rejects_invalid_value(self):
         """CHECK constraint must reject values outside ('whatsapp','admin_panel')."""
-        from uuid import uuid4
         async with AsyncSessionLocal() as session:
             # First we need a customer to satisfy the FK
             result = await session.execute(

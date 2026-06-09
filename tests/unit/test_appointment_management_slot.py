@@ -13,7 +13,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # AS8 — appointment_management_flow.md removed from base loader
 # ---------------------------------------------------------------------------
@@ -37,7 +36,6 @@ class TestLoaderExcludesAppointmentManagementFlow:
 
     def test_mgmt_flow_absent_from_assembled_prompt(self) -> None:
         """load_system_prompt() must not include appointment_management_flow.md content."""
-        import functools
 
         from agent.prompts import loader
 
@@ -48,8 +46,8 @@ class TestLoaderExcludesAppointmentManagementFlow:
         # We check for a phrase unique to appointment_management_flow.md
         mgmt_sentinel = "Gestión de citas existentes"
         assert mgmt_sentinel not in prompt, (
-            f"appointment_management_flow.md content found in base prompt. "
-            f"It must be moved to conditional slot injection."
+            "appointment_management_flow.md content found in base prompt. "
+            "It must be moved to conditional slot injection."
         )
         loader.load_system_prompt.cache_clear()
 

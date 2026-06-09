@@ -10,7 +10,6 @@ import pytest
 
 from agent.services.escalation_service import EscalationResult
 
-
 # ---------------------------------------------------------------------------
 # AS5 — source kwarg forwarded to perform_escalation
 # ---------------------------------------------------------------------------
@@ -19,7 +18,7 @@ from agent.services.escalation_service import EscalationResult
 @pytest.mark.asyncio
 async def test_source_kwarg_forwarded():
     """AS5: escalate tool must pass source= kwarg when calling perform_escalation."""
-    from unittest.mock import AsyncMock, patch
+    from unittest.mock import patch
 
     mock_result = EscalationResult(success=True, user_message="Con mucho gusto te paso con alguien.")
     captured_kwargs: dict = {}

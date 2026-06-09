@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -116,8 +116,8 @@ async def test_book_rolls_back_on_policy_service_failure():
 
     Spec S-6 / Design §4.2
     """
-    from agent.tools.book import book
     from agent.services.policy_service import PolicyConsentError
+    from agent.tools.book import book
 
     customer = _make_customer_mock(policy_accepted_at=None, policy_version=None)
     ctx, session = _make_session_ctx(customer=customer)

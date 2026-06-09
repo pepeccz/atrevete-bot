@@ -31,7 +31,6 @@ def _make_appointment_mock(owner_phone=OWNER_PHONE):
     appt.status = MagicMock()
     appt.status.value = "pending"
 
-    from unittest.mock import PropertyMock
     # Make status != CANCELLED comparison work
     from agent.services.cancellation_service import AppointmentStatus
     appt.status = AppointmentStatus.PENDING  # use real enum value
