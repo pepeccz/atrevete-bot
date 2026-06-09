@@ -81,22 +81,56 @@ Do NOT reference the old mode-based artifacts (deleted): `current_mode`,
 
 ## Canonical Outcome Enum
 
-The `outcome` field in the run JSON MUST be one of:
+The `outcome` field in the run JSON MUST be one of the values below. The v1
+core covers booking flows; v2 extension (scenarios-v2.yaml) adds outcomes for
+FAQ, multi-intent, out-of-scope, and edge-case scenarios.
+
+### v1 core
 
 | Value | Meaning |
 |-------|---------|
 | `booked` | Appointment successfully created in DB |
 | `cancelled` | Appointment successfully cancelled in DB |
 | `rescheduled` | Appointment rescheduled in DB |
-| `escalated` | Conversation handed off to human agent |
+| `escalated` | Conversation handed off to human agent via `escalate` tool |
 | `policy_accepted` | Policy gate accepted, no booking yet |
 | `rejected` | Bot refused the request (e.g. IDOR, invalid input) |
 | `timeout` | Agent did not respond within turn timeout |
 | `error` | Unhandled exception or infrastructure failure |
 | `stuck` | max_turns reached without reaching expected outcome |
 
-`scenarios.yaml` `expect.outcome` uses the same enum. Reject any scenario row
-whose `expect.outcome` is not in the set above.
+### v2 extension
+
+| Value | Meaning | When to write |
+|-------|---------|---------------|
+| `info_provided` | Bot answered a FAQ/info question accurately, no booking attempted. | Bot replied with info content (hours, prices, location, audience, specialization) and conversation ended/idled without booking tool calls. |
+| `multi_completed` | Multi-intent conversation: both sub-intents completed. | E.g. cancel+rebook both succeeded, couple booking created 2 appointments, combo service booked. |
+| `partial_completed` | Multi-intent conversation: only one sub-intent reached completion. | E.g. cancel succeeded but rebooking stuck. Use when at least one sub-intent fully completed AND another didn't. |
+| `out_of_scope_handled` | Bot correctly deflected an out-of-scope request without falsely escalating or attempting a booking. | Spam, generic advice, phantom-cancel where bot recognized and asked for clarification or politely declined. |
+
+### Validation
+
+`scenarios.yaml` and `scenarios-v2.yaml` `expect.outcome` use this union enum
+(v1 ∪ v2). Reject any scenario row whose `expect.outcome` is not in the
+combined set above.
+
+### Decision rule for choosing the outcome at end of run
+
+Apply this priority order when writing the run JSON outcome:
+
+1. If an unhandled exception or transport failure occurred → `error`
+2. If the agent stopped responding entirely → `timeout`
+3. If a `book` tool call succeeded with a created appointment → `booked`
+4. If a `manage_appointments` cancel succeeded → `cancelled`
+5. If a `manage_appointments` reschedule succeeded → `rescheduled`
+6. If TWO or more sub-intents from the scenario completed → `multi_completed`
+7. If ONE of multiple expected sub-intents completed → `partial_completed`
+8. If the bot fired the `escalate` tool → `escalated`
+9. If the policy gate was accepted AND no booking happened → `policy_accepted`
+10. If the bot explicitly refused (IDOR, invalid input, ownership) → `rejected`
+11. If the bot answered an info/FAQ question without booking tool calls AND the conversation terminated naturally → `info_provided`
+12. If the bot correctly deflected an out-of-scope request → `out_of_scope_handled`
+13. Otherwise (max_turns reached without completing) → `stuck`
 
 ---
 
@@ -181,9 +215,13 @@ Output JSON: `{"agent_response": "...", "timed_out": bool, "response_latency_ms"
 
 | Condition | Trigger | Set outcome |
 |-----------|---------|-------------|
-| Outcome reached | Bot response matches expected outcome (appointment confirmed, cancellation confirmed, escalation message, policy gate accepted) | `booked` / `cancelled` / `rescheduled` / `escalated` / `policy_accepted` |
-| Request rejected | Bot refuses the request without completing it | `rejected` |
-| Max turns | Turn count == min(max_turns, 15) | `stuck` |
+| Booking/transaction completed | Bot confirms appointment, cancellation, reschedule, escalation, or policy acceptance | `booked` / `cancelled` / `rescheduled` / `escalated` / `policy_accepted` |
+| Multi-intent both done | Two or more sub-intents reached completion (e.g. cancel old + book new) | `multi_completed` |
+| Multi-intent one done | One sub-intent completed, another did not reach completion within max_turns | `partial_completed` |
+| FAQ / info answered | Bot answered an info question accurately, conversation terminated without booking tool calls | `info_provided` |
+| Out-of-scope deflected | Bot recognized out-of-scope (spam, generic advice, phantom-cancel) and deflected politely without booking or escalation | `out_of_scope_handled` |
+| Request rejected | Bot explicitly refuses (IDOR, invalid input, ownership check) | `rejected` |
+| Max turns | Turn count == min(max_turns, 15) without reaching any other terminal condition | `stuck` |
 | Dead loop | 3 consecutive identical agent responses | `stuck` |
 | Timeout | `timed_out == true` in turn output | `timeout` |
 | Error | CLI exits non-zero with exception text | `error` |

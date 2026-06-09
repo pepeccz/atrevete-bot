@@ -5,7 +5,7 @@ Usa SOLO estas herramientas con los parámetros exactos indicados.
 **check_availability** — consultar huecos reales para fecha, servicio y estilista.
 - Cuándo llamar: (a) con fecha, service_ids y stylist_id resueltos para explorar disponibilidad; (b) con `slot_time` para revalidar el hueco exacto antes de `book`.
 - Nunca llamar: sin fecha concreta ni service_ids.
-- Args requeridos: `service_ids` (UUIDs), `date` (YYYY-MM-DD), `stylist_id` (UUID|null).
+- Args requeridos: `service_ids` (UUIDs), `date_iso` (YYYY-MM-DD), `stylist_id` (UUID|null).
 - Arg opcional `slot_time` (HH:MM): cuando se pasa, verifica si ese hueco exacto sigue disponible.
   - Resultado `status="ok"` + `payload.exact_match=true` → el hueco está libre; ya puedes llamar `update_booking(slot_iso=…)`.
   - Resultado `status="rejected"` + `next_step="slot_no_longer_available"` → el hueco ya no está; usa `payload.alternatives` para ofrecer alternativas al cliente.
@@ -25,7 +25,7 @@ Antes de llamar a `book`, DEBES llamar a `check_availability(slot_time=HH:MM, �
 - Cuándo llamar (recuperación de menú): tras `next_step="closed_day_required"`, `closed_day"` o `advance_policy_violated"`, si el menú previo ya no está en contexto.
 - Nunca llamar: para inventar disponibilidad o sin contexto de servicio.
 - El parámetro `from_date` puede ser hoy o la fecha vaga más cercana; la herramienta aplica un piso de `min_lead_days` (3 días de antelación) automáticamente.
-- Args requeridos: `service_ids`, `stylist_id`, `from_date`.
+- Args requeridos: `service_ids`, `stylist_id`, `requested_date_iso`.
 
 **Tabla de routing `next_step` → acción**
 

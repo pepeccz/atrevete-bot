@@ -89,7 +89,7 @@ async def test_today_slot_contains_iso_date_spanish_weekday_and_time():
     assert "<today>" in slot, "Missing <today> tag"
     assert "fecha:" in slot, "Missing fecha: field"
     assert "dia_semana:" in slot, "Missing dia_semana: field"
-    assert "hora_local:" in slot, "Missing hora_local: field"
+    assert "hora_local:" not in slot, "hora_local removed in F3 for prefix cache stability"
     assert "tz: Europe/Madrid" in slot, "Missing tz field"
 
     # Check weekday is Spanish

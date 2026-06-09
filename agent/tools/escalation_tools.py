@@ -20,22 +20,31 @@ logger = logging.getLogger(__name__)
 @tool
 async def escalate(
     reason: str,
-    conversation_id: str,
     state: Annotated[dict, InjectedState] = None,
 ) -> str:
     """Escalate the conversation to a human agent.
 
-    customer_phone is injected from session state; it is not a tool argument.
+    conversation_id and customer_phone are injected from session state;
+    they are not tool arguments.
 
     Args:
         reason: Brief reason for escalation (e.g., 'customer request', 'complex inquiry').
-        conversation_id: Conversation ID to escalate.
 
     Call this tool when the customer explicitly asks to speak with a person,
     or when the bot cannot handle the request adequately.
     After calling this tool, stop responding to booking requests for this conversation.
     """
-    customer_phone = (state or {}).get("customer_phone") or ""
+    _state = state or {}
+    conversation_id = _state.get("conversation_id")
+    customer_phone = _state.get("customer_phone") or ""
+
+    if not conversation_id:
+        logger.error(
+            "escalate.state.missing_conversation_id",
+            extra={"tool_name": "escalate"},
+        )
+        return "Estado de conversación incompleto. No puedo transferir la conversación."
+
     if not customer_phone:
         logger.error(
             "escalate.state.missing_customer_phone",

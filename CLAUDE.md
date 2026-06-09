@@ -872,6 +872,24 @@ ruff check .
 mypy .
 ```
 
+### Confirmation Flow
+
+The bot (Maite) is the canonical confirmation channel for new bookings.
+
+- `agent/tools/book.py` creates appointments with `AppointmentStatus.CONFIRMED` directly.
+  There is NO pending state for newly created bookings — confirmation happens implicitly
+  via the WhatsApp conversation the customer is already in.
+- `agent/services/confirmation_service.py` contains an SMS/notification path that is
+  **DORMANT** — no cron job, no worker, and no runtime caller invokes it for new bookings.
+  Do NOT call it from any new code.
+- Appointment reminders are also out of scope for `confirmation_service.py`. Future
+  reminder delivery (if implemented) should go through the WhatsApp/bot channel, not SMS.
+
+**Rule**: never set `status=AppointmentStatus.PENDING` when creating a new appointment
+in `book.py`. New appointments are CONFIRMED from the moment of creation.
+
+---
+
 ### Admin Panel Development
 
 ```bash

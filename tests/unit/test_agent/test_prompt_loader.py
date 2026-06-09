@@ -3,23 +3,27 @@
 Asserts that load_system_prompt() contains "Flujo de reserva" and
 all 7 step anchors from the booking_flow.md script.
 
-Also verifies appointment_management_flow.md is included.
+Note: appointment_management_flow.md is NOT in the base prompt (F6, quick-wins-bundle).
+It is conditionally injected via _slot_appointment_management by AppointmentContextMiddleware
+only when the customer has upcoming appointments.
 """
 
 
-def test_includes_appointment_management_flow():
-    """load_system_prompt() must include the ## Citas próximas guidance marker."""
+def test_appointment_management_flow_not_in_base_prompt():
+    """load_system_prompt() must NOT include appointment_management_flow.md content.
+
+    It is conditionally injected via _slot_appointment_management instead.
+    """
     from agent.prompts.loader import load_system_prompt
 
     load_system_prompt.cache_clear()
     prompt = load_system_prompt()
 
-    assert "## Citas próximas" in prompt, (
-        "System prompt must contain '## Citas próximas' guidance from appointment_management_flow.md"
+    assert "## Citas próximas" not in prompt, (
+        "appointment_management_flow.md must NOT be in the base prompt — "
+        "it is conditionally injected by AppointmentContextMiddleware via _slot_appointment_management."
     )
-    assert "manage_appointments" in prompt, (
-        "System prompt must reference 'manage_appointments' tool"
-    )
+    load_system_prompt.cache_clear()
 
 
 def test_includes_booking_flow():

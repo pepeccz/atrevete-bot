@@ -16,6 +16,7 @@ SLOT_REGISTRY: tuple[str, ...] = (
     "_slot_today",
     "_slot_customer",
     "_slot_upcoming_appointments",
+    "_slot_appointment_management",
     "_slot_business_hours",
     "_slot_availability",
     "_slot_catalog",
@@ -35,10 +36,13 @@ class AgentState(TypedDict):
     last_summarized_msg_count: NotRequired[int | None]
     # customer_memories — raw dict from read_customer_memories, populated by middleware
     customer_memories: NotRequired[dict | None]
-    # T7 — 6 slot fields, NotRequired[str] (absence encodes "not set")
+    # T7 — 7 slot fields, NotRequired[str] (absence encodes "not set")
     _slot_today: NotRequired[str]
     _slot_customer: NotRequired[str]
     _slot_upcoming_appointments: NotRequired[str]
+    # Conditionally injected by AppointmentContextMiddleware when customer has upcoming appointments.
+    # Content: appointment_management_flow.md wrapped in <appointment_management> tags.
+    _slot_appointment_management: NotRequired[str]
     _slot_business_hours: NotRequired[str]
     _slot_availability: NotRequired[str]
     _slot_catalog: NotRequired[str]

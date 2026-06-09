@@ -372,7 +372,7 @@ async def book(
                 service_ids=parsed_service_ids,
                 start_time=start_time,
                 duration_minutes=total_duration,
-                status=AppointmentStatus.PENDING,
+                status=AppointmentStatus.CONFIRMED,
                 first_name=first_name,
                 last_name=last_name,
                 notes=notes,

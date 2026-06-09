@@ -59,23 +59,51 @@ artifacts were deleted.
 
 ## Canonical Outcome Enum
 
-The `outcome` field in run JSON files uses this canonical set:
+The `outcome` field in run JSON files uses this canonical set. The v1 core
+covers booking flows; v2 extension (scenarios-v2.yaml) adds outcomes for FAQ,
+multi-intent, out-of-scope, and edge-case scenarios.
+
+### v1 core (regression battery — scenarios.yaml)
 
 | Value | Meaning |
 |-------|---------|
-| `booked` | Appointment successfully created in DB |
+| `booked` | Appointment successfully created in DB (`appointments` row inserted) |
 | `cancelled` | Appointment successfully cancelled in DB |
 | `rescheduled` | Appointment rescheduled in DB |
-| `escalated` | Conversation handed off to human agent |
-| `policy_accepted` | Policy gate accepted, no booking yet |
-| `rejected` | Bot refused the request (e.g. IDOR, invalid input) |
-| `timeout` | Agent did not respond within turn timeout |
-| `error` | Unhandled exception or infrastructure failure |
+| `escalated` | Conversation handed off to human agent via `escalate` tool |
+| `policy_accepted` | Policy gate accepted (`customer.policy_accepted_at` populated), no booking yet |
+| `rejected` | Bot refused the request (e.g. IDOR attempt, invalid input, ownership check) |
+| `timeout` | Agent did not respond within turn timeout (transport/infrastructure issue) |
+| `error` | Unhandled exception or infrastructure failure mid-run |
 | `stuck` | max_turns reached without reaching expected outcome |
 
-When comparing `outcome` vs `expect.outcome`, flag a mismatch as FAIL.
-Any scenario `expect.outcome` outside this enum is a schema violation — flag
-as CRITICAL in the audit report.
+### v2 extension (expansion battery — scenarios-v2.yaml)
+
+| Value | Meaning |
+|-------|---------|
+| `info_provided` | Bot answered a FAQ/info question accurately, no booking attempted (zero booking tool calls). Used for hours, prices, location, audience, specialization queries. |
+| `multi_completed` | Multi-intent conversation: both sub-intents completed successfully (e.g. cancel old + book new, couple booking, combo service). |
+| `partial_completed` | Multi-intent conversation: only one sub-intent reached completion (e.g. cancel succeeded but rebooking stuck). Partial failure mode worth tracking separately from `stuck`. |
+| `out_of_scope_handled` | Bot correctly identified an out-of-scope request and either deflected politely or asked for clarification, without falsely escalating or attempting a booking. Used for spam, generic advice, phantom-cancel, etc. |
+
+### Audit semantics
+
+- When comparing `outcome` vs `expect.outcome`, flag a mismatch as FAIL.
+- Any scenario `expect.outcome` outside the union of v1+v2 enum values is a
+  schema violation — flag as CRITICAL in the audit report.
+- For v2 scenarios specifically, additional level checks apply:
+  - **`info_provided`** scenarios: confirm `tool_calls_required` is empty AND no
+    `book`/`update_booking` tool fired. If the bot answered correctly but ALSO
+    pushed booking, downgrade L5 score (poor scope discipline).
+  - **`multi_completed`** scenarios: confirm BOTH expected DB effects materialized
+    (e.g. one row cancelled AND one row inserted). If only one happened, the
+    correct outcome is `partial_completed`.
+  - **`out_of_scope_handled`** scenarios: confirm bot did NOT invoke `escalate`
+    unless explicitly listed in `tool_calls_required`. Spam and generic advice
+    should be deflected, not escalated to a human.
+  - **`stuck`** for emoji-only / unparseable input: this is acceptable if the
+    bot asked for clarification instead of guessing. Verify L1 by checking
+    bot's response is a clarification request, not a hallucinated booking.
 
 ---
 
@@ -117,7 +145,7 @@ Check:
 - [ ] No agent response is null or empty string
 - [ ] No Python traceback leaked: `rg "Traceback|Internal server error|Exception:" agent_response`
 - [ ] No raw JSON or tool output leaked to user (agent_response doesn't start with `{` or contain `"tool_calls"`)
-- [ ] `outcome` field is present and in the canonical enum
+- [ ] `outcome` field is present and is one of: `booked`, `cancelled`, `rescheduled`, `escalated`, `policy_accepted`, `rejected`, `timeout`, `error`, `stuck`, `info_provided`, `multi_completed`, `partial_completed`, `out_of_scope_handled` (v1 + v2 union — see Canonical Outcome Enum section)
 
 **If any L1 check fails, mark this scenario `FAIL (L1)` and skip L2–L5.**
 
@@ -168,9 +196,16 @@ Root-cause investigation when L3 fails:
 
 **Deterministic.**
 
-- [ ] `db_delta.appt_count_delta` matches `expect.db_appointment` (1 for booked/rescheduled, -1 for cancelled, 0 for escalated/rejected/policy_accepted)
+- [ ] `db_delta.appt_count_delta` matches `expect.db_appointment`:
+  - `+1` for `booked`, `rescheduled`
+  - `-1` for `cancelled`
+  - `0` for `escalated`, `rejected`, `policy_accepted`, `info_provided`, `out_of_scope_handled`, `stuck`, `timeout`, `error`
+  - For `multi_completed`: delta depends on the multi-intent shape (e.g. cancel+book → 0, couple/combo → +2, on-behalf-of → +1)
+  - For `partial_completed`: delta is partial (e.g. -1 if only cancel succeeded, +1 if only book succeeded)
 - [ ] For created appointments: `gcal_sync_status == 'not_applicable'` in DB (confirms `TEST_MODE_GCAL_SKIP` was active)
-- [ ] For escalation flows: `Notification` row exists in DB for the conversation
+- [ ] For `escalated` outcomes: `Notification` row exists in DB for the conversation
+- [ ] For `info_provided` outcomes: NO `Notification` row was created (info responses must not trigger escalation noise)
+- [ ] For `policy_accepted` without follow-up `book`: confirm `customer.policy_accepted_at` IS populated (catches Pattern C/D from 2026-06-09 audit — policy persistence currently only fires on book)
 - [ ] `passed == (outcome == expect.outcome)` consistent
 
 Check `gcal_sync_status`:

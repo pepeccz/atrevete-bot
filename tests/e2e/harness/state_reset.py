@@ -267,6 +267,18 @@ class StateResetHarness:
                 {"phone": phone},
             )
 
+            # Delete customer_consents rows (FK to customers, no CASCADE).
+            # Added 2026-06-09 after smoke test FK violation.
+            await session.execute(
+                text(
+                    "DELETE FROM customer_consents "
+                    "WHERE customer_id = ("
+                    "  SELECT id FROM customers WHERE phone = :phone LIMIT 1"
+                    ")"
+                ),
+                {"phone": phone},
+            )
+
             # Delete the customer row itself.
             cust_result = await session.execute(
                 text("DELETE FROM customers WHERE phone = :phone"),

@@ -303,7 +303,7 @@ async def test_book_creates_new_customer_and_appointment(test_stylist, test_serv
     async with get_async_session() as sess:
         appt = await sess.get(Appointment, data["payload"]["appointment_id"])
         assert appt is not None
-        assert appt.status == AppointmentStatus.PENDING
+        assert appt.status == AppointmentStatus.CONFIRMED
 
         cust = await sess.get(Customer, data["payload"]["customer_id"])
         assert cust is not None
