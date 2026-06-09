@@ -1,0 +1,130 @@
+{
+  "scenario_id": "change-a-policy-gate-blocks-book",
+  "conversation_id": "811b70cf-556d-4467-afcb-8f35d3c762f8",
+  "outcome": "policy_accepted",
+  "turns_taken": 7,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Quiero reservar un corte de pelo para el viernes.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Para quién es el corte: señora/mujer, caballero/hombre, niña, niño o bebé?",
+      "latency_ms": 9132,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "bot_greeted"
+    },
+    {
+      "turn": 2,
+      "user_message": "Es para mí, señora. ¿Podéis darme el viernes?",
+      "agent_response": "Te anoto un corte de mujer para el viernes. ¿Quieres añadir algún otro servicio o solo ese?",
+      "latency_ms": 11509,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "service_collected"
+    },
+    {
+      "turn": 3,
+      "user_message": "Solo el corte, gracias.",
+      "agent_response": "Perfecto. Para dejarte la cita, ¿me dices tu nombre y primer apellido?",
+      "latency_ms": 13428,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "service_confirmed"
+    },
+    {
+      "turn": 4,
+      "user_message": "Carmen Ruiz.",
+      "agent_response": "¿Quieres dejarme alguna nota para tu cita?",
+      "latency_ms": 24217,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "name_collected"
+    },
+    {
+      "turn": 5,
+      "user_message": "No, sin notas.",
+      "agent_response": "Me falta solo elegir la hora exacta para comprobar el hueco antes de confirmártelo. ¿Qué hora te viene mejor el viernes?",
+      "latency_ms": 20314,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "notes_skipped"
+    },
+    {
+      "turn": 6,
+      "user_message": "A las 11 de la mañana.",
+      "agent_response": "El hueco de las 11:00 ya no está disponible. Te dejo estas opciones para el viernes 12 de junio:\n\n1. Marta a las 10:00\n2. Victor a las 10:00\n3. Harolyn a las 10:00\n\nAntes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "latency_ms": 17116,
+      "timed_out": false,
+      "tool_calls_observed": ["check_availability"],
+      "bugs": [],
+      "milestone": "policy_gate_presented"
+    },
+    {
+      "turn": 7,
+      "user_message": "Sí, acepto.",
+      "agent_response": "Se me ha movido el hueco de las 11:00 mientras tanto. Si quieres, te reservo una de estas opciones para el viernes 12 de junio:\n\n1. Marta a las 10:00\n2. Victor a las 10:00\n3. Harolyn a las 10:00\n\n¿Cuál prefieres?",
+      "latency_ms": 17367,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "policy_accepted"
+    }
+  ],
+  "bugs": [
+    {
+      "category": "context_loss",
+      "turn": 6,
+      "description": "Bot told user '11:00 ya no está disponible' — this was the first time Carmen requested 11am; the slot was never held. Bot fabricated a 'moved slot' context that never existed. In Turn 7 the bot repeats the same spurious 'se me ha movido el hueco de las 11:00' message even though Carmen had only just requested that slot in Turn 6.",
+      "severity": "minor"
+    },
+    {
+      "category": "hallucination",
+      "turn": 6,
+      "description": "Bot claimed 11:00 'ya no está disponible' without ever having offered or confirmed that slot to Carmen. The slot was never booked or reserved for her — it simply was not available.",
+      "severity": "minor"
+    },
+    {
+      "category": "context_loss",
+      "description": "Policy acceptance not persisted to DB. Customer record with policy_accepted_at was never created despite verbal acceptance in Turn 7. No customer row exists in DB after run.",
+      "severity": "critical"
+    }
+  ],
+  "milestones_reached": [
+    "bot_greeted",
+    "service_collected",
+    "service_confirmed",
+    "name_collected",
+    "notes_skipped",
+    "policy_gate_presented",
+    "policy_accepted"
+  ],
+  "db_delta": {
+    "customer_count_delta": 0,
+    "appt_count_delta": 0
+  },
+  "snapshot_before": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "snapshot_after": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "final_state": {
+    "has_checkpoint": false
+  },
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "policy_accepted",
+    "db_appointment": null,
+    "tool_calls_required": [],
+    "tool_calls_forbidden": ["book"],
+    "tags": ["change-a", "policy-gate"]
+  },
+  "passed": true
+}

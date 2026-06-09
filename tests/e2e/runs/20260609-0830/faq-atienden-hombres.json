@@ -1,0 +1,43 @@
+{
+  "scenario_id": "faq-atienden-hombres",
+  "conv_id": "5a260b82-ec3d-4006-ae6b-a8155631cb32",
+  "run_ts": "2026-06-09T08:30:00Z",
+  "outcome": "pass",
+  "outcome_code": "info_provided",
+  "expected_outcome": "info_provided",
+  "outcome_match": true,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, ¿atienden a hombres también?",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nSí, también atendemos a hombres.  \nSi quieres, te digo qué servicios tenemos para caballero.",
+      "tool_evidence": [],
+      "response_latency_ms": 7491,
+      "timed_out": false
+    }
+  ],
+  "turn_count": 1,
+  "tool_calls_used": [],
+  "tool_calls_required": [],
+  "tool_calls_forbidden": [],
+  "tools_required_met": true,
+  "tools_forbidden_violated": false,
+  "db_delta": {
+    "appointments_before": 2,
+    "appointments_after": 2,
+    "appointments_created": 0,
+    "customer_created": false,
+    "customer_phone": "+34999000018",
+    "db_appointment_expected": null,
+    "db_appointment_match": true
+  },
+  "langfuse": null,
+  "langfuse_skipped": true,
+  "langfuse_skip_reason": "401 Unauthorized",
+  "bugs": [],
+  "blockers": [],
+  "notes": "Bot correctly identified itself, confirmed male clients are served, and offered to list available services for men. Single-turn FAQ scenario resolved cleanly. No tool calls invoked as expected. No appointment created. Policy gate not triggered (FAQ flow, no booking attempt).",
+  "l1_db_pass": true,
+  "l3_tools_pass": true,
+  "l4_outcome_pass": true
+}

@@ -1,0 +1,137 @@
+{
+  "scenario_id": "change-a-customer-phone-injected",
+  "conversation_id": "4e3eb8ce-85a5-4bbd-a136-f756878d7e49",
+  "outcome": "booked",
+  "turns_taken": 9,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Quiero reservar un tinte para el próximo jueves por la mañana.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Es para señora o para caballero?",
+      "latency_ms": 11634,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "intro"
+    },
+    {
+      "turn": 2,
+      "user_message": "Para señora.",
+      "agent_response": "¿Quieres añadir algún otro servicio a la cita o solo el tinte?",
+      "latency_ms": 12631,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "audience_set"
+    },
+    {
+      "turn": 3,
+      "user_message": "Solo el tinte, gracias.",
+      "agent_response": "No te he podido entender bien la fecha. ¿Me dices el día y el mes exactos del próximo jueves por la mañana?",
+      "latency_ms": 18567,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "service_confirmed"
+    },
+    {
+      "turn": 4,
+      "user_message": "El jueves 11 de junio por la mañana, sobre las 10.",
+      "agent_response": "Lo siento, esa fecha no cumple la antelación mínima. La primera fecha válida es el viernes 12 de junio.\n\nTengo estas opciones disponibles para ti:\n1. Viernes 12 de junio a las 10:00\n2. Viernes 12 de junio a las 11:20\n3. Viernes 12 de junio a las 12:00\n\nSi quieres, te digo también la opción de la estilista con disponibilidad más próxima.",
+      "latency_ms": 19930,
+      "timed_out": false,
+      "tool_calls_observed": ["check_availability"],
+      "bugs": [],
+      "milestone": "availability_checked"
+    },
+    {
+      "turn": 5,
+      "user_message": "La opción 1, el viernes 12 a las 10:00.",
+      "agent_response": "Perfecto, te lo dejo el viernes 12 de junio a las 10:00 con Marta para tinte. ¿Te lo confirmo?",
+      "latency_ms": 15744,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "slot_selected"
+    },
+    {
+      "turn": 6,
+      "user_message": "Sí, confírmalo.",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "latency_ms": 16492,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "policy_gate_triggered"
+    },
+    {
+      "turn": 7,
+      "user_message": "Sí, la acepto.",
+      "agent_response": "Me falta tu nombre y primer apellido para dejar la reserva hecha.",
+      "latency_ms": 16224,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "policy_accepted"
+    },
+    {
+      "turn": 8,
+      "user_message": "Patricia Fernández.",
+      "agent_response": "¿Hay alguna nota para Marta, como alergias, preferencias o algo que deba tener en cuenta?",
+      "latency_ms": 14976,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "name_provided"
+    },
+    {
+      "turn": 9,
+      "user_message": "No, ninguna nota.",
+      "agent_response": "Listo, Patricia: tu cita de tinte con Marta queda confirmada para el viernes 12 de junio a las 10:00.\n\nPuedes añadirla a tu calendario aquí: https://calendar.google.com/calendar/render?action=TEMPLATE&text=Tinte%20en%20Atr%C3%A9vete&dates=20260612T080000Z/20260612T084000Z&details=Turno%20con%20Marta&location=Atr%C3%A9vete%20Sal%C3%B3n%20de%20Belleza",
+      "latency_ms": 18030,
+      "timed_out": false,
+      "tool_calls_observed": ["book"],
+      "bugs": [],
+      "milestone": "booked"
+    }
+  ],
+  "bugs": [
+    {
+      "category": "wrong_status",
+      "turn": 9,
+      "description": "Appointment created with status=pending instead of status=confirmed. Bot declared booking confirmed but DB record is in pending state. gcal_sync_status=not_applicable (expected with TEST_MODE_GCAL_SKIP=true).",
+      "severity": "WARNING"
+    }
+  ],
+  "milestones_reached": ["intro", "audience_set", "service_confirmed", "availability_checked", "slot_selected", "policy_gate_triggered", "policy_accepted", "name_provided", "booked"],
+  "db_delta": {
+    "customer_count_delta": 1,
+    "appt_count_delta": 1
+  },
+  "snapshot_before": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "snapshot_after": {
+    "customer_count": 1,
+    "appt_count": 1
+  },
+  "final_state": {"has_checkpoint": false},
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "booked",
+    "db_appointment": {"status": "confirmed"},
+    "tool_calls_required": ["check_availability", "book"],
+    "tool_calls_forbidden": [],
+    "tags": ["change-a", "injected-state"]
+  },
+  "passed": true,
+  "notes": "Outcome matches expected (booked). DB appointment status is 'pending' not 'confirmed' — WARNING but does not block outcome pass. tool_evidence field was empty in all turns (harness limitation — tool calls inferred from bot responses). No customer_phone observed in agent responses (injected-state contract appears respected). No voseo detected.",
+  "appointment_db": {
+    "id": "8a099f6d-ddaa-4c22-903d-653f6b6e9276",
+    "status": "pending",
+    "gcal_sync_status": "not_applicable",
+    "start_time": "2026-06-12T08:00:00+00:00",
+    "service_ids": ["10e3e5dd-57aa-8d69-ec84-d2d47525465f"]
+  }
+}

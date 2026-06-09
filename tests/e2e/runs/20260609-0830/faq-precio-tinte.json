@@ -1,0 +1,52 @@
+{
+  "scenario_id": "faq-precio-tinte",
+  "conversation_id": "ad63c475-a1c9-4cae-8d20-b93690b2a7e3",
+  "outcome": "info_provided",
+  "turns_taken": 2,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Buenos días, ¿cuánto sale un tinte completo?",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nNo te puedo dar un precio exacto con la información que tengo aquí. Si quieres, te ayudo a reservarlo o te digo cómo queda en el catálogo como servicio de tinte.",
+      "latency_ms": 8079,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "bot_admitted_no_price"
+    },
+    {
+      "turn": 2,
+      "user_message": "Entiendo. ¿Y cómo puedo saber el precio antes de reservar?",
+      "agent_response": "Para saber el precio exacto antes de reservar, lo mejor es que te lo confirmemos desde el salón, porque aquí no tengo una tabla de precios visible.\n\nSi quieres, también puedo ayudarte a dejarte la cita preparada para el tinte.",
+      "latency_ms": 9226,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "consistent_no_price_deflection"
+    }
+  ],
+  "bugs": [],
+  "milestones_reached": ["bot_admitted_no_price", "consistent_no_price_deflection"],
+  "db_delta": {
+    "customer_count_delta": 0,
+    "appt_count_delta": 0
+  },
+  "snapshot_before": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "snapshot_after": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "final_state": {"has_checkpoint": false},
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "info_provided",
+    "db_appointment": null,
+    "tool_calls_required": [],
+    "tool_calls_forbidden": ["book", "update_booking"],
+    "tags": ["faq", "pricing", "hallucination-check"]
+  },
+  "passed": true
+}

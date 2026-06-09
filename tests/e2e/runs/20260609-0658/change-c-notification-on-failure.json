@@ -1,0 +1,11 @@
+{
+  "id": "change-c-notification-on-failure",
+  "conv_id": "c0810a33-db14-4e67-95ff-e1f8db043c89",
+  "outcome": "skipped",
+  "skip_reason": "manual: true — requires GCal failure injection",
+  "turns": [],
+  "db_delta": null,
+  "bugs": [],
+  "final_state": null,
+  "timestamp": "2026-06-09T06:58:00Z"
+}

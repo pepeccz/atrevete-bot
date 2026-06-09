@@ -1,0 +1,162 @@
+{
+  "scenario_id": "cliente-leal-lo-de-siempre",
+  "conversation_id": "ad33e126-098c-4de0-9caa-f3cbbbe2172b",
+  "outcome": "booked",
+  "turns_taken": 11,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, soy Raquel! Quiero pedir lo de siempre con Carmen",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Qué servicio quieres reservar?",
+      "latency_ms": 11412,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "memory_miss — bot did not recognize Raquel or 'lo de siempre'; asked for service"
+    },
+    {
+      "turn": 2,
+      "user_message": "Pues un corte y tinte, siempre me lo hace Carmen",
+      "agent_response": "Antes de seguir, necesito una cosa: ¿el corte y el tinte son para señora, caballero, niña, niño o bebé?",
+      "latency_ms": 13533,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "audience_disambiguation"
+    },
+    {
+      "turn": 3,
+      "user_message": "Para señora, obvio! Soy yo",
+      "agent_response": "Anotado: corte de mujer y tinte. ¿Quieres añadir algún otro servicio a la cita o solo esos dos?",
+      "latency_ms": 21838,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "services_confirmed"
+    },
+    {
+      "turn": 4,
+      "user_message": "Solo eso, para esta semana con Carmen si puede ser",
+      "agent_response": "No veo a Carmen en la lista de estilistas disponibles para reservar por aquí.\n\nTe puedo ofrecer:\n0) La primera con disponibilidad (mín. 3 días de antelación)\n1) Harolyn\n2) Marta\n3) Pilar\n4) Victor\n\n¿Cuál prefieres?",
+      "latency_ms": 14224,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "carmen_not_found — correctly informed customer, offered alternatives"
+    },
+    {
+      "turn": 5,
+      "user_message": "Ah no la conoces? Bueno, pon con Marta entonces",
+      "agent_response": "No he podido entender la fecha. ¿Qué día exacto de esta semana te viene bien?",
+      "latency_ms": 19312,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "stylist_selected_marta — date not yet extracted"
+    },
+    {
+      "turn": 6,
+      "user_message": "El jueves por la mañana",
+      "agent_response": "Perdona, para Marta la primera fecha válida es el viernes 12 de junio.\n\nTengo estos huecos con Marta:\n1. Viernes 12 de junio a las 11:20\n2. Viernes 12 de junio a las 12:40\n3. Viernes 12 de junio a las 14:00\n4. Viernes 12 de junio a las 15:20\n\n¿Cuál te viene mejor?",
+      "latency_ms": 14481,
+      "timed_out": false,
+      "tool_calls_observed": ["check_availability"],
+      "bugs": [],
+      "milestone": "availability_checked — thursday blocked, offered friday slots"
+    },
+    {
+      "turn": 7,
+      "user_message": "La de las 11:20, me va bien",
+      "agent_response": "Perfecto, Raquel, te lo dejo el viernes 12 de junio a las 11:20 con Marta para corte de mujer y tinte. ¿Te lo confirmo?",
+      "latency_ms": 18790,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "slot_selected — pre-confirmation"
+    },
+    {
+      "turn": 8,
+      "user_message": "Sí, confirma",
+      "agent_response": "Para registrar la cita, ¿me das tu nombre y primer apellido?",
+      "latency_ms": 22988,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "name_gate — new customer, requesting identity"
+    },
+    {
+      "turn": 9,
+      "user_message": "Raquel Martínez",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "latency_ms": 23598,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "policy_gate_shown"
+    },
+    {
+      "turn": 10,
+      "user_message": "Sí, acepto",
+      "agent_response": "¿Hay algo más que deba tener en cuenta para tu cita?",
+      "latency_ms": 16428,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "policy_accepted"
+    },
+    {
+      "turn": 11,
+      "user_message": "No, nada más",
+      "agent_response": "Listo, reserva confirmada ✅\n\nViernes 12 de junio a las 11:20 con Marta para corte de mujer y tinte.\n\nTe dejo también el enlace para añadirla a tu calendario:\nhttps://calendar.google.com/calendar/render?action=TEMPLATE&text=Corte%20de%20Mujer%2C%20Tinte%20en%20Atr%C3%A9vete&dates=20260612T092000Z/20260612T104000Z&details=Turno%20con%20Marta&location=Atr%C3%A9vete%20Sal%C3%B3n%20de%20Belleza",
+      "latency_ms": 31909,
+      "timed_out": false,
+      "tool_calls_observed": ["book"],
+      "bugs": [],
+      "milestone": "booked"
+    }
+  ],
+  "bugs": [],
+  "milestones_reached": [
+    "memory_miss",
+    "audience_disambiguation",
+    "services_confirmed",
+    "carmen_not_found",
+    "stylist_selected_marta",
+    "availability_checked",
+    "slot_selected",
+    "name_gate",
+    "policy_gate_shown",
+    "policy_accepted",
+    "booked"
+  ],
+  "db_delta": {
+    "customer_count_delta": 1,
+    "appt_count_delta": 1
+  },
+  "snapshot_before": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "snapshot_after": {
+    "customer_count": 1,
+    "appt_count": 1
+  },
+  "final_state": {
+    "has_checkpoint": false
+  },
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "booked",
+    "notes": "smoke test — no pre-loaded history, expected bot to ask for service clarification then proceed to booking"
+  },
+  "passed": true,
+  "qa_observations": {
+    "memory_used": false,
+    "agent_notes_accessed": false,
+    "carmen_handling": "correctly informed customer Carmen is not in the stylist list, offered alternatives without hallucinating",
+    "policy_gate_triggered": true,
+    "policy_accepted_at_turn": 10,
+    "gcal_sync_status": "not_applicable",
+    "appointment_status": "confirmed"
+  }
+}

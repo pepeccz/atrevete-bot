@@ -1,0 +1,144 @@
+{
+  "scenario_id": "change-c-cancel-flow",
+  "conversation_id": "76629f8d-1af7-4204-9aa0-d488edaf5ffd",
+  "outcome": "stuck",
+  "turns_taken": 10,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, soy Lucía. Quiero reservar un corte de pelo.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Para quién es el corte: señora, caballero, niña, niño o bebé?",
+      "latency_ms": 10888,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "greeting"
+    },
+    {
+      "turn": 2,
+      "user_message": "Para señora.",
+      "agent_response": "Perfecto, te anoto un corte de mujer. ¿Quieres añadir algún otro servicio a la cita o solo ese?",
+      "latency_ms": 18216,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "service_selected"
+    },
+    {
+      "turn": 3,
+      "user_message": "Solo el corte está bien. ¿Tenéis hueco el martes?",
+      "agent_response": "Para dejarlo reservado, me falta tu nombre y primer apellido.",
+      "latency_ms": 19672,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "date_requested"
+    },
+    {
+      "turn": 4,
+      "user_message": "Soy Lucía Herrera.",
+      "agent_response": "Perfecto, Lucía. ¿Hay alguna nota que deba tener en cuenta para tu cita?",
+      "latency_ms": 16663,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "name_collected"
+    },
+    {
+      "turn": 5,
+      "user_message": "No, sin notas. ¿Tenéis disponibilidad el martes?",
+      "agent_response": "Tengo huecos el martes 16 de junio, pero para reservarlo necesito que me digas una hora concreta.",
+      "latency_ms": 12994,
+      "timed_out": false,
+      "tool_calls_observed": ["check_availability"],
+      "bugs": [],
+      "milestone": "availability_checked"
+    },
+    {
+      "turn": 6,
+      "user_message": "A las 11 de la mañana.",
+      "agent_response": "A las 11:00 ya no está disponible. Te quedan estas opciones para el martes 16 de junio:\n\n1. 10:00 con Marta\n2. 10:00 con Victor\n3. 10:00 con Harolyn\n\n¿Cuál te viene mejor?",
+      "latency_ms": 15357,
+      "timed_out": false,
+      "tool_calls_observed": ["check_availability"],
+      "bugs": [],
+      "milestone": "slot_options_offered"
+    },
+    {
+      "turn": 7,
+      "user_message": "La opción 1, con Marta a las 10.",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "latency_ms": 15492,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "policy_gate_presented"
+    },
+    {
+      "turn": 8,
+      "user_message": "Sí, acepto la política.",
+      "agent_response": "Me falta volver a registrar tu aceptación de la política para poder confirmar la cita. ¿La aceptas?",
+      "latency_ms": 32698,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": ["context_loss: bot re-asked for policy acceptance after user already accepted in this same turn — possible accept_policy tool call failed silently"],
+      "milestone": "policy_loop"
+    },
+    {
+      "turn": 9,
+      "user_message": "Sí, acepto.",
+      "agent_response": "¡Listo, Lucía! Te queda reservada la cita para el martes 16 de junio a las 10:00 con Marta para un corte de mujer.\n\nPuedes añadirla a tu calendario aquí:\nhttps://calendar.google.com/calendar/render?action=TEMPLATE&text=Corte%20de%20Mujer%20en%20Atr%C3%A9vete&dates=20260616T080000Z/20260616T084000Z&details=Turno%20con%20Marta&location=Atr%C3%A9vete%20Sal%C3%B3n%20de%20Belleza",
+      "latency_ms": 21258,
+      "timed_out": false,
+      "tool_calls_observed": ["book"],
+      "bugs": [],
+      "milestone": "booking_confirmed"
+    },
+    {
+      "turn": 10,
+      "user_message": "Tengo un imprevisto y no voy a poder ir. Necesito cancelar la cita.",
+      "agent_response": "Para cancelarla necesito identificar cuál es la cita exacta. Si quieres, te la localizo y la cancelamos.",
+      "latency_ms": 12933,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "cancel_initiated"
+    }
+  ],
+  "bugs": [
+    {
+      "turn": 8,
+      "category": "context_loss",
+      "description": "Bot re-asked for policy acceptance immediately after user said 'Sí, acepto la política.' — accept_policy tool call appears to have silently failed, causing a redundant policy loop (took 2 turns to accept instead of 1)"
+    }
+  ],
+  "milestones_reached": ["greeting", "service_selected", "date_requested", "name_collected", "availability_checked", "slot_options_offered", "policy_gate_presented", "booking_confirmed", "cancel_initiated"],
+  "db_delta": {
+    "customer_count_delta": 1,
+    "appt_count_delta": 1
+  },
+  "snapshot_before": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "snapshot_after": {
+    "customer_count": 1,
+    "appt_count": 1,
+    "appt_status": "pending",
+    "gcal_sync_status": "not_applicable"
+  },
+  "final_state": {
+    "has_checkpoint": false
+  },
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "cancelled",
+    "db_appointment": {
+      "status": "cancelled"
+    },
+    "tool_calls_required": ["book", "manage_appointments"],
+    "tool_calls_forbidden": [],
+    "tags": ["change-c", "cancel"]
+  },
+  "passed": false
+}

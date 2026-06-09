@@ -1,0 +1,107 @@
+{
+  "scenario_id": "change-a-min-days-from-settings",
+  "conversation_id": "3a2ae3f3-5de7-436b-b9bc-37eaa2224de5",
+  "outcome": "stuck",
+  "turns_taken": 6,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, ¿podéis darme cita para hoy? Necesito urgente un tinte.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nNecesito que me digas el servicio con el nombre exacto del catálogo, porque no he podido identificarlo por ahora.",
+      "latency_ms": 9276,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "greeting"
+    },
+    {
+      "turn": 2,
+      "user_message": "Tinte. ¿Podéis hoy mismo?",
+      "agent_response": "No he podido registrar \"tinte\" todavía. En el catálogo tengo varios servicios de color y necesito que me digas cuál quieres exactamente: **Tinte** o **Tinte para hombre**.",
+      "latency_ms": 9005,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "service_disambiguation"
+    },
+    {
+      "turn": 3,
+      "user_message": "Tinte, el normal. Para hoy si podéis.",
+      "agent_response": "No puedo avanzar con \"tinte\" porque necesito que me lo confirmes con el nombre exacto del catálogo.\n\nTengo estas opciones de color:\n- **Tinte**\n- **Tinte para hombre**\n\n¿Cuál quieres?",
+      "latency_ms": 13729,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [
+        {"type": "redundant_question", "detail": "Bot re-asks Tinte vs Tinte para hombre after user already said 'Tinte, el normal' in turn 2"}
+      ],
+      "milestone": null
+    },
+    {
+      "turn": 4,
+      "user_message": "Quiero Tinte, el primero de la lista.",
+      "agent_response": "Perfecto, pero sigo sin poder reservarlo todavía porque me falta poder registrar bien el servicio del catálogo.\n\nDime solo esto: **¿quieres Tinte o Tinte para hombre?**",
+      "latency_ms": 17304,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [
+        {"type": "context_loss", "detail": "Bot repeatedly fails to accept 'Tinte' as a valid catalog match despite user saying the exact name 3 times"},
+        {"type": "redundant_question", "detail": "Same disambiguation question asked a third time"}
+      ],
+      "milestone": null
+    },
+    {
+      "turn": 5,
+      "user_message": "TINTE. El servicio se llama Tinte.",
+      "agent_response": "No me está dejando registrar ese servicio desde aquí.\n\nSi quieres, te paso con una persona del salón para que te ayude a reservarlo hoy mismo.",
+      "latency_ms": 18695,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [
+        {"type": "context_loss", "detail": "Bot failed to match 'Tinte' (exact catalog name) across 4 turns and offered escalation instead of calling check_availability"}
+      ],
+      "milestone": null
+    },
+    {
+      "turn": 6,
+      "user_message": "No hace falta humano. Quiero reservar el Tinte para hoy ¿es posible o no?",
+      "agent_response": "No puedo confirmártelo por chat ahora mismo. Si quieres, puedo ayudarte a intentarlo otra vez cuando me pases el servicio exacto del catálogo tal y como aparece.",
+      "latency_ms": 14274,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [
+        {"type": "context_loss", "detail": "At turn 6 bot still claims it cannot match the service, never called check_availability or book, never rejected on min-days policy"}
+      ],
+      "milestone": null
+    }
+  ],
+  "bugs": [
+    {"turn": 3, "type": "redundant_question", "detail": "Bot re-asks Tinte vs Tinte para hombre after user explicitly said 'Tinte, el normal'"},
+    {"turn": 4, "type": "context_loss", "detail": "Bot fails to accept exact catalog name 'Tinte' across multiple turns"},
+    {"turn": 4, "type": "redundant_question", "detail": "Same disambiguation question asked 3+ times"},
+    {"turn": 5, "type": "context_loss", "detail": "Offered escalation instead of calling check_availability with the unambiguous service name"},
+    {"turn": 6, "type": "context_loss", "detail": "Never called check_availability or rejected on min-days policy; bot got stuck in disambiguation loop for all 6 turns"}
+  ],
+  "milestones_reached": ["greeting"],
+  "db_delta": {
+    "customer_count_delta": 0,
+    "appt_count_delta": 0
+  },
+  "snapshot_before": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "snapshot_after": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "final_state": {"has_checkpoint": false},
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "rejected",
+    "db_appointment": null,
+    "tool_calls_required": ["check_availability"],
+    "tool_calls_forbidden": ["book"],
+    "tags": ["change-a", "min-days", "settings"]
+  },
+  "passed": false
+}

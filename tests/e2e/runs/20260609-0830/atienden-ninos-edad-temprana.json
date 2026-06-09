@@ -1,0 +1,54 @@
+{
+  "scenario_id": "atienden-ninos-edad-temprana",
+  "conversation_id": "335728a2-35bf-4cc1-bb42-4547bb2577b8",
+  "outcome": "info_provided",
+  "turns_taken": 2,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, ¿le pueden cortar el pelo a un niño de 4 años?",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nSí, claro. Para un niño de 4 años sería un **corte de niño**.  \n¿Qué día te viene bien?",
+      "latency_ms": 14887,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "info_answered_kids_audience"
+    },
+    {
+      "turn": 2,
+      "user_message": "Gracias, ya te digo cuando sepamos el día.",
+      "agent_response": "Perfecto, cuando lo tengáis claro me dices y lo miramos.",
+      "latency_ms": 8522,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "conversation_closed_naturally"
+    }
+  ],
+  "bugs": [],
+  "milestones_reached": ["info_answered_kids_audience", "conversation_closed_naturally"],
+  "db_delta": {
+    "customer_count_delta": 0,
+    "appt_count_delta": 0
+  },
+  "snapshot_before": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "snapshot_after": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "final_state": {
+    "has_checkpoint": false
+  },
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "info_provided",
+    "db_appointment": null,
+    "tool_calls_required": [],
+    "tool_calls_forbidden": [],
+    "tags": ["operational", "audience", "kids"]
+  },
+  "passed": true
+}

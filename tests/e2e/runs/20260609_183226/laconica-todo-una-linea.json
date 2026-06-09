@@ -1,0 +1,118 @@
+{
+  "scenario_id": "laconica-todo-una-linea",
+  "conversation_id": "c5b7d0f5-24d0-4409-9ca9-1c2625505d91",
+  "outcome": "booked",
+  "turns_taken": 7,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Corte dama mañana 17h Carmen.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Para quién es la cita: señora, caballero, niña, niño o bebé?",
+      "latency_ms": 10868,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "disclosure_shown",
+      "notes": "Bot showed disclosure and asked audience. Did NOT re-ask service/date/time/stylist — those were retained from the one-liner. Audience clarification is a structural step (DisclosureMiddleware → audience resolution), not a slot re-ask."
+    },
+    {
+      "turn": 2,
+      "user_message": "Señora.",
+      "agent_response": "No me aparece la estilista Carmen en el equipo. Te puedo reservar con una de estas o con la primera con disponibilidad:\n\n0) La primera con disponibilidad (mín. 3 días de antelación)\n1) Harolyn\n2) Marta\n3) Pilar\n4) Victor\n\n¿Cuál prefieres?",
+      "latency_ms": 13023,
+      "timed_out": false,
+      "tool_calls_observed": ["check_availability"],
+      "bugs": [],
+      "milestone": "stylist_disambiguation",
+      "notes": "Bot correctly processed all 4 slots from turn 1 (service=Corte Dama, date=mañana→constrained by 3-day minimum, time=17h→constrained, stylist=Carmen→not found). Offered valid alternatives without re-asking any already-provided slot."
+    },
+    {
+      "turn": 3,
+      "user_message": "Harolyn.",
+      "agent_response": "Lo siento, con Harolyn la primera fecha válida es el viernes 12 de junio, porque necesitamos al menos 3 días de antelación.\n\nTe dejo estos huecos con Harolyn:\n1) Viernes 12 de junio a las 10:00\n2) Viernes 12 de junio a las 10:20\n3) Viernes 12 de junio a las 11:20\n\n¿Cuál te viene mejor?",
+      "latency_ms": 11537,
+      "timed_out": false,
+      "tool_calls_observed": ["check_availability"],
+      "bugs": [],
+      "milestone": "slot_options_offered",
+      "notes": "3-day advance booking policy applied correctly. Bot did not re-ask service — carried forward Corte Dama."
+    },
+    {
+      "turn": 4,
+      "user_message": "1",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "latency_ms": 14346,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "policy_gate_shown"
+    },
+    {
+      "turn": 5,
+      "user_message": "Sí.",
+      "agent_response": "Perfecto. ¿Me das tu nombre y primer apellido?",
+      "latency_ms": 12274,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "policy_accepted"
+    },
+    {
+      "turn": 6,
+      "user_message": "Alejandra Pinto.",
+      "agent_response": "¿Alguna nota para Harolyn?",
+      "latency_ms": 17778,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "name_collected"
+    },
+    {
+      "turn": 7,
+      "user_message": "No.",
+      "agent_response": "¡Listo! Te ha quedado confirmada la cita para el viernes 12 de junio a las 10:00 con Harolyn.  \n\nTe dejo el enlace del calendario por si quieres guardarlo:\nhttps://calendar.google.com/calendar/render?action=TEMPLATE&text=Corte%20de%20Mujer%20en%20Atr%C3%A9vete&dates=20260612T080000Z/20260612T084000Z&details=Turno%20con%20Harolyn&location=Atr%C3%A9vete%20Sal%C3%B3n%20de%20Belleza",
+      "latency_ms": 33186,
+      "timed_out": false,
+      "tool_calls_observed": ["book"],
+      "bugs": [],
+      "milestone": "booking_confirmed"
+    }
+  ],
+  "bugs": [],
+  "milestones_reached": [
+    "disclosure_shown",
+    "stylist_disambiguation",
+    "slot_options_offered",
+    "policy_gate_shown",
+    "policy_accepted",
+    "name_collected",
+    "booking_confirmed"
+  ],
+  "db_delta": {
+    "customer_count_delta": 1,
+    "appt_count_delta": 1
+  },
+  "snapshot_before": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "snapshot_after": {
+    "customer_count": 1,
+    "appt_count": 1
+  },
+  "final_state": {
+    "has_checkpoint": false
+  },
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "booked",
+    "db_appointment": {
+      "status": "confirmed"
+    }
+  },
+  "passed": true,
+  "slot_parsing_assessment": {
+    "verdict": "WARN",
+    "detail": "Bot parsed all 4 slots from the one-liner in turn 1 (service=Corte Dama, date=mañana, time=17h, stylist=Carmen) but the audience question in turn 1 is a structural step (DisclosureMiddleware requires it for all new contacts), not a slot re-ask. After audience was resolved in turn 2, no slot was re-asked — the bot went straight to stylist disambiguation and slot availability. The WARN is for the audience clarification which consumes 1 extra turn and is unavoidable for new customers; this is a design constraint, not a regression."
+  }
+}

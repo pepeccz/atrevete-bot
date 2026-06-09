@@ -1,0 +1,113 @@
+{
+  "scenario_id": "change-a-tz-madrid",
+  "conversation_id": "2c2f077c-a644-4b24-a065-09529a22bf5a",
+  "outcome": "stuck",
+  "turns_taken": 6,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Buenas noches, ¿tenéis huecos mañana por la tarde?",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Para qué servicio lo quieres?",
+      "latency_ms": 10163,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "greeting"
+    },
+    {
+      "turn": 2,
+      "user_message": "Un corte de pelo, para mañana por la tarde si es posible",
+      "agent_response": "¿Para quién es el corte: señora, caballero, niña, niño o bebé?",
+      "latency_ms": 17348,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "service_disambiguation"
+    },
+    {
+      "turn": 3,
+      "user_message": "Para mí, señora",
+      "agent_response": "¿Quieres añadir algún otro servicio o solo el corte?",
+      "latency_ms": 23962,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "service_confirmed"
+    },
+    {
+      "turn": 4,
+      "user_message": "Solo el corte",
+      "agent_response": "No me ha quedado clara la fecha. ¿Me dices qué día y mes quieres, por ejemplo \"15 de mayo\"?",
+      "latency_ms": 20563,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [
+        {
+          "category": "context_loss",
+          "detail": "User said 'mañana por la tarde' in turn 1 and turn 2; bot asked for date again in turn 4 without having resolved 'mañana' from context"
+        }
+      ],
+      "milestone": null
+    },
+    {
+      "turn": 5,
+      "user_message": "10 de junio por la tarde",
+      "agent_response": "Lo siento, esa fecha no cumple la antelación mínima. La primera fecha válida es el viernes 12 de junio.\n\nEstas son las próximas citas disponibles:\n1. Viernes 12 de junio a las 10:00\n2. Viernes 12 de junio a las 10:40\n3. Viernes 12 de junio a las 11:20\n\n¿Cuál te viene mejor?",
+      "latency_ms": 15725,
+      "timed_out": false,
+      "tool_calls_observed": ["check_availability"],
+      "bugs": [
+        {
+          "category": "ignored_preference",
+          "detail": "Customer requested 'tarde' (afternoon); bot offered only morning slots (10:00, 10:40, 11:20). Possible TZ issue: slots offered may be correct Madrid-time but all are morning, not afternoon. Bot did not explain why no afternoon slots are available."
+        }
+      ],
+      "milestone": "availability_checked"
+    },
+    {
+      "turn": 6,
+      "user_message": "La primera, el viernes 12 a las 10:00",
+      "agent_response": "Perfecto, te lo dejo el viernes 12 de junio a las 10:00 con Marta para corte de mujer. ¿Te lo confirmo?",
+      "latency_ms": 17196,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "confirmation_pending"
+    }
+  ],
+  "bugs": [
+    {
+      "turn": 4,
+      "category": "context_loss",
+      "detail": "'mañana' from turns 1+2 was not retained; bot re-asked for date"
+    },
+    {
+      "turn": 5,
+      "category": "ignored_preference",
+      "detail": "Customer asked for 'tarde' (afternoon); all offered slots are morning (10:00-11:20). No afternoon slots offered or explanation given"
+    }
+  ],
+  "milestones_reached": ["greeting", "service_disambiguation", "service_confirmed", "availability_checked", "confirmation_pending"],
+  "db_delta": {
+    "customer_count_delta": 0,
+    "appt_count_delta": 0
+  },
+  "snapshot_before": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "snapshot_after": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "final_state": {"has_checkpoint": false},
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "booked",
+    "db_appointment": {"status": "confirmed"},
+    "tool_calls_required": ["check_availability"],
+    "tool_calls_forbidden": [],
+    "tags": ["change-a", "timezone", "madrid"]
+  },
+  "passed": false
+}

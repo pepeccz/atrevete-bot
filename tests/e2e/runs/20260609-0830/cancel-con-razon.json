@@ -1,0 +1,71 @@
+{
+  "scenario_id": "cancel-con-razon",
+  "conv_id": "724aea70-25fe-4d2d-9fea-98a2b1a1b0ef",
+  "run_at": "2026-06-09T08:30:00Z",
+  "persona": {
+    "name": "Isabel Dominguez",
+    "phone": "+34999000023"
+  },
+  "turns": [
+    {
+      "turn": 1,
+      "user": "Hola, tengo cita mañana pero estoy con fiebre, prefiero cancelarla.",
+      "agent": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nLo siento, pero esa cita del miércoles 10 de junio a las 13:00 está demasiado cerca: ya no se puede cancelar por este medio porque faltan menos de 48 horas. Por favor, contacta directamente con el equipo.",
+      "timed_out": false,
+      "response_latency_ms": 12183,
+      "tool_evidence": []
+    },
+    {
+      "turn": 2,
+      "user": "Estoy enferma, no puedo ir de ninguna manera. ¿No hay otra forma?",
+      "agent": "Lo siento, no puedo resolver esa excepción por aquí. Te recomiendo que llames directamente al salón para que te ayuden cuanto antes.",
+      "timed_out": false,
+      "response_latency_ms": 11263,
+      "tool_evidence": []
+    }
+  ],
+  "db_snapshot_before": {
+    "appointment_id": "cf391d74-dab1-45a6-b20c-ef4d79a56087",
+    "status": "confirmed",
+    "start_time": "2026-06-10T11:00:00+00:00",
+    "service": "Corte de Mujer"
+  },
+  "db_snapshot_after": {
+    "appointment_id": "cf391d74-dab1-45a6-b20c-ef4d79a56087",
+    "status": "confirmed",
+    "cancellation_reason": null
+  },
+  "final_state": {
+    "has_checkpoint": false
+  },
+  "langfuse_traces": null,
+  "outcome": "FAIL",
+  "outcome_reason": "Appointment not cancelled. Bot correctly applied 48h cancellation window policy (appointment was for tomorrow = within 48h) and escalated to human contact — this is policy-correct behavior. However, scenario expects outcome='cancelled' with manage_appointments tool required. The scenario seeded an appointment within the 48h cancellation window, so the bot's response is actually CORRECT per business rules. Scenario design mismatch: appointment created less than 48h ahead triggers policy gate before manage_appointments is ever called. No tool was called; appointment remains 'confirmed'.",
+  "expected": {
+    "outcome": "cancelled",
+    "db_appointment_status": "cancelled",
+    "tool_calls_required": ["manage_appointments"],
+    "tool_calls_forbidden": ["book", "update_booking"]
+  },
+  "actual": {
+    "outcome": "out_of_scope_handled",
+    "db_appointment_status": "confirmed",
+    "tool_calls_observed": [],
+    "tool_calls_required_met": false,
+    "tool_calls_forbidden_violated": false
+  },
+  "bugs": [
+    {
+      "severity": "WARNING",
+      "type": "scenario_design",
+      "description": "Scenario seeds appointment for tomorrow (< 48h ahead). Bot correctly enforces 48h cancellation-window policy and escalates without calling manage_appointments. Expected outcome 'cancelled' is unreachable under current policy rules when appointment is within the cancellation window. Scenario should either: (a) seed appointment 3+ days out so cancellation flows normally, or (b) update expected outcome to 'out_of_scope_handled' to reflect the escalation path.",
+      "bot_behavior_correct": true,
+      "scenario_fix_needed": true
+    }
+  ],
+  "reset_summary": {
+    "appointments_deleted": 1,
+    "customer_deleted": true,
+    "clean": false
+  }
+}

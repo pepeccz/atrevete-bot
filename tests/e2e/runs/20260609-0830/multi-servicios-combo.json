@@ -1,0 +1,154 @@
+{
+  "scenario_id": "multi-servicios-combo",
+  "conversation_id": "bfe87e83-6e62-4fd5-ad7e-139d0806af1b",
+  "outcome": "booked",
+  "turns_taken": 9,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, quiero hacer corte y tinte la misma tarde si se puede.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nPara el corte, ¿es para señora, caballero, niña, niño o bebé?",
+      "latency_ms": 14314,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "greeting_ok"
+    },
+    {
+      "turn": 2,
+      "user_message": "Para señora, soy yo. Quiero corte y tinte en la misma cita.",
+      "agent_response": "Perfecto, te anoto corte y tinte. ¿Quieres añadir algún otro servicio a la cita o lo dejamos solo con esos dos?",
+      "latency_ms": 13218,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "combo_understood"
+    },
+    {
+      "turn": 3,
+      "user_message": "No, solo esos dos.",
+      "agent_response": "Tengo huecos para ti con la estilista con disponibilidad más próxima:\n\n1. Sábado 13 de junio a las 09:00\n2. Sábado 13 de junio a las 10:20\n3. Sábado 13 de junio a las 11:40\n\n¿Cuál te viene mejor?",
+      "latency_ms": 18697,
+      "timed_out": false,
+      "tool_calls_observed": ["check_availability"],
+      "bugs": [
+        {
+          "type": "ignored_preference",
+          "detail": "Customer said 'tarde' (afternoon). Bot offered morning slots (09:00, 10:20, 11:40) without attempting afternoon search first."
+        }
+      ],
+      "milestone": "availability_checked"
+    },
+    {
+      "turn": 4,
+      "user_message": "Prefería por la tarde, ¿hay algo a partir de las 16 o 17 horas?",
+      "agent_response": "Ahora mismo, en la búsqueda próxima no me salen huecos a partir de las 16:00 o las 17:00.\n\nSi quieres, te paso las opciones más cercanas que sí tengo disponibles.",
+      "latency_ms": 11459,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "afternoon_unavailable_communicated"
+    },
+    {
+      "turn": 5,
+      "user_message": "Vale, entonces dame el horario que tengas para corte y tinte juntos, aunque sea por la mañana del sábado.",
+      "agent_response": "Sí, para el sábado por la mañana tengo estos huecos con Marta:\n\n1. Sábado 13 de junio a las 09:00\n2. Sábado 13 de junio a las 10:20\n3. Sábado 13 de junio a las 11:40\n\n¿Cuál prefieres?",
+      "latency_ms": 19100,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "slots_reoffered"
+    },
+    {
+      "turn": 6,
+      "user_message": "El de las 10:20 perfecto.",
+      "agent_response": "Perfecto, te lo dejo el sábado 13 de junio a las 10:20 con Marta para corte de mujer y tinte. ¿Te lo confirmo?",
+      "latency_ms": 16051,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "slot_selected"
+    },
+    {
+      "turn": 7,
+      "user_message": "Sí, confírmame.",
+      "agent_response": "Perfecto. Para dejarla cerrada me falta tu nombre y primer apellido.",
+      "latency_ms": 22235,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "name_requested"
+    },
+    {
+      "turn": 8,
+      "user_message": "Daniela Ferrer.",
+      "agent_response": "¿Hay alguna nota que quieras que tenga en cuenta para tu cita?",
+      "latency_ms": 24360,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "name_collected"
+    },
+    {
+      "turn": 9,
+      "user_message": "No, ninguna nota.",
+      "agent_response": "Listo, Daniela: tu cita queda confirmada para el sábado 13 de junio a las 10:20 con Marta, para corte de mujer y tinte.\n\nAquí tienes el enlace para añadirla al calendario:\nhttps://calendar.google.com/calendar/render?action=TEMPLATE&text=Corte%20de%20Mujer%2C%20Tinte%20en%20Atr%C3%A9vete&dates=20260613T082000Z/20260613T094000Z&details=Turno%20con%20Marta&location=Atr%C3%A9vete%20Sal%C3%B3n%20de%20Belleza",
+      "latency_ms": 27715,
+      "timed_out": false,
+      "tool_calls_observed": ["book"],
+      "bugs": [],
+      "milestone": "booking_confirmed"
+    }
+  ],
+  "bugs": [
+    {
+      "turn": 3,
+      "type": "ignored_preference",
+      "detail": "Customer explicitly said 'tarde' (afternoon) in the opening intent. Bot called check_availability without the afternoon time constraint and returned morning slots (09:00, 10:20, 11:40) as first offer. The bot should attempt afternoon slots first before falling back to morning."
+    }
+  ],
+  "milestones_reached": [
+    "greeting_ok",
+    "combo_understood",
+    "availability_checked",
+    "afternoon_unavailable_communicated",
+    "slots_reoffered",
+    "slot_selected",
+    "name_requested",
+    "name_collected",
+    "booking_confirmed"
+  ],
+  "db_delta": {
+    "customer_count_delta": 1,
+    "appt_count_delta": 1
+  },
+  "snapshot_before": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "snapshot_after": {
+    "customer_count": 1,
+    "appt_count": 1,
+    "appointment_details": {
+      "status": "confirmed",
+      "start_time": "2026-06-13T08:20:00+00:00",
+      "duration_minutes": 80,
+      "num_services": 2
+    }
+  },
+  "final_state": {
+    "has_checkpoint": false,
+    "note": "Checkpoint cleared after run completion — state_reset ran post-booking."
+  },
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "booked",
+    "db_appointment": {
+      "status": "confirmed"
+    },
+    "tool_calls_required": ["check_availability", "book"],
+    "tool_calls_forbidden": [],
+    "tags": ["multi-intent", "combo", "complex"]
+  },
+  "passed": true
+}

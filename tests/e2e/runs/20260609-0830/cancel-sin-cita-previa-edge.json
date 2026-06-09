@@ -1,0 +1,61 @@
+{
+  "scenario_id": "cancel-sin-cita-previa-edge",
+  "conv_id": "9a3b95b1-d4c1-4959-834f-3af500d0a58b",
+  "run_ts": "20260609-0830",
+  "outcome": "out_of_scope_handled",
+  "verdict": "PASS",
+  "persona": {
+    "name": "Rosa Aguilar",
+    "phone": "+34999000024"
+  },
+  "db_snapshot": {
+    "pre_run_appointments": 0,
+    "post_run_appointments": 0,
+    "customer_created": false,
+    "phantom_appointment_created": false
+  },
+  "turns": [
+    {
+      "turn": 1,
+      "user": "Hola, quiero cancelar mi cita del jueves.",
+      "bot": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nNo tienes citas programadas en este momento. Si quieres, puedo ayudarte a reservar una nueva cita.",
+      "latency_ms": 25959,
+      "tool_calls": [],
+      "timed_out": false
+    },
+    {
+      "turn": 2,
+      "user": "Pero si tengo una cita el jueves, la reservé la semana pasada.",
+      "bot": "No puedo confirmarte citas no visibles en el sistema. Ahora mismo me consta que no tienes citas programadas.\n\nSi quieres, puedo ayudarte a reservar una nueva cita o, si prefieres, te derivo con una persona.",
+      "latency_ms": 12652,
+      "tool_calls": [],
+      "timed_out": false
+    },
+    {
+      "turn": 3,
+      "user": "Estoy segura que la reservé! Era para el jueves a las 11. No puede ser que no aparezca.",
+      "bot": "No puedo verificar esa cita desde aquí y tampoco he podido transferirte ahora mismo.\n\nSi quieres, lo más rápido es que nos llames directamente para revisarlo contigo.",
+      "latency_ms": 20912,
+      "tool_calls": [],
+      "timed_out": false
+    }
+  ],
+  "final_state": {
+    "has_checkpoint": false,
+    "note": "Policy gate not passed — customer record not persisted"
+  },
+  "langfuse_traces": null,
+  "bugs": [],
+  "checks": {
+    "L1_no_phantom_appointment": "PASS",
+    "L2_manage_appointments_called": "WARNING — tool not called (policy gate blocked flow before tool use)",
+    "L3_book_not_called": "PASS",
+    "L4_outcome_matches": "PASS",
+    "L5_response_quality": 4.0
+  },
+  "notes": "Bot correctly refused to create phantom appointment. Politely informed no appointment exists on turn 1. Held firm on turns 2-3 when persona insisted. Offered escalation path (call the salon) on turn 3. Policy gate prevented customer record creation — this is expected for a new contact who never completes booking.",
+  "warnings": [
+    "manage_appointments tool was NOT called — bot responded from system context only. This could mean the policy gate blocked evaluation before tool invocation, OR the LLM inferred no-appointment state from empty context without a DB lookup. Recommend verifying if manage_appointments should always be called for cancel intents.",
+    "Escalation path offered (call salon) but escalation_tools were not invoked — bot gave a manual instruction instead of a formal human-handoff signal."
+  ]
+}

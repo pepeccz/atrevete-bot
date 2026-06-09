@@ -1,0 +1,184 @@
+{
+  "scenario_id": "multi-cita-pareja",
+  "conv_id": "ebe64d41-3e72-4c7c-8d50-8f01f0b0f899",
+  "run_started_at": "2026-06-09T08:30:00Z",
+  "persona": {
+    "name": "Mónica Salinas",
+    "phone": "+34999000026",
+    "style": "Quiere reservar para ella y para su marido al mismo tiempo. Ella quiere corte dama, él quiere corte caballero. Espera salir junto en el slot."
+  },
+  "turns": [
+    {
+      "turn": 1,
+      "user": "Hola, queremos venir mi marido y yo a la vez, yo un corte y él también.",
+      "agent": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nPara anotarlo bien, necesito separar a quién va cada corte: ¿el tuyo es de mujer y el de tu marido de hombre?",
+      "timed_out": false,
+      "response_latency_ms": 9024,
+      "tool_evidence": []
+    },
+    {
+      "turn": 2,
+      "user": "Sí, yo corte de mujer y mi marido corte de caballero. Queremos ir juntos el sábado por la mañana si es posible.",
+      "agent": "Para dejarlo bien cerrado: ¿tu corte es de mujer y el de tu marido de caballero, verdad?",
+      "timed_out": false,
+      "response_latency_ms": 13787,
+      "tool_evidence": []
+    },
+    {
+      "turn": 3,
+      "user": "Sí, exactamente.",
+      "agent": "Perfecto: tu corte sería de mujer y el de tu marido, de caballero. ¿Te parece si te busco opciones para el sábado por la mañana?",
+      "timed_out": false,
+      "response_latency_ms": 14777,
+      "tool_evidence": []
+    },
+    {
+      "turn": 4,
+      "user": "Sí, busca opciones para el sábado por la mañana.",
+      "agent": "Perfecto. Para seguir, ¿me das tu nombre y primer apellido?",
+      "timed_out": false,
+      "response_latency_ms": 15273,
+      "tool_evidence": []
+    },
+    {
+      "turn": 5,
+      "user": "Soy Mónica Salinas.",
+      "agent": "Genial, Mónica. ¿Quieres dejarme alguna nota para la cita, por ejemplo si venís con prisa o si tenéis alguna preferencia?",
+      "timed_out": false,
+      "response_latency_ms": 22026,
+      "tool_evidence": []
+    },
+    {
+      "turn": 6,
+      "user": "No, sin notas. Busca disponibilidad.",
+      "agent": "Tengo que revalidar primero un hueco exacto antes de reservar. ¿Qué hora os viene mejor el sábado por la mañana: 9:00, 10:20 o 11:40?",
+      "timed_out": false,
+      "response_latency_ms": 18066,
+      "tool_evidence": []
+    },
+    {
+      "turn": 7,
+      "user": "Las 10:20 estaría bien.",
+      "agent": "Perfecto, Mónica: el sábado 13 de junio a las 10:20 con Marta para vuestros dos cortes. ¿Te lo confirmo?",
+      "timed_out": false,
+      "response_latency_ms": 13170,
+      "tool_evidence": []
+    },
+    {
+      "turn": 8,
+      "user": "Sí, confirma.",
+      "agent": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "timed_out": false,
+      "response_latency_ms": 23938,
+      "tool_evidence": []
+    },
+    {
+      "turn": 9,
+      "user": "Sí, acepto.",
+      "agent": "Se me ha adelantado ese hueco y ya no está disponible 😕 Si quieres, te propongo otras opciones para el sábado por la mañana.",
+      "timed_out": false,
+      "response_latency_ms": 23237,
+      "tool_evidence": []
+    },
+    {
+      "turn": 10,
+      "user": "Sí, muéstrame otras opciones.",
+      "agent": "Claro, tengo estas opciones para vuestros dos cortes:\n\n1. Martes 16 de junio a las 10:00 con Victor\n2. Martes 16 de junio a las 11:20 con Marta\n3. Martes 16 de junio a las 12:40 con Marta\n\n¿Cuál os viene mejor?",
+      "timed_out": false,
+      "response_latency_ms": 14966,
+      "tool_evidence": []
+    },
+    {
+      "turn": 11,
+      "user": "El martes 16 a las 10:00 con Victor.",
+      "agent": "Perfecto, Mónica: el martes 16 de junio a las 10:00 con Victor para vuestros dos cortes. ¿Te lo confirmo?",
+      "timed_out": false,
+      "response_latency_ms": 20375,
+      "tool_evidence": []
+    },
+    {
+      "turn": 12,
+      "user": "Sí, confirma.",
+      "agent": "¡Listo! Reserva confirmada para el martes 16 de junio a las 10:00 con Victor.\n\nTe dejo el enlace para añadirla a tu calendario:\nhttps://calendar.google.com/calendar/render?action=TEMPLATE&text=Corte%20de%20Mujer%2C%20Corte%20de%20Hombre%20en%20Atr%C3%A9vete&dates=20260616T080000Z/20260616T092000Z&details=Turno%20con%20Victor&location=Atr%C3%A9vete%20Sal%C3%B3n%20de%20Belleza",
+      "timed_out": false,
+      "response_latency_ms": 21421,
+      "tool_evidence": []
+    }
+  ],
+  "final_state": {
+    "has_checkpoint": false
+  },
+  "db_delta": {
+    "appointments_before": 3,
+    "customers_before": 2,
+    "appointments_created": 1,
+    "appointment": {
+      "id": "c6bba482-faf9-4275-93ca-31c7e9845e5f",
+      "status": "confirmed",
+      "start_time": "2026-06-16T08:00:00Z",
+      "service_ids": [
+        "cb7ae91c-97ff-e1d1-3b0b-696b11467add",
+        "39251edd-8ac0-efb3-9836-fa744baa08cc"
+      ],
+      "services": ["Corte de Mujer", "Corte de Hombre"],
+      "stylist": "Victor",
+      "gcal_sync_status": "not_applicable"
+    }
+  },
+  "langfuse_traces": null,
+  "outcome": "partial_completed",
+  "expected_outcome": "multi_completed",
+  "verdict": "WARN",
+  "bugs": [
+    {
+      "id": "BUG-01",
+      "severity": "HIGH",
+      "title": "Bot proposed slot before calling check_availability — slot collision on confirmation",
+      "description": "At turns 6-7 the bot proposed 'sábado 13 de junio a las 10:20 con Marta' without any check_availability tool call (tool_evidence=[]). When the user confirmed after policy acceptance (turn 9), the book tool found the slot unavailable and rejected it. This is a classic optimistic-proposal / slot-race bug: the bot is fabricating slots from internal context/availability cache without real-time validation at proposal time.",
+      "turns_affected": [6, 7, 9],
+      "root_cause_hypothesis": "AvailabilityContextMiddleware may pre-hydrate a slot list into state that the LLM reads and presents without calling check_availability. The book tool correctly validates at commit time but the UX already told the user the slot was hers.",
+      "files_to_investigate": [
+        "agent/middleware/availability_context.py",
+        "agent/tools/check_availability.py",
+        "agent/tools/book.py",
+        "agent/prompts/shared/booking_flow.md"
+      ]
+    },
+    {
+      "id": "BUG-02",
+      "severity": "MEDIUM",
+      "title": "Dual-customer booking lands as single appointment with 2 service_ids — not 2 separate appointments",
+      "description": "The scenario expected 2 separate appointments (one for Mónica, one for her husband) so they could be independently managed. The bot booked both services into a single appointment row (1 row, service_ids=[Corte Mujer UUID, Corte Hombre UUID]). This means if the husband needs to cancel independently, or wants a different stylist, there is no separate record to operate on. Expected outcome was multi_completed (2 appointments), actual is 1.",
+      "turns_affected": [12],
+      "root_cause_hypothesis": "The book tool does not support booking on behalf of a second unnamed customer in the same conversation. It appended the second service to the same appointment rather than creating two separate bookings for two distinct customers.",
+      "files_to_investigate": [
+        "agent/tools/book.py",
+        "agent/tools/schemas.py"
+      ]
+    },
+    {
+      "id": "BUG-03",
+      "severity": "LOW",
+      "title": "Excessive clarification loop (3 turns) before searching availability",
+      "description": "Turns 1-3 are a 3-turn echo loop where the bot re-confirms the same information ('corte mujer / corte caballero') already provided in turn 1. This wastes 2 turns (14 turn budget consumed) and degrades UX for a straightforward dual-service scenario. Expected: 1 clarification turn maximum, then proceed to customer identification.",
+      "turns_affected": [1, 2, 3],
+      "root_cause_hypothesis": "Prompt rules may require explicit confirmation before proceeding for multi-intent messages, but the loop fires twice instead of once.",
+      "files_to_investigate": [
+        "agent/prompts/shared/booking_flow.md",
+        "agent/prompts/shared/critical_rules.md"
+      ]
+    }
+  ],
+  "tool_calls_observed": [],
+  "tool_calls_required": ["check_availability", "book"],
+  "tool_calls_forbidden": [],
+  "tool_calls_verdict": "FAIL — check_availability not observed in tool_evidence; book was called but only once for a single combined appointment",
+  "turns_used": 12,
+  "max_turns": 14,
+  "cleanup": {
+    "appointments_deleted": 1,
+    "customer_deleted": true,
+    "clean": false
+  },
+  "notes": "Final state has_checkpoint=false because the agent container does not persist LangGraph checkpoints to the API container's Redis view (different container scope for state read). Cleanup=clean:false is expected — a Redis scan artifact; DB cleanup succeeded."
+}

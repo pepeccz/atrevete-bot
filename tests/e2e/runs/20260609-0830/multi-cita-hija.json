@@ -1,0 +1,165 @@
+{
+  "scenario_id": "multi-cita-hija",
+  "conversation_id": "f39e7846-22ad-4d4f-9682-369ede98c01e",
+  "outcome": "booked",
+  "turns_taken": 9,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, quiero reservar un corte para mi hija de 8 años, el sábado por la mañana.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nPerfecto, te anoto un corte para niña. ¿Quieres añadir algún otro servicio a la cita o solo ese?",
+      "latency_ms": 9359,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "service_identified_as_child_cut"
+    },
+    {
+      "turn": 2,
+      "user_message": "Solo el corte está bien, gracias.",
+      "agent_response": "No he podido entender bien el sábado concreto. ¿Me dices el día y el mes, por ejemplo "13 de junio"?",
+      "latency_ms": 11237,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "date_disambiguation_requested"
+    },
+    {
+      "turn": 3,
+      "user_message": "El sábado 14 de junio por la mañana, lo antes posible.",
+      "agent_response": "El sábado 14 no me aparece hueco. El primer hueco que tengo es el martes 16 de junio con Marta.\n\nTe dejo las próximas opciones:\n1. Martes 16 de junio a las 10:00 con Marta\n2. Martes 16 de junio a las 10:30 con Marta\n3. Martes 16 de junio a las 11:00 con Marta\n\n¿Cuál te viene mejor?",
+      "latency_ms": 13714,
+      "timed_out": false,
+      "tool_calls_observed": ["check_availability", "get_next_available_options"],
+      "bugs": [],
+      "milestone": "availability_checked_saturday_full_alternatives_offered"
+    },
+    {
+      "turn": 4,
+      "user_message": "Me viene mejor el sábado. ¿No hay nada con ninguna otra estilista?",
+      "agent_response": "He revisado todas las estilistas y no tengo hueco el sábado para ese corte. El primer hueco disponible sigue siendo el martes 16 de junio con Marta.\n\nTe dejo las opciones que hay:\n1. Martes 16 de junio a las 10:00 con Marta\n2. Martes 16 de junio a las 10:30 con Marta\n3. Martes 16 de junio a las 11:00 con Marta\n\n¿Cuál prefieres?",
+      "latency_ms": 12995,
+      "timed_out": false,
+      "tool_calls_observed": ["check_availability"],
+      "bugs": [],
+      "milestone": "all_stylists_checked_saturday_full"
+    },
+    {
+      "turn": 5,
+      "user_message": "Bueno, la primera del martes 16, las 10:00 con Marta.",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "latency_ms": 21317,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "slot_selected_policy_gate_triggered"
+    },
+    {
+      "turn": 6,
+      "user_message": "Sí, la acepto.",
+      "agent_response": "Perfecto. Para dejarte la cita reservada, ¿me das el nombre y primer apellido de la niña?",
+      "latency_ms": 14058,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "policy_accepted_daughter_name_requested"
+    },
+    {
+      "turn": 7,
+      "user_message": "Se llama Lucía Marín.",
+      "agent_response": "Perfecto, ya lo tengo casi listo. ¿Quieres añadir alguna nota para Marta, por ejemplo si tiene el pelo muy sensible o alguna preferencia?",
+      "latency_ms": 19068,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "daughter_name_captured"
+    },
+    {
+      "turn": 8,
+      "user_message": "No, nada más. Confírmame la cita por favor.",
+      "agent_response": "Perdona, se me ha vuelto a pedir la aceptación de la política justo antes de reservar y no puedo saltármelo. ¿La aceptas de nuevo para que te la deje cerrada?",
+      "latency_ms": 37228,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [
+        {
+          "type": "redundant_question",
+          "description": "Policy re-triggered after being accepted in Turn 6. The bot re-asked for policy acceptance before executing book tool, indicating the policy gate middleware did not persist the acceptance across the booking finalization step. This is a policy_accepted state persistence bug — likely the accept flag was saved under Teresa's partial customer record but lost or not found when the book tool was called with Lucía's data."
+        }
+      ],
+      "milestone": "policy_double_trigger_bug"
+    },
+    {
+      "turn": 9,
+      "user_message": "Ya la acepté antes, pero sí, la acepto de nuevo.",
+      "agent_response": "¡Listo! Te ha quedado reservada la cita para Lucía Marín el martes 16 de junio a las 10:00 con Marta para corte de niña. ✨\n\nAquí tienes el enlace para añadirla al calendario:\nhttps://calendar.google.com/calendar/render?action=TEMPLATE&text=Corte%20de%20Ni%C3%B1a%20en%20Atr%C3%A9vete&dates=20260616T080000Z/20260616T083000Z&details=Turno%20con%20Marta&location=Atr%C3%A9vete%20Sal%C3%B3n%20de%20Belleza",
+      "latency_ms": 20613,
+      "timed_out": false,
+      "tool_calls_observed": ["book"],
+      "bugs": [],
+      "milestone": "booking_confirmed_daughter_name_correct"
+    }
+  ],
+  "bugs": [
+    {
+      "turn": 8,
+      "type": "redundant_question",
+      "severity": "medium",
+      "description": "Policy acceptance re-triggered on Turn 8 after being accepted on Turn 6. Root cause: policy gate middleware likely re-checked acceptance when booking was being finalized with the child's name data, failing to find the prior acceptance — possibly because the customer record was not yet committed or the policy check runs again after customer data changes."
+    }
+  ],
+  "milestones_reached": [
+    "service_identified_as_child_cut",
+    "date_disambiguation_requested",
+    "availability_checked_saturday_full_alternatives_offered",
+    "all_stylists_checked_saturday_full",
+    "slot_selected_policy_gate_triggered",
+    "policy_accepted_daughter_name_requested",
+    "daughter_name_captured",
+    "booking_confirmed_daughter_name_correct"
+  ],
+  "db_delta": {
+    "customer_count_delta": 1,
+    "appt_count_delta": 1
+  },
+  "snapshot_before": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "snapshot_after": {
+    "customer_count": 1,
+    "appt_count": 1,
+    "appointment_detail": {
+      "status": "confirmed",
+      "start_time": "2026-06-16T08:00:00+00:00",
+      "first_name": "Lucía",
+      "last_name": "Marín",
+      "stylist": "Marta",
+      "customer_phone": "+34999000027",
+      "booked_by_customer_id": null
+    }
+  },
+  "final_state": {
+    "has_checkpoint": false
+  },
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "booked",
+    "db_appointment": {
+      "status": "confirmed"
+    },
+    "tool_calls_required": ["check_availability", "book"],
+    "tool_calls_forbidden": [],
+    "tags": ["multi-intent", "child", "on-behalf"]
+  },
+  "passed": true,
+  "observations": {
+    "third_party_booking_handled": true,
+    "daughter_name_requested": true,
+    "daughter_name_in_appointment": true,
+    "teresa_confused_with_lucia": false,
+    "audience_child_identified": true,
+    "policy_double_trigger": true,
+    "booked_by_customer_id_null": true
+  }
+}
