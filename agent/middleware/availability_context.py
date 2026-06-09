@@ -113,8 +113,8 @@ def _format_availability_xml(window: dict[str, list[dict]]) -> str:
             lines.append(f"  {date_label}: {slots_str}")
 
     lines.append(
-        "Fuente: DB; ventana válida ~60s. "
-        "Si el cliente elige uno, llama check_availability con slot_time para revalidar."
+        "--- Huecos orientativos. Revalida con check_availability antes de proponer "
+        "un slot concreto al cliente. ---"
     )
     lines.append("</availability>")
     return "\n".join(lines)

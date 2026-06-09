@@ -12,9 +12,20 @@ from typing import Annotated
 from langchain_core.tools import tool
 from langgraph.prebuilt import InjectedState
 
-from agent.services.escalation_service import perform_escalation
+from agent.services.escalation_service import EscalationResult, perform_escalation
 
 logger = logging.getLogger(__name__)
+
+# Map tool-level reason strings to escalation_service source values.
+# Keys match REASON_TO_NOTIFICATION_TYPE in escalation_service.py.
+_REASON_TO_SOURCE: dict[str, str] = {
+    "medical_consultation": "medical_consultation",
+    "manual_request": "manual_request",
+    "ambiguity": "ambiguity",
+    "technical_error": "technical_error",
+    "policy_rejection": "manual_request",
+}
+_DEFAULT_SOURCE = "auto_escalation"
 
 
 @tool
@@ -28,7 +39,7 @@ async def escalate(
     they are not tool arguments.
 
     Args:
-        reason: Brief reason for escalation (e.g., 'customer request', 'complex inquiry').
+        reason: Brief reason for escalation (e.g., 'medical_consultation', 'manual_request').
 
     Call this tool when the customer explicitly asks to speak with a person,
     or when the bot cannot handle the request adequately.
@@ -45,24 +56,19 @@ async def escalate(
         )
         return "Estado de conversación incompleto. No puedo transferir la conversación."
 
-    if not customer_phone:
-        logger.error(
-            "escalate.state.missing_customer_phone",
-            extra={"tool_name": "escalate"},
-        )
-        return "Estado de conversación incompleto. No puedo transferir la conversación."
+    source = _REASON_TO_SOURCE.get(reason, _DEFAULT_SOURCE)
 
     try:
-        result = await perform_escalation(
+        result: EscalationResult = await perform_escalation(
             conversation_id=conversation_id,
             customer_phone=customer_phone,
             reason=reason,
+            source=source,
         )
-        if result.get("success"):
-            return (
-                "He transferido tu conversación a un agente humano. "
-                "En breve alguien del equipo de Atrévete se pondrá en contacto contigo. 💕"
-            )
+        if result.success:
+            return result.user_message or "Te transfiero con el equipo. Un momento por favor."
+        failed = result.steps_failed[0] if result.steps_failed else "unknown step"
+        logger.error("escalate: escalation failed at step %s", failed)
         return (
             "Estoy intentando transferirte a un agente. "
             "Por favor, espera un momento o llámanos directamente."

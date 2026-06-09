@@ -27,10 +27,12 @@ async def test_escalation_ignores_llm_supplied_customer_phone():
 
     captured = {}
 
-    async def fake_perform_escalation(conversation_id, customer_phone, reason):
-        captured["phone"] = customer_phone
-        captured["conversation_id"] = conversation_id
-        return {"success": True}
+    async def fake_perform_escalation(**kwargs):
+        captured["phone"] = kwargs.get("customer_phone")
+        captured["conversation_id"] = kwargs.get("conversation_id")
+        from agent.services.escalation_service import EscalationResult
+
+        return EscalationResult(success=True, user_message="Transferido.")
 
     with patch(
         "agent.tools.escalation_tools.perform_escalation",
@@ -60,20 +62,33 @@ async def test_escalation_ignores_llm_supplied_customer_phone():
 
 
 @pytest.mark.asyncio
-async def test_escalation_rejects_when_state_customer_phone_missing():
-    """B1: escalate rejects when state has no customer_phone."""
-    from agent.tools.escalation_tools import escalate
+async def test_escalation_proceeds_when_state_customer_phone_missing():
+    """AS7: escalate proceeds (does not abort) when state has no customer_phone.
 
-    result = await escalate.coroutine(
-        reason="customer request",
-        state={"conversation_id": CONVERSATION_ID},  # no customer_phone
-    )
+    Updated per safety-and-correctness-bundle T1: empty phone guard removed so
+    escalation works for conversations without a registered phone number.
+    """
+    from unittest.mock import patch
 
-    assert isinstance(result, str)
-    assert len(result) > 0
-    # Must return an error / rejection — not proceed with an empty phone
-    assert (
-        "incompleto" in result.lower()
-        or "error" in result.lower()
-        or "rejected" in result.lower()
-    ), f"Expected rejection when state phone missing, got: {result!r}"
+    from agent.services.escalation_service import EscalationResult
+
+    mock_result = EscalationResult(success=True, user_message="Transferido.")
+    called = []
+
+    async def fake_perform_escalation(**kwargs):
+        called.append(kwargs)
+        return mock_result
+
+    with patch(
+        "agent.tools.escalation_tools.perform_escalation",
+        side_effect=fake_perform_escalation,
+    ):
+        from agent.tools.escalation_tools import escalate
+
+        result = await escalate.coroutine(
+            reason="customer request",
+            state={"conversation_id": CONVERSATION_ID},  # no customer_phone
+        )
+
+    assert called, "perform_escalation must be called even when customer_phone is absent"
+    assert isinstance(result, str) and len(result) > 0

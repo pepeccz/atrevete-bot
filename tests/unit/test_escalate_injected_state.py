@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import pytest
 
+from agent.services.escalation_service import EscalationResult
+
 
 class TestEscalateSchemaNoConversationId:
     """AS3 — LLM-visible schema does not expose conversation_id."""
@@ -42,7 +44,7 @@ class TestEscalateReadsConversationIdFromState:
 
         from agent.tools.escalation_tools import escalate
 
-        mock_result = {"success": True}
+        mock_result = EscalationResult(success=True, steps_failed=[])
         with patch(
             "agent.tools.escalation_tools.perform_escalation",
             new_callable=AsyncMock,
@@ -60,8 +62,9 @@ class TestEscalateReadsConversationIdFromState:
             conversation_id="abc-123",
             customer_phone="+34600000001",
             reason="customer angry",
+            source="auto_escalation",
         )
-        assert "transferido" in result or "agente" in result
+        assert any(word in result for word in ("transferido", "transfiero", "agente", "equipo"))
 
     @pytest.mark.asyncio
     async def test_escalate_missing_conversation_id_returns_error_string(self) -> None:

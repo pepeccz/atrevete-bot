@@ -127,6 +127,13 @@ def _build_available_stylists(stylist_ids: list[UUID], names_map: dict[UUID, str
     return sorted(entries, key=lambda e: e["name"])
 
 
+def _madrid_hour(start_iso: str) -> int:
+    """Return the hour (0-23) of a slot's start_iso string in Madrid time (Europe/Madrid)."""
+    _MADRID_TZ = ZoneInfo("Europe/Madrid")
+    dt = datetime.fromisoformat(start_iso.replace("Z", "+00:00"))
+    return dt.astimezone(_MADRID_TZ).hour
+
+
 @tool
 async def check_availability(
     service_ids: list[str],
@@ -137,6 +144,7 @@ async def check_availability(
     ) = None,
     no_preference: bool = True,
     slot_time: str | None = None,
+    preferred_window: Literal["morning", "afternoon"] | None = None,
 ) -> str:
     """
     Check available time slots for the given services on a specific date.
@@ -152,6 +160,10 @@ async def check_availability(
             - If found → returns status="ok" with payload.exact_match=True and a single slot.
             - If not found → returns status="rejected", next_step="slot_no_longer_available",
               and payload.alternatives with up to 3 available slots.
+        preferred_window: Optional time-of-day filter for returned slots.
+            - "morning": only slots 09:00–13:59 Madrid time.
+            - "afternoon": only slots 14:00–19:59 Madrid time.
+            - None: no filter applied (default).
 
     Returns:
         JSON-serialized ToolResponse with payload.slots list and
@@ -305,6 +317,12 @@ async def check_availability(
     all_slots.sort(key=lambda s: (s["adjacent_priority"], s["start_iso"]))
     # Strip internal priority field before returning
     clean_slots = [{k: v for k, v in s.items() if k != "adjacent_priority"} for s in all_slots]
+
+    # --- preferred_window filter (time-of-day, Madrid time) ---
+    if preferred_window == "morning":
+        clean_slots = [s for s in clean_slots if 9 <= _madrid_hour(s["start_iso"]) < 14]
+    elif preferred_window == "afternoon":
+        clean_slots = [s for s in clean_slots if 14 <= _madrid_hour(s["start_iso"]) < 20]
 
     # --- Closed-day detection (REQ-P2A-2) ---
     # When no slots were returned, check if the absence is due to closure rather than
