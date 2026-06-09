@@ -27,7 +27,17 @@ from shared.config import get_settings
 def _trace_to_dict(trace: Any) -> dict[str, Any]:
     """Convert a Langfuse trace object to a JSON-serializable dict."""
     result: dict[str, Any] = {}
-    for field in ("id", "name", "input", "output", "timestamp", "session_id", "user_id", "metadata", "tags"):
+    for field in (
+        "id",
+        "name",
+        "input",
+        "output",
+        "timestamp",
+        "session_id",
+        "user_id",
+        "metadata",
+        "tags",
+    ):
         val = getattr(trace, field, None)
         if val is not None:
             try:
@@ -41,7 +51,19 @@ def _trace_to_dict(trace: Any) -> dict[str, Any]:
 def _observation_to_dict(obs: Any) -> dict[str, Any]:
     """Convert a Langfuse observation to a JSON-serializable dict."""
     result: dict[str, Any] = {}
-    for field in ("id", "trace_id", "type", "name", "model", "input", "output", "level", "start_time", "end_time", "version"):
+    for field in (
+        "id",
+        "trace_id",
+        "type",
+        "name",
+        "model",
+        "input",
+        "output",
+        "level",
+        "start_time",
+        "end_time",
+        "version",
+    ):
         val = getattr(obs, field, None)
         if val is not None:
             try:
@@ -59,12 +81,26 @@ def _observation_to_dict(obs: Any) -> dict[str, Any]:
     return result
 
 
+_PLACEHOLDER_KEYS = {"pk-lf-placeholder", "sk-lf-placeholder", None, ""}
+
+
 def pull_traces(conv_id: str, out: str, retries: int = 4) -> int:
     """Fetch Langfuse traces for conv_id and write JSON array to out.
 
-    Returns 0 on success, non-zero if no traces found after all retries.
+    Returns 0 on success, 1 if no traces found after all retries,
+    2 if Langfuse keys are not configured (None, empty, or placeholder).
     """
     settings = get_settings()
+
+    if (
+        settings.LANGFUSE_PUBLIC_KEY in _PLACEHOLDER_KEYS
+        or settings.LANGFUSE_SECRET_KEY in _PLACEHOLDER_KEYS
+    ):
+        print(
+            "[langfuse_pull] Langfuse keys not configured — skipping trace pull.",
+            file=sys.stderr,
+        )
+        return 2
 
     client = LangfuseAPI(
         base_url=settings.LANGFUSE_BASE_URL,

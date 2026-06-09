@@ -596,3 +596,109 @@
     tool_calls_required: []
     tool_calls_forbidden: []
     tags: [media, emoji, ambiguous-input]
+
+# ===========================================================================
+# Change H — Reschedule / Cancel expansion scenarios (phones 041..044)
+#
+# These 4 scenarios extend coverage of manage_appointments flows. Added by
+# Change H (qa-harness-improvements) after the original 15+25 battery was
+# found to have insufficient reschedule/cancel signal.
+#
+# Phones: +34999000041..+34999000044 (exclusive to this block; not in v1 or
+# the existing v2 block above).
+# ===========================================================================
+
+- id: change-h-own-appt-lookup
+  description: >
+    Customer wants to know if they have any upcoming appointments. Tests
+    manage_appointments tool call for own-appointment lookup without intent
+    to reschedule or cancel. Expected: bot uses manage_appointments and returns
+    a list (or "no appointments" message).
+  tags: [v2, reschedule, cancel, appointment-lookup, change-h]
+  persona:
+    name: Sofía Mendoza
+    phone: "+34999000041"
+    style: >
+      Cliente habitual. Quiere saber si tiene alguna cita pendiente. No tiene
+      intención de cancelar ni cambiar, solo verificar. Si el bot le pregunta
+      qué quiere hacer, responde que solo quiere saber sus citas.
+  intent: "Hola, ¿tengo alguna cita reservada?"
+  max_turns: 8
+  expect:
+    outcome: info_provided
+    db_appointment: null
+    tool_calls_required: [manage_appointments]
+    tool_calls_forbidden: [book]
+    tags: [appointment-lookup, manage-appointments, change-h]
+
+- id: change-h-reschedule
+  description: >
+    Customer has an existing appointment and wants to move it to a different
+    slot. Tests the full reschedule flow: manage_appointments lookup →
+    check_availability for new slot → confirm reschedule. Expected outcome
+    is rescheduled with updated appointment in DB.
+  tags: [v2, reschedule, change-h]
+  persona:
+    name: Valentina Reyes
+    phone: "+34999000042"
+    style: >
+      Tiene una cita reservada y necesita cambiarla al jueves. Es directa:
+      primero dice que quiere cambiar su cita, luego acepta la primera
+      disponibilidad que le ofrezcan el jueves. Si no hay jueves disponible,
+      acepta el viernes. Confirma el cambio sin dudar.
+  intent: "Hola, quiero cambiar mi cita para el jueves si es posible."
+  max_turns: 12
+  expect:
+    outcome: rescheduled
+    db_appointment:
+      status: confirmed
+    tool_calls_required: [manage_appointments, check_availability]
+    tool_calls_forbidden: []
+    tags: [reschedule, rescheduled, change-h]
+
+- id: change-h-cancel-single
+  description: >
+    Customer wants to cancel a single existing appointment. Tests
+    manage_appointments cancel flow. Expected: bot confirms cancellation,
+    appointment status changes to cancelled in DB.
+  tags: [v2, cancel, change-h]
+  persona:
+    name: Alejandra Torres
+    phone: "+34999000043"
+    style: >
+      Tiene una cita y necesita cancelarla porque surgió algo. Es breve y
+      directa: pide cancelar, confirma cuando el bot le pide confirmación, y
+      agradece al final. No quiere volver a reservar en esta conversación.
+  intent: "Hola, necesito cancelar mi cita por favor."
+  max_turns: 8
+  expect:
+    outcome: cancelled
+    db_appointment:
+      status: cancelled
+    tool_calls_required: [manage_appointments]
+    tool_calls_forbidden: [book]
+    tags: [cancel, cancelled, change-h]
+
+- id: change-h-cancel-rebook
+  description: >
+    Customer cancels an existing appointment and immediately asks for a new
+    slot. Tests the multi-intent cancel + rebook flow. Expected: bot handles
+    both the cancel and the new booking in the same conversation.
+  tags: [v2, cancel, reschedule, multi-intent, change-h]
+  persona:
+    name: Camila Herrera
+    phone: "+34999000044"
+    style: >
+      Tiene una cita pero quiere cancelarla y reservar una nueva para la
+      semana siguiente. Primero pide cancelar, confirma la cancelación, luego
+      dice que quiere reservar para el martes de la semana que viene. Acepta
+      la primera disponibilidad y confirma la nueva reserva.
+  intent: "Hola, quiero cancelar mi cita y pedir una nueva para la semana que viene."
+  max_turns: 14
+  expect:
+    outcome: multi_completed
+    db_appointment:
+      status: confirmed
+    tool_calls_required: [manage_appointments, check_availability, book]
+    tool_calls_forbidden: []
+    tags: [cancel, reschedule, multi-intent, multi_completed, change-h]

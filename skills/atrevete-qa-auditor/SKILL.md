@@ -173,6 +173,25 @@ Root-cause pointer for tool arg violations: `agent/tools/*.py` — look for
 
 **Deterministic.**
 
+#### tool_evidence reliability (Change H — read before scoring L3)
+
+As of Change H, `tool_evidence[]` in every turn object is populated by a
+3-tier fallback chain:
+  1. LangGraph checkpoint (fastest)
+  2. Redis Stream `qa_tool_trace:{conv_id}`
+  3. PostgreSQL `conversation_turns.tool_calls` JSONB (`source="db_turns"`)
+
+**`tool_evidence: []` is now DEFINITIVE — it means no tools fired during that
+turn**, NOT missing data. The 3-tier chain always runs; empty means empty.
+
+When all turns have `tool_evidence: []` but `tool_calls_required` is non-empty,
+that IS an L3 failure (tools were expected but never called), not a data-gap.
+
+When `source="db_turns"` appears in evidence items, the data is post-flush
+(slightly delayed compared to checkpoint) — still reliable for L3 checks, but
+downgrade L3 confidence to "likely" if ALL evidence comes from `db_turns` and
+Langfuse traces are also absent (L2 skipped).
+
 From `turn.tool_calls_observed` across all turns:
 
 - [ ] All tools in `expect.tool_calls_required` appear at least once

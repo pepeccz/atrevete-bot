@@ -190,11 +190,13 @@ class Settings(BaseSettings):
     )
 
     # Langfuse (Observability & Monitoring)
-    LANGFUSE_PUBLIC_KEY: str = Field(
-        default="pk-lf-placeholder", description="Langfuse public key for tracing and monitoring"
+    # Keys are Optional — absence (None) causes langfuse_pull.py to skip gracefully (exit 2).
+    # Set real keys in .env only when L2 trace audits are needed.
+    LANGFUSE_PUBLIC_KEY: str | None = Field(
+        default=None, description="Langfuse public key for tracing and monitoring"
     )
-    LANGFUSE_SECRET_KEY: str = Field(
-        default="sk-lf-placeholder", description="Langfuse secret key for authentication"
+    LANGFUSE_SECRET_KEY: str | None = Field(
+        default=None, description="Langfuse secret key for authentication"
     )
     LANGFUSE_BASE_URL: str = Field(
         default="https://cloud.langfuse.com",

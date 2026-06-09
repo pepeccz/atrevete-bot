@@ -277,7 +277,45 @@ python tests/e2e/harness/state_reset.py reset \
 
 ### Step 9: Write Run JSON
 
-Write to `output_path`:
+#### Output Path Contract (REQ-H1)
+
+Write to EXACTLY `output_path` as passed by the orchestrator. Never derive a
+different path. Never write to a fallback location.
+
+Before writing, create the parent directory:
+```python
+from pathlib import Path
+Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+```
+
+This is a defensive guard — the orchestrator owns directory creation, but the
+runner MUST call `mkdir` as a safety net to avoid `FileNotFoundError`.
+
+#### Output JSON Writer (REQ-H3)
+
+Serialize the run dict using a SINGLE call with `ensure_ascii=False` and
+`default=str` so that user messages, agent responses, and any field containing
+double-quotes, newlines, or Unicode characters do NOT corrupt the output:
+
+```python
+import json
+from pathlib import Path
+
+path = Path(output_path)
+path.parent.mkdir(parents=True, exist_ok=True)
+path.write_text(
+    json.dumps(run_dict, ensure_ascii=False, default=str),
+    encoding="utf-8",
+)
+```
+
+Never use f-string concatenation or `json.dumps` on individual fields — always
+dump the assembled `run_dict` in one call.
+
+This same contract applies even when `outcome == "error"` — the partial run dict
+MUST be written to `output_path` regardless of how far the run progressed.
+
+#### Run JSON Schema
 
 ```json
 {
@@ -348,8 +386,11 @@ docker compose -f /home/pepe/Proyectos/atrevete-bot/docker-compose.yml ps
 
 Runs are written to `tests/e2e/runs/{timestamp}/` where `{timestamp}` is
 `YYYYMMDD_HHMMSS` set by the orchestrator at batch start. The orchestrator
-passes the exact `output_path` and `traces_path` — the runner does not create
-the directory structure itself.
+passes the exact `output_path` and `traces_path`. The runner writes ONLY to
+those exact paths — no derived paths, no fallback directories.
+
+The runner calls `Path(output_path).parent.mkdir(parents=True, exist_ok=True)`
+as a defensive guard (see Step 9 — Output Path Contract).
 
 Each scenario produces two files:
 - `{scenario_id}.json` — run evidence (this skill writes it)
