@@ -16,6 +16,8 @@ from shared.config import get_settings
 from shared.redis_client import INCOMING_STREAM
 
 if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncEngine
+
     from tests.e2e.harness.run_models import QARunIdentity, QARunSession
 
 
@@ -211,6 +213,109 @@ class StreamToolEvidenceAdapter:
                     arguments=arguments,
                     result=result_data,
                     source=decode(source_raw),
+                    timestamp=ts,
+                )
+            )
+        return result
+
+
+class ConversationTurnAdapter:
+    """Reads tool_calls JSONB from conversation_turns table (post-flush, 3rd tier).
+
+    Used as a fallback when both CheckpointToolEvidenceAdapter and
+    StreamToolEvidenceAdapter return empty (e.g. Redis evicted, checkpoint
+    TTL expired, Langfuse unavailable). Reads from the PostgreSQL
+    conversation_turns table which persists tool call summaries permanently.
+
+    source="db_turns" in returned ToolCallEvidence items indicates this path.
+    """
+
+    def __init__(self, harness: RedisTestHarness) -> None:
+        self._harness = harness
+        # Optional override for testing (inject engine directly without settings)
+        self._engine: AsyncEngine | None = None
+
+    async def _fetch_turn_row(
+        self, conversation_id: str, turn_index: int
+    ) -> tuple[list[dict[str, Any]], datetime] | None:
+        """Query conversation_turns for the given conversation_id and turn_number.
+
+        Returns (tool_calls, created_at) or None if no matching row found.
+        """
+        try:
+            from sqlalchemy import text
+            from sqlalchemy.ext.asyncio import create_async_engine
+
+            if self._engine is not None:
+                engine = self._engine
+                should_dispose = False
+            else:
+                settings = get_settings()
+                engine = create_async_engine(settings.DATABASE_URL, echo=False)
+                should_dispose = True
+
+            try:
+                async with engine.connect() as conn:
+                    result = await conn.execute(
+                        text("""
+                            SELECT ct.tool_calls, ct.created_at
+                            FROM conversation_turns ct
+                            JOIN conversation_history ch
+                              ON ch.id = ct.conversation_history_id
+                            WHERE ch.conversation_id = :conv_id
+                              AND ct.turn_number = :turn_number
+                            LIMIT 1
+                            """),
+                        {"conv_id": conversation_id, "turn_number": turn_index},
+                    )
+                    row = result.fetchone()
+                    if row is None:
+                        return None
+                    tool_calls_raw, created_at = row
+                    if not tool_calls_raw:
+                        return None
+                    # JSONB may come back as a list already or as a JSON string
+                    if isinstance(tool_calls_raw, str):
+                        tool_calls: list[dict[str, Any]] = json.loads(tool_calls_raw)
+                    else:
+                        tool_calls = list(tool_calls_raw)
+                    return tool_calls, created_at
+            finally:
+                if should_dispose:
+                    await engine.dispose()
+        except Exception:
+            return None
+
+    async def collect(self, conversation_id: str, turn_index: int) -> list[ToolCallEvidence]:
+        """Return tool evidence for a specific turn from conversation_turns DB table.
+
+        Returns ToolCallEvidence items with source='db_turns'.
+        """
+        row = await self._fetch_turn_row(conversation_id, turn_index)
+        if row is None:
+            return []
+
+        tool_calls, created_at = row
+        result: list[ToolCallEvidence] = []
+        for entry in tool_calls:
+            tool_name = entry.get("name", "")
+            args = entry.get("args", {}) or {}
+            result_summary = entry.get("result_summary", "")
+
+            # Normalise timestamp: created_at from DB is timezone-aware if TIMESTAMP(tz=True)
+            if created_at is not None and hasattr(created_at, "astimezone"):
+                ts = created_at.astimezone(UTC)
+            elif created_at is not None:
+                ts = datetime.fromtimestamp(created_at, tz=UTC)
+            else:
+                ts = datetime.now(UTC)
+
+            result.append(
+                ToolCallEvidence(
+                    tool_name=tool_name,
+                    arguments=dict(args) if isinstance(args, dict) else {},
+                    result={"result_summary": result_summary} if result_summary else {},
+                    source="db_turns",
                     timestamp=ts,
                 )
             )
@@ -603,13 +708,29 @@ class RedisTestHarness:
     async def collect_tool_evidence(
         self, conversation_id: str, turn_index: int
     ) -> list[ToolCallEvidence]:
-        """Collect tool call evidence for a turn (checkpoint-first, then stream fallback)."""
-        adapter = CheckpointToolEvidenceAdapter(self)
-        evidence = await adapter.collect(conversation_id, turn_index)
-        if not evidence:
-            stream_adapter = StreamToolEvidenceAdapter(self)
-            evidence = await stream_adapter.collect(conversation_id, turn_index)
-        return evidence
+        """Collect tool call evidence using a 3-tier fallback chain.
+
+        Priority order (returns first non-empty result):
+          1. CheckpointToolEvidenceAdapter  — LangGraph checkpoint (in-process, fastest)
+          2. StreamToolEvidenceAdapter      — Redis Stream qa_tool_trace:{conv_id}
+          3. ConversationTurnAdapter        — PostgreSQL conversation_turns.tool_calls JSONB
+                                              (post-flush, survives Redis eviction)
+
+        Returns [] when no evidence is found in any tier (never None).
+        source="db_turns" in returned items indicates the DB fallback was used.
+        """
+        for adapter in (
+            CheckpointToolEvidenceAdapter(self),
+            StreamToolEvidenceAdapter(self),
+            ConversationTurnAdapter(self),
+        ):
+            try:
+                evidence = await adapter.collect(conversation_id, turn_index)
+                if evidence:
+                    return evidence
+            except Exception:
+                pass
+        return []
 
     async def execute_turn(
         self,

@@ -13,9 +13,8 @@ from tests.e2e.harness.context_manager import Flow, Persona, QATestingContext
 from tests.e2e.harness.redis_harness import RedisTestHarness
 
 SKILL_FILES = (
-    Path("skills/atrevete-qa-context/SKILL.md"),
-    Path("skills/atrevete-qa-tester/SKILL.md"),
-    Path("skills/atrevete-qa-evaluator/SKILL.md"),
+    Path("skills/atrevete-qa-runner/SKILL.md"),
+    Path("skills/atrevete-qa-auditor/SKILL.md"),
 )
 
 

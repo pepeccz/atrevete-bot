@@ -1,0 +1,188 @@
+{
+  "scenario_id": "cliente-leal-lo-de-siempre",
+  "conversation_id": "ba4392b4-594d-4f0e-9d8c-320129684f8f",
+  "outcome": "booked",
+  "turns_taken": 11,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, quería pedir hora para lo de siempre con Carmen",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Qué servicio quieres reservar exactamente?",
+      "latency_ms": 11666,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [
+        {"type": "memory_miss", "detail": "No prior customer record for +34999000033 — bot could not recognize 'lo de siempre'; asked for service clarification. Expected given no seed data."}
+      ],
+      "milestone": "memory_miss — bot asked for service clarification"
+    },
+    {
+      "turn": 2,
+      "user_message": "Un corte de pelo, siempre me lo hago con Carmen",
+      "agent_response": "¿Es para señora, caballero, niña, niño o bebé?",
+      "latency_ms": 10881,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "audience_disambiguation"
+    },
+    {
+      "turn": 3,
+      "user_message": "Para señora",
+      "agent_response": "Entonces te anoto corte de mujer, ¿quieres añadir algún otro servicio o solo el corte?",
+      "latency_ms": 12052,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "service_confirmed_corte_de_mujer"
+    },
+    {
+      "turn": 4,
+      "user_message": "Solo el corte, para esta semana con Carmen",
+      "agent_response": "No me aparece Carmen como estilista en Atrévete.\n\n1) Harolyn\n2) Marta\n3) Pilar\n4) Victor\n0) La primera con disponibilidad (mín. 3 días de antelación)\n\n¿Con cuál te quedas?",
+      "latency_ms": 15978,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "carmen_not_found — correctly informed customer, offered alternatives without hallucinating"
+    },
+    {
+      "turn": 5,
+      "user_message": "Entonces con Marta, para esta semana",
+      "agent_response": "No te he pillado la fecha exacta. ¿Qué día de esta semana te viene bien?",
+      "latency_ms": 14966,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "stylist_selected_marta — date extraction pending"
+    },
+    {
+      "turn": 6,
+      "user_message": "El jueves por la mañana",
+      "agent_response": "¿Te refieres al jueves 18 de junio por la mañana?",
+      "latency_ms": 14643,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "date_disambiguation_jueves_18"
+    },
+    {
+      "turn": 7,
+      "user_message": "Sí, eso",
+      "agent_response": "Perfecto, el jueves 18 de junio con Marta sí tiene huecos por la mañana 😊\n\n1. Jueves 18 de junio a las 10:00\n2. Jueves 18 de junio a las 10:40\n3. Jueves 18 de junio a las 11:20\n4. Jueves 18 de junio a las 12:00\n5. Jueves 18 de junio a las 12:40\n6. Jueves 18 de junio a las 13:20\n\n¿Cuál te viene mejor?",
+      "latency_ms": 15575,
+      "timed_out": false,
+      "tool_calls_observed": ["check_availability"],
+      "bugs": [],
+      "milestone": "availability_checked — slots offered for Thursday 18 June morning"
+    },
+    {
+      "turn": 8,
+      "user_message": "La de las 11:20",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "latency_ms": 18672,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "slot_selected_1120 — policy gate triggered"
+    },
+    {
+      "turn": 9,
+      "user_message": "Sí, acepto la política",
+      "agent_response": "Perfecto. ¿Me das tu nombre y primer apellido, por favor?",
+      "latency_ms": 18181,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "policy_accepted — name gate triggered"
+    },
+    {
+      "turn": 10,
+      "user_message": "Raquel Cordero",
+      "agent_response": "¿Quieres dejar alguna nota para Marta?",
+      "latency_ms": 17643,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "name_provided — notes prompt"
+    },
+    {
+      "turn": 11,
+      "user_message": "No, nada",
+      "agent_response": "¡Listo, Raquel! Te queda reservada la cita para el jueves 18 de junio a las 11:20 con Marta para corte de mujer.\n\nSi quieres, también te puedo pasar el enlace del calendario.",
+      "latency_ms": 30849,
+      "timed_out": false,
+      "tool_calls_observed": ["book"],
+      "bugs": [],
+      "milestone": "booked — confirmed Thu 18 Jun 11:20 with Marta, Corte de Mujer"
+    }
+  ],
+  "bugs": [
+    {
+      "type": "memory_miss",
+      "turn": 1,
+      "detail": "No customer record seeded for +34999000033. Bot could not resolve 'lo de siempre' to Corte Dama + Carmen. Expected behavior given no prior history in DB. Scenario intent tests long-term memory which requires seed data to fully validate.",
+      "severity": "scenario_limitation"
+    }
+  ],
+  "milestones_reached": [
+    "memory_miss",
+    "audience_disambiguation",
+    "service_confirmed",
+    "carmen_not_found",
+    "stylist_selected_marta",
+    "date_disambiguation",
+    "availability_checked",
+    "slot_selected",
+    "policy_accepted",
+    "name_provided",
+    "booked"
+  ],
+  "db_delta": {
+    "customer_count_delta": 1,
+    "appt_count_delta": 1
+  },
+  "snapshot_before": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "snapshot_after": {
+    "customer_count": 1,
+    "appt_count": 1
+  },
+  "final_state": {
+    "has_checkpoint": false
+  },
+  "langfuse_trace_path": null,
+  "tool_evidence_from_db": {
+    "appointment_status": "confirmed",
+    "gcal_sync_status": "synced",
+    "stylist": "Marta",
+    "start_time_utc": "2026-06-18T09:20:00+00:00",
+    "start_time_local": "2026-06-18T11:20 Spain/Madrid",
+    "service_ids": ["cb7ae91c-97ff-e1d1-3b0b-696b11467add"]
+  },
+  "expect": {
+    "outcome": "booked",
+    "db_appointment": {"status": "confirmed"},
+    "tool_calls_required": ["check_availability", "book"],
+    "tool_calls_forbidden": []
+  },
+  "passed": true,
+  "qa_observations": {
+    "memory_used": false,
+    "agent_notes_accessed": false,
+    "seed_data_present": false,
+    "memory_miss_note": "Scenario requires seeded customer_memories to test 'lo de siempre' resolution. Without seed, bot correctly asked for clarification (WARN-level behavior per grading rubric). Bot clarified once, Raquel provided service, booking proceeded.",
+    "carmen_handling": "Correctly reported Carmen not in stylist list, offered alternatives without hallucinating",
+    "policy_gate_triggered": true,
+    "policy_accepted_at_turn": 9,
+    "max_turns_exceeded": true,
+    "max_turns_scenario": 8,
+    "actual_turns": 11,
+    "max_turns_hard_cap": 15,
+    "turns_note": "Booking required 11 turns (policy gate + name gate pushed beyond scenario max_turns=8). Hard cap 15 not exceeded.",
+    "appointment_status": "confirmed",
+    "gcal_sync_status": "synced"
+  }
+}

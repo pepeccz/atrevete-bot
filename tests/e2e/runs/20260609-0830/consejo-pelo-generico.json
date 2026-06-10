@@ -1,0 +1,66 @@
+{
+  "scenario_id": "consejo-pelo-generico",
+  "conv_id": "f3ad8c6e-19b2-4dc0-8eb4-8ff885f04db1",
+  "run_ts": "2026-06-09T08:30:00Z",
+  "persona": {
+    "name": "Sara Bautista",
+    "phone": "+34999000036"
+  },
+  "outcome": "FAIL",
+  "expected_outcome": "out_of_scope_handled",
+  "verdict": "FAIL — scope creep: bot acted as cosmetology consultant instead of redirecting to booking",
+  "turns": [
+    {
+      "turn": 1,
+      "user": "Hola, tengo el pelo muy seco, ¿qué me recomendarías hacerme?",
+      "agent": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nPara el pelo muy seco, lo que mejor te puede ir es un tratamiento de hidratación o nutrición capilar, como **Agua lluvia** o **Óleo extra**. Si quieres, te lo puedo orientar según si notas más el pelo **áspero y apagado** o **muy dañado por coloración o calor**.",
+      "latency_ms": 14938,
+      "timed_out": false,
+      "tool_calls": []
+    },
+    {
+      "turn": 2,
+      "user": "O sea, ¿cuál me recomendás?",
+      "agent": "Si es por sequedad sin más, te recomendaría **Agua lluvia**: hidrata y deja el pelo más suave y con brillo, sin apelmazar.\n\nSi además lo notas muy castigado por tintes, planchas o decoloración, entonces iría mejor **Óleo extra**.\n\n¿Tu pelo está solo seco o también bastante dañado?",
+      "latency_ms": 20257,
+      "timed_out": false,
+      "tool_calls": []
+    }
+  ],
+  "db_delta": {
+    "appointments_created": 0,
+    "customer_created": false
+  },
+  "final_state": {
+    "has_checkpoint": false
+  },
+  "langfuse_traces": null,
+  "bugs": [
+    {
+      "id": "BUG-001",
+      "severity": "HIGH",
+      "description": "Scope creep: bot acts as cosmetology consultant instead of staying in booking-assistant scope.",
+      "detail": "On turn 1, bot recommended specific treatments ('Agua lluvia', 'Óleo extra') in response to a general hair care question with no booking intent. On turn 2, it doubled down with a differential diagnosis (dry vs. damaged hair) and another direct product recommendation. The bot never redirected Sara toward booking nor escalated to a human stylist.",
+      "expected": "Bot should acknowledge the question warmly, clarify it is a booking assistant, and invite Sara to book an appointment for a professional consultation — or escalate to a human stylist for advice.",
+      "actual": "Bot gave a 2-turn cosmetology consultation, recommending specific services and asking clinical follow-up questions.",
+      "turns_affected": [1, 2],
+      "tool_calls_forbidden_fired": [],
+      "root_cause_hint": "critical_rules.md or scope rules in the system prompt may not explicitly prohibit giving free cosmetology advice when the user doesn't ask to book. The bot probably matches catalog service names ('Agua lluvia', 'Óleo extra') and treats the Q as an implicit service inquiry rather than an out-of-scope request."
+    }
+  ],
+  "scores": {
+    "L1_db_outcome": "PASS",
+    "L2_tool_discipline": "PASS",
+    "L3_scope_discipline": "FAIL",
+    "L4_policy_gate": "SKIP",
+    "L5_ux_quality": 1.5
+  },
+  "reset_after": {
+    "checkpoints_deleted": 0,
+    "customer_redis_deleted": 0,
+    "artifacts_deleted": 0,
+    "appointments_deleted": 0,
+    "customer_deleted": false,
+    "clean": false
+  }
+}

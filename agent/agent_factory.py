@@ -31,6 +31,7 @@ from agent.middleware.disclosure import DisclosureMiddleware
 from agent.middleware.dynamic_prompt import DynamicPromptMiddleware
 from agent.middleware.llm_trace import LLMTraceMiddleware
 from agent.middleware.prompt_assembly import PromptAssemblyMiddleware
+from agent.middleware.response_groundedness import ResponseGroundednessMiddleware
 from agent.middleware.summarize import SummarizeMiddleware
 from agent.prompts.loader import load_system_prompt
 from agent.state import AgentState
@@ -63,6 +64,8 @@ def build_conversation_agent(
         AvailabilityContextMiddleware(),  # injects _slot_availability after DynamicPrompt
         PromptAssemblyMiddleware(),  # assembles _slot_* keys into system_message
         SummarizeMiddleware(window=20, keep_tail=10),
+        # J5: post-hoc groundedness scan (LOG-ONLY at initial deploy)
+        ResponseGroundednessMiddleware(),
     ]
 
     # Prepend LLMTraceMiddleware as outermost layer (index 0) when tracing is enabled.

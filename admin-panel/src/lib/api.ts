@@ -491,6 +491,22 @@ class ApiClient {
     return this.request(`/api/admin/appointments/check-overlaps?${params}`);
   }
 
+  /** Retry GCal sync for a failed appointment. Always returns 200.
+   *  Check response.status for "synced" | "failed".
+   *  Spec: AS6, AS7, AS10 (gcal-sync-resilience).
+   */
+  async retryGcalSync(
+    id: string
+  ): Promise<{
+    status: "synced" | "failed";
+    gcal_event_id: string | null;
+    error: string | null;
+  }> {
+    return this.request(`/api/admin/appointments/${id}/gcal-retry`, {
+      method: "POST",
+    });
+  }
+
   // Blocking Events endpoints
   async getBlockingEvents(
     stylistId?: string,

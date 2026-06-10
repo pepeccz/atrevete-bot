@@ -165,3 +165,87 @@ def test_critical_rules_r35_canonical_substrings() -> None:
         "booking_flow.md R-35 must reference 'pre_resolved_service_ids' — the argument "
         "the LLM must re-pass on the next update_booking call."
     )
+
+
+# ---------------------------------------------------------------------------
+# T6 — O3 rule pruning assertions — RED until T10 + T11 applied
+# ---------------------------------------------------------------------------
+
+
+def test_critical_rules_retired_rules_absent() -> None:
+    """T6 [RED]: R2, R3, R15, R33 must NOT appear in critical_rules.md after pruning.
+
+    RED until T10 deletes those lines from critical_rules.md.
+    """
+    content = CRITICAL_RULES_PATH.read_text(encoding="utf-8")
+
+    for rid in ("R2]", "R3]", "R15]", "R33]"):
+        assert f"[{rid}" not in content, (
+            f"critical_rules.md must NOT contain [{rid} after O3 pruning. "
+            "This rule was retired and must be removed to save ~200 tokens per turn."
+        )
+
+
+def test_critical_rules_r8_retains_disclosure_semantics() -> None:
+    """T6 [RED]: R8 must contain the AI-disclosure prohibition phrase.
+
+    This ensures R33's semantics are preserved via R8 before R33 is deleted.
+    RED until T10 confirms R8 phrasing (it already exists — verifying no regression).
+    """
+    content = CRITICAL_RULES_PATH.read_text(encoding="utf-8")
+
+    # R8 already covers this — test asserts no regression after T10 edit
+    assert "[R8]" in content, "R8 must remain in critical_rules.md"
+    # At least one of these phrases must be in R8's line
+    r8_line = next((ln for ln in content.splitlines() if ln.startswith("[R8]")), "")
+    has_disclosure_phrase = any(
+        phrase in r8_line
+        for phrase in ("NUNCA saludes", "no revelar", "no mencionar que eres una IA", "aviso de IA")
+    )
+    assert has_disclosure_phrase, (
+        "R8 must contain an AI-disclosure prohibition phrase so that deleting R33 "
+        "does not lose the 'never greet / never reveal AI identity' semantic."
+    )
+
+
+def test_critical_rules_r9b_present() -> None:
+    """T6: R9b must remain in critical_rules.md after R9 standalone is removed.
+
+    R9b is the more complete disambiguation rule. R9 standalone is subsumed by R9b.
+    """
+    content = CRITICAL_RULES_PATH.read_text(encoding="utf-8")
+    assert "[R9b]" in content, "R9b must remain in critical_rules.md after R9 standalone is pruned"
+
+
+def test_critical_rules_r9_standalone_absent() -> None:
+    """T6 [RED]: standalone [R9] line must be absent after pruning.
+
+    RED until T10 removes the [R9] line from critical_rules.md.
+    Note: R9b is allowed and must still be present (see test above).
+    """
+    content = CRITICAL_RULES_PATH.read_text(encoding="utf-8")
+
+    # Only the standalone [R9] line should be gone — R9b must survive.
+    # We check line-by-line to avoid false positive from "[R9b]".
+    r9_standalone_lines = [
+        ln for ln in content.splitlines() if ln.startswith("[R9]")
+    ]
+    assert not r9_standalone_lines, (
+        "critical_rules.md must NOT contain a standalone [R9] line after O3 pruning. "
+        f"Found: {r9_standalone_lines}"
+    )
+
+
+def test_booking_flow_r9b_cross_ref_correct() -> None:
+    """T6 [RED]: booking_flow.md must reference 'R9b' and NOT 'R9/R9b'.
+
+    RED until T11 changes 'Ver R9/R9b.' → 'Ver R9b.' in booking_flow.md.
+    """
+    content = BOOKING_FLOW_PATH.read_text(encoding="utf-8")
+
+    assert "R9b" in content, "booking_flow.md must reference R9b"
+
+    # The combined 'R9/R9b' reference must be gone
+    assert "R9/R9b" not in content, (
+        "booking_flow.md must use 'Ver R9b.' (not 'Ver R9/R9b.') after O3 cross-ref fix."
+    )

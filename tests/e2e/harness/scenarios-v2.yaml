@@ -1,0 +1,704 @@
+# QA Expansion Scenarios — Atrévete Bot (v2)
+#
+# 25 scenarios covering realistic salon conversation distribution beyond the
+# original 15-scenario regression battery (scenarios.yaml).
+#
+# Coverage targets (realistic frequency distribution):
+#   - FAQ / info questions     (5 scenarios) — was 0% in v1
+#   - Reschedule / cancel      (4 scenarios) — was minimal in v1
+#   - Multi-intent             (4 scenarios) — was 0% in v1
+#   - Behavioral edge cases    (5 scenarios) — was 0% in v1
+#   - Out-of-scope             (3 scenarios) — was 0% in v1
+#   - Operational edges        (3 scenarios) — was 0% in v1
+#   - Media / unsupported      (1 scenario)  — was 0% in v1
+#
+# Each scenario uses a unique phone in the +34999000016..040 range.
+# All phones must start with TEST_PHONE_PREFIX (+34999).
+#
+# expect.outcome enum (extended from v1):
+#   v1: booked | cancelled | rescheduled | escalated | policy_accepted |
+#       timeout | error | rejected
+#   v2 adds: info_provided | multi_completed | partial_completed |
+#            out_of_scope_handled | stuck
+#
+# When running: `python -m tests.e2e.harness.runner --scenarios scenarios-v2.yaml`
+# or load both via: `--scenarios scenarios.yaml,scenarios-v2.yaml` for full battery.
+
+# ===========================================================================
+# Type D — FAQ / Information (5 scenarios)
+# Customers asking questions without (or before) committing to booking.
+# Expected: bot answers from grounded data, does not hallucinate, does not
+# push booking aggressively.
+# ===========================================================================
+
+- id: faq-horarios
+  description: >
+    Customer asks opening hours without intent to book. Bot should answer from
+    business_hours data without inventing or pushing for booking. Tests grounded
+    Q&A response (currently the bot has no FAQ tool — uses prompt knowledge).
+  tags: [v2, faq, info, change-d-gap]
+  persona:
+    name: Beatriz Romero
+    phone: "+34999000016"
+    style: >
+      Cliente potencial. Solo quiere saber horarios. No tiene intención inmediata
+      de reservar. Si el bot la presiona a reservar, ella se va.
+  intent: "Hola, ¿qué horarios tienen los sábados?"
+  max_turns: 4
+  expect:
+    outcome: info_provided
+    db_appointment: null
+    tool_calls_required: []
+    tool_calls_forbidden: [book, update_booking, check_availability]
+    tags: [faq, hours, no-tool-needed]
+
+- id: faq-precio-tinte
+  description: >
+    Customer asks the price of a service without booking. Tests whether bot can
+    answer pricing questions from catalog without inventing numbers or pushing
+    booking. Critical: bot must NOT invent prices.
+  tags: [v2, faq, info, hallucination-risk]
+  persona:
+    name: Lucía Vargas
+    phone: "+34999000017"
+    style: >
+      Pregunta precios para comparar antes de decidir. Si el bot inventa un
+      precio o evita decir "no tengo esa info", ella nota la inconsistencia.
+  intent: "Buenos días, ¿cuánto sale un tinte completo?"
+  max_turns: 4
+  expect:
+    outcome: info_provided
+    db_appointment: null
+    tool_calls_required: []
+    tool_calls_forbidden: [book, update_booking]
+    tags: [faq, pricing, hallucination-check]
+
+- id: faq-atienden-hombres
+  description: >
+    Male customer asks if salon serves men. Tests inclusive language + correct
+    audience-mapping. Catalog has services with audience=adult_male.
+  tags: [v2, faq, audience, inclusivity]
+  persona:
+    name: Andrés Molina
+    phone: "+34999000018"
+    style: >
+      Hombre, primera vez. No sabe si el salón atiende hombres (el nombre y la
+      web parecen orientados a mujeres). Pregunta antes de comprometerse.
+  intent: "Hola, ¿atienden a hombres también?"
+  max_turns: 4
+  expect:
+    outcome: info_provided
+    db_appointment: null
+    tool_calls_required: []
+    tool_calls_forbidden: []
+    tags: [faq, audience-male]
+
+- id: faq-direccion
+  description: >
+    Customer asks for the salon's physical address. Bot must NOT invent it —
+    if not available in business info, should escalate or admit lack of data.
+  tags: [v2, faq, info, hallucination-risk]
+  persona:
+    name: Patricia Núñez
+    phone: "+34999000019"
+    style: >
+      Cliente nueva, quiere saber dónde queda físicamente el salón antes de
+      reservar. Si el bot inventa una dirección, es un bug grave.
+  intent: "Hola, ¿dónde están ubicados?"
+  max_turns: 4
+  expect:
+    outcome: info_provided
+    db_appointment: null
+    tool_calls_required: []
+    tool_calls_forbidden: [book, update_booking]
+    tags: [faq, location, hallucination-check]
+
+- id: faq-pelo-rizado
+  description: >
+    Customer asks about specialized service (curly hair). Tests whether bot can
+    answer technical specialization questions or appropriately escalates.
+  tags: [v2, faq, info, specialization]
+  persona:
+    name: Marina Cabrera
+    phone: "+34999000020"
+    style: >
+      Tiene el pelo rizado, ha tenido malas experiencias. Quiere saber si en el
+      salón hay alguien con experiencia específica en pelo rizado antes de
+      reservar. No reservará a ciegas.
+  intent: "Hola, ¿tienen alguien que sepa trabajar pelo muy rizado tipo 3c?"
+  max_turns: 5
+  expect:
+    outcome: info_provided
+    db_appointment: null
+    tool_calls_required: []
+    tool_calls_forbidden: []
+    tags: [faq, specialization, escalate-acceptable]
+
+# ===========================================================================
+# Type B/C — Appointment management (4 scenarios)
+# Reschedule, cancel, edge cases. v1 covered cancel/reschedule once each,
+# v2 expands with realistic variants.
+# ===========================================================================
+
+- id: reschedule-mismo-dia-otra-hora
+  description: >
+    Customer has a confirmed appointment today and wants to move it to a later
+    hour the same day. Tests time-of-day rescheduling within same business day.
+  tags: [v2, reschedule, same-day]
+  persona:
+    name: Cristina Ortega
+    phone: "+34999000021"
+    style: >
+      Cliente con cita confirmada hoy a las 10:30. Le surgió un imprevisto y
+      necesita moverla a la tarde, idealmente después de las 17:00.
+  intent: "Hola, tengo una cita hoy a las 10:30 pero no llego, ¿puedo moverla a la tarde?"
+  max_turns: 10
+  expect:
+    outcome: rescheduled
+    db_appointment:
+      status: confirmed
+    tool_calls_required: [manage_appointments]
+    tool_calls_forbidden: []
+    tags: [reschedule, same-day]
+
+- id: reschedule-otro-dia
+  description: >
+    Customer has an appointment and wants to move it to a different day next
+    week. Tests multi-day reschedule flow + availability check on new date.
+  tags: [v2, reschedule, cross-day]
+  persona:
+    name: Eva Pérez
+    phone: "+34999000022"
+    style: >
+      Tiene una cita el miércoles que viene pero no puede ir. Quiere cambiarla
+      al viernes o sábado. Flexible con la hora.
+  intent: "Hola, tengo cita el miércoles 11 pero me ha surgido un viaje, ¿la puedo pasar al viernes o sábado?"
+  max_turns: 10
+  expect:
+    outcome: rescheduled
+    db_appointment:
+      status: confirmed
+    tool_calls_required: [manage_appointments]
+    tool_calls_forbidden: []
+    tags: [reschedule, cross-day]
+
+- id: cancel-con-razon
+  description: >
+    Customer cancels with a reason (illness). Bot should record the cancellation
+    and respond with empathy. No re-booking pushed unless customer asks.
+  tags: [v2, cancel, with-reason]
+  persona:
+    name: Isabel Domínguez
+    phone: "+34999000023"
+    style: >
+      Tiene una cita mañana pero se ha resfriado. Quiere cancelarla sin más.
+      No quiere agendar otra cita ahora — prefiere esperar a recuperarse.
+  intent: "Hola, tengo cita mañana pero estoy con fiebre, prefiero cancelarla."
+  max_turns: 6
+  expect:
+    outcome: cancelled
+    db_appointment:
+      status: cancelled
+    tool_calls_required: [manage_appointments]
+    tool_calls_forbidden: [book, update_booking]
+    tags: [cancel, with-reason]
+
+- id: cancel-sin-cita-previa-edge
+  description: >
+    Customer who has NO appointment tries to cancel. Edge case: bot should
+    politely indicate there is no appointment to cancel without confusion.
+  tags: [v2, cancel, edge-case]
+  persona:
+    name: Rosa Aguilar
+    phone: "+34999000024"
+    style: >
+      Confundida — cree que tiene una cita el jueves pero en realidad no
+      reservó (lo pensó pero nunca cerró). Insiste un par de turnos.
+  intent: "Hola, quiero cancelar mi cita del jueves."
+  max_turns: 6
+  expect:
+    outcome: out_of_scope_handled
+    db_appointment: null
+    tool_calls_required: [manage_appointments]
+    tool_calls_forbidden: [book]
+    tags: [cancel, no-appointment, edge]
+
+# ===========================================================================
+# Type E — Multi-intent (4 scenarios)
+# Customer combines two or more intents in one conversation. v1 covered zero.
+# ===========================================================================
+
+- id: multi-cancel-y-reservar
+  description: >
+    Customer wants to cancel an existing appointment AND book a new one in the
+    same conversation. Tests state continuity across two transactions.
+  tags: [v2, multi-intent, cancel-and-book]
+  persona:
+    name: Silvia Reyes
+    phone: "+34999000025"
+    style: >
+      Tiene cita el martes pero quiere cambiarla por una opción distinta — no
+      reschedule, sino cancelar la actual (servicio A) y reservar otra
+      (servicio B) que es de otra categoría.
+  intent: "Hola, quiero cancelar mi cita del martes y agendar un tinte para el sábado."
+  max_turns: 12
+  expect:
+    outcome: multi_completed
+    db_appointment:
+      status: confirmed
+    tool_calls_required: [manage_appointments, book]
+    tool_calls_forbidden: []
+    tags: [multi-intent, cancel-book]
+
+- id: multi-cita-pareja
+  description: >
+    Customer wants to book two appointments in the same time slot for herself
+    and her partner. Tests dual-customer-same-conversation flow.
+  tags: [v2, multi-intent, two-customers]
+  persona:
+    name: Mónica Salinas
+    phone: "+34999000026"
+    style: >
+      Quiere reservar para ella y para su marido al mismo tiempo. Ella quiere
+      corte dama, él quiere corte caballero. Espera salir junto en el slot.
+  intent: "Hola, queremos venir mi marido y yo a la vez, yo un corte y él también."
+  max_turns: 14
+  expect:
+    outcome: multi_completed
+    db_appointment:
+      status: confirmed
+    tool_calls_required: [check_availability, book]
+    tool_calls_forbidden: []
+    tags: [multi-intent, couple, complex]
+
+- id: multi-cita-hija
+  description: >
+    Customer books an appointment for her daughter (booking on behalf of
+    another person). Tests whether the bot can handle third-party booking or
+    correctly escalates / asks for the daughter's data.
+  tags: [v2, multi-intent, on-behalf-of]
+  persona:
+    name: Teresa Marín
+    phone: "+34999000027"
+    style: >
+      Madre reservando para su hija de 8 años. La cita es para la niña, no para
+      ella. Probable que el bot necesite manejar el caso de "reservar a nombre
+      de otra persona" — feature potencialmente faltante.
+  intent: "Hola, quiero reservar un corte para mi hija de 8 años, el sábado por la mañana."
+  max_turns: 10
+  expect:
+    outcome: booked
+    db_appointment:
+      status: confirmed
+    tool_calls_required: [check_availability, book]
+    tool_calls_forbidden: []
+    tags: [multi-intent, child, on-behalf]
+
+- id: multi-servicios-combo
+  description: >
+    Customer asks for two services in one visit (cut + tint). Tests combo
+    booking — currently update_booking expects service_ids as array but it's
+    unclear if multiple non-adjacent services are supported in flow.
+  tags: [v2, multi-intent, combo]
+  persona:
+    name: Daniela Ferrer
+    phone: "+34999000028"
+    style: >
+      Quiere corte y tinte en la misma visita. Espera que el bot le ofrezca
+      slots con duración combinada. Si el bot la trata como dos citas separadas,
+      es un fallo de combo handling.
+  intent: "Hola, quiero hacer corte y tinte la misma tarde si se puede."
+  max_turns: 12
+  expect:
+    outcome: booked
+    db_appointment:
+      status: confirmed
+    tool_calls_required: [check_availability, book]
+    tool_calls_forbidden: []
+    tags: [multi-intent, combo, complex]
+
+# ===========================================================================
+# Type G — Behavioral edge cases (5 scenarios)
+# Personas with unusual interaction patterns. Stress-tests prompt robustness.
+# ===========================================================================
+
+- id: indecisa-cambia-criterio-tres-veces
+  description: >
+    Customer changes service / stylist / date multiple times before committing.
+    Tests state stickiness and the bot's ability to update partial_resolved_ids
+    cleanly without context loss.
+  tags: [v2, behavioral, indecisive]
+  persona:
+    name: Marta Vidal
+    phone: "+34999000029"
+    style: >
+      Indecisa. Cambia de opinión sobre el servicio (corte → tinte → mechas),
+      la estilista (cualquiera → Carmen → Lucía), y la fecha (martes → jueves →
+      sábado). Solo cierra cuando llega a su 3a iteración. Probable trigger de
+      Pattern E (context loss).
+  intent: "Hola, quiero hacerme algo en el pelo pero no sé qué exactamente. ¿Qué me recomiendas?"
+  max_turns: 14
+  expect:
+    outcome: booked
+    db_appointment:
+      status: confirmed
+    tool_calls_required: [check_availability, book]
+    tool_calls_forbidden: []
+    tags: [behavioral, indecisive, context-retention]
+
+- id: laconica-todo-una-linea
+  description: >
+    Terse customer who provides everything in one message. Tests whether the
+    bot can parse multi-slot input or insists on incremental disambiguation.
+  tags: [v2, behavioral, terse]
+  persona:
+    name: Alejandra Pinto
+    phone: "+34999000030"
+    style: >
+      Habla en frases cortas y directas. Esperá que respondas con dos palabras
+      cuando el bot te pida algo. No vas a repetir info que ya diste.
+  intent: "Corte dama mañana 17h Carmen."
+  max_turns: 8
+  expect:
+    outcome: booked
+    db_appointment:
+      status: confirmed
+    tool_calls_required: [check_availability, book]
+    tool_calls_forbidden: []
+    tags: [behavioral, terse, one-shot-parsing]
+
+- id: confundida-pide-aclaracion
+  description: >
+    Older customer who doesn't understand the options offered and asks for
+    repeated re-explanation. Tests bot's patience and re-explanation skill.
+  tags: [v2, behavioral, confused]
+  persona:
+    name: Pilar Hernández
+    phone: "+34999000031"
+    style: >
+      Mujer mayor (70+). Lee con dificultad. No entiende los nombres de los
+      servicios (qué es "balayage", "mechas californianas", etc.). Pide al bot
+      que le explique con palabras simples cada vez. No se compromete hasta
+      entender claramente.
+  intent: "Hola, quería pedir hora para arreglarme el pelo pero no entiendo qué es lo que ofrecéis exactamente."
+  max_turns: 12
+  expect:
+    outcome: booked
+    db_appointment:
+      status: confirmed
+    tool_calls_required: [check_availability, book]
+    tool_calls_forbidden: []
+    tags: [behavioral, confused, re-explain]
+
+- id: impaciente-multiples-mensajes
+  description: >
+    Customer sends 3 messages in rapid succession before bot can respond. Tests
+    the message batcher (3-second window) and whether the bot handles batched
+    input as one logical turn.
+  tags: [v2, behavioral, batched-input]
+  persona:
+    name: Verónica Cano
+    phone: "+34999000032"
+    style: >
+      Impaciente. Envía 3 mensajes en menos de 5 segundos: "Hola" / "Quiero un
+      corte" / "Para mañana por la tarde si puede ser". Espera respuesta única
+      cubriendo todo.
+  intent: "Hola"
+  max_turns: 10
+  expect:
+    outcome: booked
+    db_appointment:
+      status: confirmed
+    tool_calls_required: [check_availability, book]
+    tool_calls_forbidden: []
+    tags: [behavioral, batching, impatient]
+
+- id: cliente-leal-lo-de-siempre
+  description: >
+    Returning customer asks for "the usual" referencing past visits. Tests
+    long-term memory (customer_memories.agent_notes + past appointments) and
+    whether the bot resolves "lo de siempre" to a concrete service.
+  tags: [v2, behavioral, memory, returning]
+  persona:
+    name: Raquel Cordero
+    phone: "+34999000033"
+    style: >
+      Cliente habitual de hace 2 años. Siempre se hace el mismo corte con
+      Carmen. Espera que el bot recuerde su preferencia. Si pregunta "qué
+      servicio?", se molesta.
+  intent: "Hola, quería pedir hora para lo de siempre con Carmen."
+  max_turns: 8
+  expect:
+    outcome: booked
+    db_appointment:
+      status: confirmed
+    tool_calls_required: [check_availability, book]
+    tool_calls_forbidden: []
+    tags: [behavioral, returning, memory-test]
+
+# ===========================================================================
+# Type F — Out of scope (3 scenarios)
+# Conversations the bot should NOT try to handle as bookings.
+# ===========================================================================
+
+- id: preguntar-dueño-personalmente
+  description: >
+    Customer wants to speak with the salon owner personally (not bot-mediated).
+    Tests appropriate escalation without trying to handle in-bot.
+  tags: [v2, out-of-scope, escalation]
+  persona:
+    name: Inmaculada Soto
+    phone: "+34999000034"
+    style: >
+      Quiere hablar directamente con Pilar (dueña del salón) por un tema
+      personal. No quiere agendar nada. Va a insistir si el bot la redirige a
+      booking.
+  intent: "Hola, necesito hablar directamente con Pilar, ¿está disponible?"
+  max_turns: 5
+  expect:
+    outcome: escalated
+    db_appointment: null
+    tool_calls_required: [escalate]
+    tool_calls_forbidden: [book, update_booking, check_availability]
+    tags: [out-of-scope, escalation, owner-request]
+
+- id: spam-marketing-mensaje
+  description: >
+    Spam / marketing message from someone trying to sell something to the
+    salon. Tests appropriate non-engagement.
+  tags: [v2, out-of-scope, spam]
+  persona:
+    name: Carlos Mendoza
+    phone: "+34999000035"
+    style: >
+      Vendedor B2B intentando vender productos de peluquería profesional al
+      salón. No es un cliente. Insiste 2-3 veces.
+  intent: "Buenos días, llamamos de distribuidora de productos profesionales para peluquerías, ¿tienen un minuto?"
+  max_turns: 5
+  expect:
+    outcome: out_of_scope_handled
+    db_appointment: null
+    tool_calls_required: []
+    tool_calls_forbidden: [book, update_booking]
+    tags: [out-of-scope, spam, b2b]
+
+- id: consejo-pelo-generico
+  description: >
+    Customer asks for hair advice ("what should I do with my dry hair?")
+    without intent to book. Tests whether bot stays in scope (booking
+    assistant) without giving cosmetology advice.
+  tags: [v2, out-of-scope, advice]
+  persona:
+    name: Sara Bautista
+    phone: "+34999000036"
+    style: >
+      Pide consejo gratis sobre cómo cuidar el pelo seco. No quiere reservar
+      ahora, solo opinión. El bot no debería convertirse en consultor de
+      cosmetología — escalación amable o redirección a reserva.
+  intent: "Hola, tengo el pelo muy seco, ¿qué me recomendarías hacerme?"
+  max_turns: 6
+  expect:
+    outcome: out_of_scope_handled
+    db_appointment: null
+    tool_calls_required: []
+    tool_calls_forbidden: []
+    tags: [out-of-scope, advice, scope-discipline]
+
+# ===========================================================================
+# Type I — Operational edges (3 scenarios)
+# Real-world operational situations.
+# ===========================================================================
+
+- id: alergia-mencionada-en-booking
+  description: >
+    Customer mentions an allergy during booking (e.g. amoniaco for tint).
+    Tests whether the bot records the note and escalates or proceeds safely.
+  tags: [v2, operational, allergy, safety]
+  persona:
+    name: Esther Lozano
+    phone: "+34999000037"
+    style: >
+      Quiere reservar un tinte pero menciona que es alérgica al amoníaco. El
+      bot debe registrar la alergia en notes (customer_memories) y/o escalar a
+      humano para validar productos antes de confirmar.
+  intent: "Hola, quería pedir hora para un tinte pero soy alérgica al amoníaco."
+  max_turns: 10
+  expect:
+    outcome: escalated
+    db_appointment: null
+    tool_calls_required: [escalate]
+    tool_calls_forbidden: []
+    tags: [operational, allergy, safety-escalation]
+
+- id: atienden-ninos-edad-temprana
+  description: >
+    Customer asks if the salon handles very young children (4 yo). Tests
+    audience disambiguation (child + age threshold).
+  tags: [v2, operational, audience, kids]
+  persona:
+    name: Eugenia Pastor
+    phone: "+34999000038"
+    style: >
+      Madre con niño de 4 años. Pregunta si el salón atiende niños pequeños
+      antes de reservar. Si la respuesta es ambigua, no reserva.
+  intent: "Hola, ¿le pueden cortar el pelo a un niño de 4 años?"
+  max_turns: 6
+  expect:
+    outcome: info_provided
+    db_appointment: null
+    tool_calls_required: []
+    tool_calls_forbidden: []
+    tags: [operational, audience, kids]
+
+- id: todos-ocupados-fecha-corta
+  description: >
+    Customer requests a booking on a date when no slots are available (e.g.
+    fully booked or holiday). Tests next_available fallback behavior.
+  tags: [v2, operational, no-availability]
+  persona:
+    name: Begoña Ramírez
+    phone: "+34999000039"
+    style: >
+      Insiste en reservar el mismo día de hoy con muy poca antelación. Es
+      probable que no haya hueco. Espera que el bot le ofrezca alternativas
+      cercanas (mañana, pasado) sin frustración.
+  intent: "Hola, ¿hay algún hueco para hoy mismo a la tarde? Es urgente."
+  max_turns: 8
+  expect:
+    outcome: booked
+    db_appointment:
+      status: confirmed
+    tool_calls_required: [check_availability, get_next_available_options, book]
+    tool_calls_forbidden: []
+    tags: [operational, urgent, fallback]
+
+# ===========================================================================
+# Type J — Media / unsupported input (1 scenario)
+# Customer sends content the bot cannot process.
+# ===========================================================================
+
+- id: mensaje-no-procesable-emoji-solo
+  description: >
+    Customer sends only emoji as first message (no text). Tests bot's handling
+    of unparseable input — should ask for clarification, not crash or guess.
+  tags: [v2, media, unsupported, edge]
+  persona:
+    name: Noelia Sánchez
+    phone: "+34999000040"
+    style: >
+      Primera vez. Manda un emoji solo (💇‍♀️) como intento de pedir cita.
+      Espera que el bot le pregunte qué quiere.
+  intent: "💇‍♀️"
+  max_turns: 5
+  expect:
+    outcome: stuck
+    db_appointment: null
+    tool_calls_required: []
+    tool_calls_forbidden: []
+    tags: [media, emoji, ambiguous-input]
+
+# ===========================================================================
+# Change H — Reschedule / Cancel expansion scenarios (phones 041..044)
+#
+# These 4 scenarios extend coverage of manage_appointments flows. Added by
+# Change H (qa-harness-improvements) after the original 15+25 battery was
+# found to have insufficient reschedule/cancel signal.
+#
+# Phones: +34999000041..+34999000044 (exclusive to this block; not in v1 or
+# the existing v2 block above).
+# ===========================================================================
+
+- id: change-h-own-appt-lookup
+  description: >
+    Customer wants to know if they have any upcoming appointments. Tests
+    manage_appointments tool call for own-appointment lookup without intent
+    to reschedule or cancel. Expected: bot uses manage_appointments and returns
+    a list (or "no appointments" message).
+  tags: [v2, reschedule, cancel, appointment-lookup, change-h]
+  persona:
+    name: Sofía Mendoza
+    phone: "+34999000041"
+    style: >
+      Cliente habitual. Quiere saber si tiene alguna cita pendiente. No tiene
+      intención de cancelar ni cambiar, solo verificar. Si el bot le pregunta
+      qué quiere hacer, responde que solo quiere saber sus citas.
+  intent: "Hola, ¿tengo alguna cita reservada?"
+  max_turns: 8
+  expect:
+    outcome: info_provided
+    db_appointment: null
+    tool_calls_required: [manage_appointments]
+    tool_calls_forbidden: [book]
+    tags: [appointment-lookup, manage-appointments, change-h]
+
+- id: change-h-reschedule
+  description: >
+    Customer has an existing appointment and wants to move it to a different
+    slot. Tests the full reschedule flow: manage_appointments lookup →
+    check_availability for new slot → confirm reschedule. Expected outcome
+    is rescheduled with updated appointment in DB.
+  tags: [v2, reschedule, change-h]
+  persona:
+    name: Valentina Reyes
+    phone: "+34999000042"
+    style: >
+      Tiene una cita reservada y necesita cambiarla al jueves. Es directa:
+      primero dice que quiere cambiar su cita, luego acepta la primera
+      disponibilidad que le ofrezcan el jueves. Si no hay jueves disponible,
+      acepta el viernes. Confirma el cambio sin dudar.
+  intent: "Hola, quiero cambiar mi cita para el jueves si es posible."
+  max_turns: 12
+  expect:
+    outcome: rescheduled
+    db_appointment:
+      status: confirmed
+    tool_calls_required: [manage_appointments, check_availability]
+    tool_calls_forbidden: []
+    tags: [reschedule, rescheduled, change-h]
+
+- id: change-h-cancel-single
+  description: >
+    Customer wants to cancel a single existing appointment. Tests
+    manage_appointments cancel flow. Expected: bot confirms cancellation,
+    appointment status changes to cancelled in DB.
+  tags: [v2, cancel, change-h]
+  persona:
+    name: Alejandra Torres
+    phone: "+34999000043"
+    style: >
+      Tiene una cita y necesita cancelarla porque surgió algo. Es breve y
+      directa: pide cancelar, confirma cuando el bot le pide confirmación, y
+      agradece al final. No quiere volver a reservar en esta conversación.
+  intent: "Hola, necesito cancelar mi cita por favor."
+  max_turns: 8
+  expect:
+    outcome: cancelled
+    db_appointment:
+      status: cancelled
+    tool_calls_required: [manage_appointments]
+    tool_calls_forbidden: [book]
+    tags: [cancel, cancelled, change-h]
+
+- id: change-h-cancel-rebook
+  description: >
+    Customer cancels an existing appointment and immediately asks for a new
+    slot. Tests the multi-intent cancel + rebook flow. Expected: bot handles
+    both the cancel and the new booking in the same conversation.
+  tags: [v2, cancel, reschedule, multi-intent, change-h]
+  persona:
+    name: Camila Herrera
+    phone: "+34999000044"
+    style: >
+      Tiene una cita pero quiere cancelarla y reservar una nueva para la
+      semana siguiente. Primero pide cancelar, confirma la cancelación, luego
+      dice que quiere reservar para el martes de la semana que viene. Acepta
+      la primera disponibilidad y confirma la nueva reserva.
+  intent: "Hola, quiero cancelar mi cita y pedir una nueva para la semana que viene."
+  max_turns: 14
+  expect:
+    outcome: multi_completed
+    db_appointment:
+      status: confirmed
+    tool_calls_required: [manage_appointments, check_availability, book]
+    tool_calls_forbidden: []
+    tags: [cancel, reschedule, multi-intent, multi_completed, change-h]

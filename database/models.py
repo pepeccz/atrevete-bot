@@ -93,7 +93,7 @@ class MessageRole(str, PyEnum):
 
 class ConversationMode(str, PyEnum):
     """
-    Conversation mode for the mode-based architecture (v6.0).
+    Legacy enum, retained for DB-stored values.
 
     Used for logging and archival purposes in conversation_history metadata.
     The canonical definition lives in agent/state/schemas.py as a Literal type;
@@ -129,6 +129,22 @@ class RecurrenceFrequency(str, PyEnum):
     MONTHLY = "MONTHLY"  # Repetir cada N meses
 
 
+class GcalSyncStatus(str, PyEnum):
+    """Sync state of an appointment's Google Calendar event (D1, gcal-sync-resilience)."""
+
+    SYNCED = "synced"
+    FAILED = "failed"
+    NOT_APPLICABLE = "not_applicable"
+
+
+class GcalOperation(str, PyEnum):
+    """Which GCal operation was last attempted for a failed appointment (D1)."""
+
+    BOOK = "book"
+    RESCHEDULE = "reschedule"
+    CANCEL = "cancel"
+
+
 class NotificationType(str, PyEnum):
     """Type of admin panel notification."""
 
@@ -158,6 +174,9 @@ class NotificationType(str, PyEnum):
 
     # Inbox / human-takeover reminders (SC-8 — conversaciones-inbox)
     CONVERSATION_PAUSED_REMINDER = "conversation_paused_reminder"  # Bot paused > 24h
+
+    # Google Calendar sync failures (gcal-sync-resilience)
+    GCAL_PUSH_FAILED = "gcal_push_failed"
 
 
 # ============================================================================
@@ -518,6 +537,19 @@ class Appointment(Base):
 
     # External integration IDs
     google_calendar_event_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+    # Google Calendar sync tracking (gcal-sync-resilience)
+    gcal_sync_status: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        server_default="synced",
+        default="synced",
+    )
+    gcal_last_attempt_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
+    gcal_last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    gcal_operation: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     # Customer-specific appointment data
     first_name: Mapped[str] = mapped_column(String(100), nullable=False)

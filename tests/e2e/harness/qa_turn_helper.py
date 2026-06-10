@@ -17,7 +17,66 @@ import asyncio
 import json
 import os
 import sys
+import time
+from datetime import UTC, datetime
 from typing import Any
+
+from shared.config import get_settings
+from tests.e2e.harness.redis_harness import RedisTestHarness
+
+# ---------------------------------------------------------------------------
+# I5 — Repeated sentence detector (QA post-hoc validator)
+# ---------------------------------------------------------------------------
+
+
+def detect_repeated_sentences(text: str) -> list[str]:
+    """Detect sentences that appear two or more times in a bot response.
+
+    Rules (per ADR-I5.1 — detect in QA harness, not in production middleware):
+    - Split on sentence-ending punctuation: '.', '!', '?'
+    - Strip leading/trailing whitespace from each fragment
+    - Flag any sentence that appears >= 2 times AND has > 5 words
+    - Short fragments (<= 5 words) are intentionally NOT flagged to avoid
+      false positives from common fillers ('Hola.', 'Sí.', 'Ok.', etc.)
+
+    Returns:
+        List of sentence strings that are repeated. Empty list if none.
+
+    Usage in run JSON output (T15 wires this into the turn output dict):
+        output["repeated_sentences"] = detect_repeated_sentences(agent_response)
+    """
+    import re
+
+    if not text:
+        return []
+
+    # Split on '.', '!', '?' while keeping the delimiter attached
+    fragments = re.split(r"(?<=[.!?])\s+", text)
+
+    # Normalize: strip punctuation tails and whitespace, lowercase for comparison
+    normalized: list[str] = []
+    for frag in fragments:
+        cleaned = frag.strip().rstrip(".!?").strip()
+        if cleaned:
+            normalized.append(cleaned)
+
+    # Count occurrences (case-insensitive)
+    counts: dict[str, int] = {}
+    originals: dict[str, str] = {}  # lowercase → original casing
+    for sentence in normalized:
+        key = sentence.lower()
+        counts[key] = counts.get(key, 0) + 1
+        if key not in originals:
+            originals[key] = sentence
+
+    # Flag sentences that appear >= 2x AND have > 5 words
+    repeated = [
+        originals[key]
+        for key, count in counts.items()
+        if count >= 2 and len(originals[key].split()) > 5
+    ]
+
+    return repeated
 
 
 def _json_out(data: dict[str, Any]) -> None:
@@ -67,18 +126,15 @@ async def _cmd_health() -> None:
         await client.aclose()
 
 
-async def _cmd_turn(
-    conversation_id: str,
-    message: str,
-    phone: str,
-    name: str,
-    timeout: float,
-) -> None:
-    """Execute an atomic subscribe-before-inject turn."""
+async def _cmd_turn(args: Any) -> int:
+    """Execute an atomic subscribe-before-inject turn.
+
+    Builds QARunIdentity and QARunSession from CLI args, then delegates
+    to RedisTestHarness.execute_turn(). Returns 0 on success, 2 on timeout.
+    """
     import redis.asyncio as redis
 
-    from shared.config import get_settings
-    from tests.e2e.harness.redis_harness import RedisTestHarness
+    from tests.e2e.harness.run_models import QARunIdentity, QARunSession
 
     settings = get_settings()
     redis_kwargs: dict[str, Any] = {"decode_responses": True}
@@ -87,24 +143,34 @@ async def _cmd_turn(
     client = redis.from_url(settings.REDIS_URL, **redis_kwargs)
     harness = RedisTestHarness(redis_client=client)
     try:
+        identity = QARunIdentity(
+            conversation_id=args.conversation_id,
+            customer_phone=args.customer_phone,
+            sender_name=args.persona_name,
+            run_started_at=datetime.now(UTC),
+        )
+        session = QARunSession(
+            identity=identity,
+            started_monotonic=time.monotonic(),
+        )
         result = await harness.execute_turn(
-            conversation_id=conversation_id,
-            user_message=message,
-            persona_name=name,
-            timeout=timeout,
-            customer_phone=phone,
+            user_message=args.user_message,
+            session=session,
+            timeout=args.timeout,
+            raise_on_timeout=False,
         )
         _json_out(
             {
-                "turn_number": result["turn_number"],
                 "agent_response": result["agent_response"],
-                "latency_ms": result["response_latency_ms"],
+                "timed_out": result["timed_out"],
+                "response_latency_ms": result["response_latency_ms"],
+                "tool_evidence": result["tool_evidence"],
             }
         )
-    except TimeoutError as exc:
-        _json_err("timeout", str(exc))
+        return 2 if result["timed_out"] else 0
     except Exception as exc:
         _json_err("turn_failed", str(exc))
+        return 1
     finally:
         await harness.close()
         await client.aclose()
@@ -135,12 +201,16 @@ async def _cmd_reset(conversation_id: str, phone: str) -> None:
         await client.aclose()
 
 
-async def _cmd_state(conversation_id: str) -> None:
-    """Fetch current checkpoint state for a conversation."""
-    import redis.asyncio as redis
+async def _cmd_state(args: Any) -> None:
+    """Fetch current checkpoint state for a conversation.
 
-    from shared.config import get_settings
-    from tests.e2e.harness.redis_harness import RedisTestHarness
+    Outputs only fields present in the current AgentState schema
+    (post create_agent rewrite). Does NOT output deleted fields:
+    current_mode, mode_context, mode_history, is_first_interaction,
+    error_count, booking_step.
+    """
+    import redis.asyncio as redis
+    from langchain_core.messages import ToolMessage
 
     settings = get_settings()
     redis_kwargs_txt: dict[str, Any] = {"decode_responses": True}
@@ -152,20 +222,32 @@ async def _cmd_state(conversation_id: str) -> None:
     binary_client = redis.from_url(settings.REDIS_URL, **redis_kwargs_bin2)
     harness = RedisTestHarness(redis_client=client, binary_redis_client=binary_client)
     try:
-        state = await harness.capture_final_state(conversation_id)
+        state = await harness.capture_final_state(args.conversation_id)
         if state is None:
             _json_out({"has_checkpoint": False})
             return
 
+        messages = state.get("messages", [])
+
+        # Find the name of the last ToolMessage in the messages list
+        latest_tool_call_name: str | None = None
+        for msg in reversed(messages):
+            if isinstance(msg, ToolMessage):
+                latest_tool_call_name = getattr(msg, "name", None)
+                break
+
         _json_out(
             {
                 "has_checkpoint": True,
-                "current_mode": state.get("current_mode"),
-                "mode_context": state.get("mode_context"),
+                "conversation_id": state.get("conversation_id"),
+                "customer_phone": state.get("customer_phone"),
+                "customer_id": state.get("customer_id"),
                 "customer_name": state.get("customer_name"),
-                "is_first_interaction": state.get("is_first_interaction"),
-                "error_count": state.get("error_count"),
-                "mode_history": state.get("mode_history"),
+                "messages_count": len(messages),
+                "latest_tool_call_name": latest_tool_call_name,
+                "customer_consents_count": len(state.get("customer_consents", []) or []),
+                "policy_accepted_at": state.get("policy_accepted_at"),
+                "summary_present": bool(state.get("conversation_summary") or state.get("summary")),
             }
         )
     except Exception as exc:
@@ -193,20 +275,38 @@ def _build_parser() -> argparse.ArgumentParser:
 
     # turn
     p_turn = sub.add_parser("turn", help="Execute an atomic conversation turn")
-    p_turn.add_argument("--conversation-id", required=True, help="Conversation UUID")
-    p_turn.add_argument("--message", required=True, help="User message text")
-    p_turn.add_argument("--phone", default="+34600000000", help="Customer phone")
-    p_turn.add_argument("--name", default="QA Test Client", help="Customer name")
-    p_turn.add_argument("--timeout", type=float, default=30.0, help="Response timeout (seconds)")
+    p_turn.add_argument(
+        "--conversation-id", required=True, dest="conversation_id", help="Conversation UUID"
+    )
+    p_turn.add_argument(
+        "--user-message", required=True, dest="user_message", help="User message text"
+    )
+    p_turn.add_argument(
+        "--customer-phone",
+        default="+34999000000",
+        dest="customer_phone",
+        help="Customer phone (must start with TEST_PHONE_PREFIX)",
+    )
+    p_turn.add_argument(
+        "--persona-name",
+        default="QA Test Client",
+        dest="persona_name",
+        help="Customer display name",
+    )
+    p_turn.add_argument("--timeout", type=float, default=60.0, help="Response timeout (seconds)")
 
     # reset
     p_reset = sub.add_parser("reset", help="Reset Redis state for a conversation")
-    p_reset.add_argument("--conversation-id", required=True, help="Conversation UUID")
-    p_reset.add_argument("--phone", default="+34600000000", help="Customer phone")
+    p_reset.add_argument(
+        "--conversation-id", required=True, dest="conversation_id", help="Conversation UUID"
+    )
+    p_reset.add_argument("--phone", default="+34999000000", help="Customer phone")
 
     # state
     p_state = sub.add_parser("state", help="Fetch checkpoint state")
-    p_state.add_argument("--conversation-id", required=True, help="Conversation UUID")
+    p_state.add_argument(
+        "--conversation-id", required=True, dest="conversation_id", help="Conversation UUID"
+    )
 
     return parser
 
@@ -221,15 +321,7 @@ def main() -> None:
     if args.command == "health":
         asyncio.run(_cmd_health())
     elif args.command == "turn":
-        asyncio.run(
-            _cmd_turn(
-                conversation_id=args.conversation_id,
-                message=args.message,
-                phone=args.phone,
-                name=args.name,
-                timeout=args.timeout,
-            )
-        )
+        asyncio.run(_cmd_turn(args))
     elif args.command == "reset":
         asyncio.run(
             _cmd_reset(
@@ -238,7 +330,7 @@ def main() -> None:
             )
         )
     elif args.command == "state":
-        asyncio.run(_cmd_state(conversation_id=args.conversation_id))
+        asyncio.run(_cmd_state(args))
 
 
 if __name__ == "__main__":

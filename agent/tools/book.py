@@ -11,15 +11,22 @@ import asyncio
 import logging
 import re
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Annotated
 from urllib.parse import quote
 from uuid import UUID, uuid4
 
 from langchain_core.tools import tool
+from langgraph.prebuilt import InjectedState
 
 from agent.middleware.customer_resolve import _invalidate_cached_customer
+from agent.services.availability_service import check_slot_availability
 from agent.services.customer_memory_service import read_customer_memories, write_customer_memories
-from agent.services.policy_service import PolicyConsentError, accept_policy
+from agent.services.policy_service import accept_policy
+from agent.tools._booking_validators import (
+    validate_service_ids_exist,
+    validate_slot_in_offered,
+    validate_stylist_id_exists,
+)
 from agent.tools.schemas import ToolResponse
 from shared.config import get_settings
 
@@ -152,12 +159,12 @@ async def book(
     service_ids: list[str],
     stylist_id: str,
     start_iso: str,
-    customer_phone: str,
     customer_full_name: str,
     confirmed: bool = False,
     pre_book_validated: bool = False,
     notes: str | None = None,
     policy_accepted: bool = False,
+    state: Annotated[dict, InjectedState] = None,
 ) -> str:
     """
     Book an appointment atomically.
@@ -165,11 +172,12 @@ async def book(
     Creates or reuses a customer by phone, inserts an Appointment,
     then fires a Google Calendar push (after DB commit, non-blocking).
 
+    customer_phone is injected from session state; it is not a tool argument.
+
     Args:
         service_ids: List of service UUID strings.
         stylist_id: Stylist UUID string.
         start_iso: Appointment start time in ISO 8601 format (timezone-aware).
-        customer_phone: Customer phone in E.164 format.
         customer_full_name: Full name in 'FirstName LastName' format (surname required).
         confirmed: Must be True — the customer has explicitly confirmed the booking.
         pre_book_validated: Must be True — check_availability(slot_time=…) returned exact_match=True.
@@ -181,6 +189,18 @@ async def book(
         JSON-serialized ToolResponse with payload containing:
         appointment_id, customer_id, start_iso, end_iso, stylist_id.
     """
+    # --- Inject customer_phone from state (InjectedState — not LLM-controlled) ---
+    customer_phone = (state or {}).get("customer_phone") or ""
+    if not customer_phone:
+        logger.error(
+            "book.state.missing_customer_phone",
+            extra={"tool_name": "book"},
+        )
+        return ToolResponse(
+            status="rejected",
+            errors=["Estado de conversación incompleto."],
+        ).model_dump_json()
+
     # --- Guard 1: confirmation required ---
     if not confirmed:
         logger.info(
@@ -216,8 +236,6 @@ async def book(
         missing.append("stylist_id")
     if not start_iso:
         missing.append("start_iso")
-    if not customer_phone:
-        missing.append("customer_phone")
     if not customer_full_name:
         missing.append("customer_full_name")
     if missing:
@@ -285,6 +303,53 @@ async def book(
 
     try:
         async with get_async_session() as session:
+            # --- FK existence guards (I1) — reject before any writes ---
+            # FK guards run BEFORE slot-binding (J3): structural integrity is more
+            # fundamental than semantic binding. If service/stylist IDs are invalid,
+            # the slot offer is meaningless and Change I FK error vocabulary must fire.
+            svc_result = await validate_service_ids_exist(session, parsed_service_ids)
+            if not svc_result.ok:
+                logger.info(
+                    "tool.response.rejected",
+                    extra={"tool_name": "book", "next_step": "invalid_service_ids"},
+                )
+                return ToolResponse(
+                    status="rejected",
+                    next_step="invalid_service_ids",
+                    payload={"missing_service_ids": [str(u) for u in svc_result.missing_ids]},
+                    errors=[svc_result.error_message],
+                ).model_dump_json()
+
+            sty_result = await validate_stylist_id_exists(session, parsed_stylist_id)
+            if not sty_result.ok:
+                logger.info(
+                    "tool.response.rejected",
+                    extra={"tool_name": "book", "next_step": "invalid_stylist_id"},
+                )
+                return ToolResponse(
+                    status="rejected",
+                    next_step="invalid_stylist_id",
+                    payload={"missing_stylist_id": str(parsed_stylist_id)},
+                    errors=[sty_result.error_message],
+                ).model_dump_json()
+
+            # --- J3: Slot-binding guard (recently_offered_slots) ---
+            # Validates that start_iso was explicitly offered to the customer in this session.
+            # J3 = "did we offer it"; the DB recheck below = "is it still free" — both must pass.
+            # Runs AFTER FK guards so FK error vocabulary fires when IDs are invalid.
+            _recently_offered = (state or {}).get("recently_offered_slots") or []
+            _slot_bind_result = validate_slot_in_offered(start_iso, stylist_id, _recently_offered)
+            if not _slot_bind_result.ok:
+                logger.info(
+                    "tool.response.rejected",
+                    extra={"tool_name": "book", "next_step": "reoffer_slots"},
+                )
+                return ToolResponse(
+                    status="rejected",
+                    next_step="reoffer_slots",
+                    errors=[_slot_bind_result.error_message],
+                ).model_dump_json()
+
             # Fetch service duration
             try:
                 total_duration = await _fetch_service_duration(session, parsed_service_ids)
@@ -296,9 +361,38 @@ async def book(
 
             end_time = start_time + timedelta(minutes=total_duration)
 
+            # --- Unconditional server-side slot recheck (B3) ---
+            # pre_book_validated is informational only. The real truth is checked here.
+            _avail = await check_slot_availability(parsed_stylist_id, start_time, total_duration)
+            if not _avail.get("available", False):
+                return ToolResponse(
+                    status="rejected",
+                    next_step="reoffer_slots",
+                    errors=["El hueco ya no está disponible. Ofrece alternativas."],
+                ).model_dump_json()
+
             # Get or create customer
             customer = await _get_or_create_customer(session, customer_phone, first_name, last_name)
             customer_id = customer.id
+
+            # ── Policy gate (B4) ─────────────────────────────────────────────
+            # After customer lookup — need policy_accepted_at/version from DB row.
+            # Before appointment INSERT — no orphaned rows if gate fires.
+            _settings_for_gate = get_settings()
+            _needs_policy = (
+                customer.policy_accepted_at is None
+                or customer.policy_version != _settings_for_gate.POLICY_VERSION
+            )
+            if _needs_policy and not policy_accepted:
+                return ToolResponse(
+                    status="rejected",
+                    next_step="policy_acceptance_required",
+                    payload={
+                        "policy_url": getattr(_settings_for_gate, "POLICY_URL", ""),
+                        "policy_version": getattr(_settings_for_gate, "POLICY_VERSION", ""),
+                    },
+                    errors=["El cliente debe aceptar la política de privacidad antes de reservar."],
+                ).model_dump_json()
 
             # ── Policy consent persistence (atomic with appointment) ─────────
             # Fires only when update_booking's gate set policy_accepted=True upstream.
@@ -330,7 +424,7 @@ async def book(
                 service_ids=parsed_service_ids,
                 start_time=start_time,
                 duration_minutes=total_duration,
-                status=AppointmentStatus.PENDING,
+                status=AppointmentStatus.CONFIRMED,
                 first_name=first_name,
                 last_name=last_name,
                 notes=notes,

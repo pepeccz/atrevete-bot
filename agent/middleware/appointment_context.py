@@ -19,6 +19,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import datetime
+from pathlib import Path
 from typing import ClassVar
 from uuid import UUID
 from zoneinfo import ZoneInfo
@@ -30,6 +31,20 @@ from shared.date_format import format_date_spanish as _format_date_spanish
 logger = logging.getLogger(__name__)
 
 MADRID_TZ = ZoneInfo("Europe/Madrid")
+
+# Module-level constant: appointment management flow block, read once at import time.
+# Wrapped in <appointment_management> tags; injected as _slot_appointment_management
+# only when the customer has upcoming appointments.
+_MGMT_FLOW_PATH = Path(__file__).parent.parent / "prompts" / "shared" / "appointment_management_flow.md"
+try:
+    _MGMT_FLOW_BLOCK = (
+        "<appointment_management>\n"
+        + _MGMT_FLOW_PATH.read_text(encoding="utf-8").strip()
+        + "\n</appointment_management>"
+    )
+except FileNotFoundError:
+    logger.warning("appointment_management_flow.md not found; _slot_appointment_management will be empty")
+    _MGMT_FLOW_BLOCK = ""
 
 
 def _format_relative(past_dt: datetime, now: datetime) -> str:
@@ -199,7 +214,11 @@ class AppointmentContextMiddleware(AgentMiddleware):
             appt._injected_service_names = service_names
 
         slot = _format_block(appointments)
-        new_state = {**state, "_slot_upcoming_appointments": slot}
+        new_state = {
+            **state,
+            "_slot_upcoming_appointments": slot,
+            "_slot_appointment_management": _MGMT_FLOW_BLOCK,
+        }
         modified_request = request.override(state=new_state)
 
         logger.info(

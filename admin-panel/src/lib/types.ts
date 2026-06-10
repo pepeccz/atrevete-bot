@@ -155,6 +155,11 @@ export interface Service {
   updated_at: string;
 }
 
+/** GCal sync state for an appointment (gcal-sync-resilience). */
+export type GcalSyncStatus = "synced" | "failed" | "not_applicable";
+/** Which GCal operation was last attempted for a failed appointment. */
+export type GcalOperation = "book" | "reschedule" | "cancel";
+
 export interface Appointment {
   id: string;
   customer_id: string;
@@ -173,6 +178,11 @@ export interface Appointment {
   cancelled_at: string | null;
   created_at: string;
   updated_at: string;
+  // GCal sync state (gcal-sync-resilience)
+  gcal_sync_status?: GcalSyncStatus;
+  gcal_last_attempt_at?: string | null;
+  gcal_last_error?: string | null;
+  gcal_operation?: GcalOperation | null;
   // Expanded relations (optional)
   customer?: Customer;
   stylist?: Stylist;

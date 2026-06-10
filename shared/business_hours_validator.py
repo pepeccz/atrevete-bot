@@ -6,7 +6,7 @@ ALL code checking if a day/date is closed MUST use these functions to ensure con
 
 Design Principles:
 - Database is the single source of truth (no hardcoded logic)
-- Async-first for integration with availability tools and FSM
+- Async-first for integration with availability tools
 - Fails closed on errors (safer than false availability)
 - Returns Spanish error messages for user-facing contexts
 
@@ -169,8 +169,8 @@ async def validate_slot_on_open_day(slot: dict) -> tuple[bool, str | None]:
     """
     Validate that a slot falls on an open day (not closed).
 
-    This is used by the FSM to reject slots that fall on closed days before
-    advancing to CUSTOMER_DATA state.
+    This is used to reject slots that fall on closed days before
+    advancing to the customer data collection step.
 
     Args:
         slot: Slot dictionary with 'start_time' key (ISO 8601 string)

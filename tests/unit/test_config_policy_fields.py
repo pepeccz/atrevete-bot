@@ -10,8 +10,6 @@ Refs: Spec §2, Task T05/T06
 
 from __future__ import annotations
 
-import pytest
-
 
 class TestPolicyVersionDefault:
     """POLICY_VERSION default and override behavior."""

@@ -1,0 +1,37 @@
+{
+  "scenario_id": "mensaje-no-procesable-emoji-solo",
+  "conv_id": "f11ee31c-291c-4e3d-8259-ec5a7f2a3d27",
+  "run_at": "2026-06-09T08:30:00Z",
+  "persona": {
+    "name": "Noelia Sánchez",
+    "phone": "+34999000040",
+    "style": "Primera vez. Manda un emoji solo (💇‍♀️) como intento de pedir cita."
+  },
+  "turns": [
+    {
+      "turn": 1,
+      "user": "💇‍♀️",
+      "agent": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Qué servicio quieres reservar?",
+      "timed_out": false,
+      "response_latency_ms": 14242,
+      "tool_evidence": []
+    }
+  ],
+  "db_delta": {
+    "appointments_before": 0,
+    "appointments_after": 0,
+    "appointments_created": 0
+  },
+  "final_state": {
+    "has_checkpoint": false,
+    "tool_calls_observed": [],
+    "tool_calls_forbidden_fired": []
+  },
+  "langfuse_traces": null,
+  "outcome": "pass",
+  "verdict": "PASS",
+  "expected_outcome": "stuck",
+  "outcome_match": true,
+  "notes": "Bot responded with greeting + clarification question ('¿Qué servicio quieres reservar?'). Did NOT attempt to guess intent or call any booking tool. No appointment created. Single turn was sufficient to confirm behavior — bot correctly handles emoji-only input as ambiguous and asks for clarification. No bug.",
+  "bugs": []
+}

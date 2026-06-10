@@ -1,0 +1,157 @@
+{
+  "scenario_id": "change-c-reschedule-flow",
+  "conversation_id": "f17cadf3-9db5-45e3-ba02-40b9e6677b38",
+  "outcome": "stuck",
+  "turns_taken": 12,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, quiero reservar un tinte para el lunes.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nNecesito que me digas el servicio con el nombre, no con el código: ¿quieres el tinte normal o el tinte extra?",
+      "latency_ms": 10057,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "greeting"
+    },
+    {
+      "turn": 2,
+      "user_message": "El tinte normal, por favor.",
+      "agent_response": "Perfecto. ¿Es para señora o para caballero?",
+      "latency_ms": 13458,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "service_clarification"
+    },
+    {
+      "turn": 3,
+      "user_message": "Para señora.",
+      "agent_response": "Anotado, un tinte para señora. ¿Quieres añadir algún otro servicio a la cita o solo ese?",
+      "latency_ms": 20900,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "audience_clarification"
+    },
+    {
+      "turn": 4,
+      "user_message": "Solo el tinte, gracias.",
+      "agent_response": "Perdona, el salón cierra los lunes. Te puedo reservar el primer hueco disponible a partir del martes.",
+      "latency_ms": 16794,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "monday_blocked"
+    },
+    {
+      "turn": 5,
+      "user_message": "Ah, no sabía. ¿Y cuándo hay huecos disponibles? Muéstrame opciones.",
+      "agent_response": "Claro 😊\n\nEstas son las próximas opciones para tu tinte:\n1. Martes 16 de junio a las 10:00 con Marta\n2. Martes 16 de junio a las 10:40 con Marta\n3. Martes 16 de junio a las 11:20 con Marta\n\n¿Cuál te viene mejor?",
+      "latency_ms": 11477,
+      "timed_out": false,
+      "tool_calls_observed": ["get_next_available_options"],
+      "bugs": [],
+      "milestone": "slots_offered"
+    },
+    {
+      "turn": 6,
+      "user_message": "La primera, el martes 16 a las 10:00 con Marta.",
+      "agent_response": "Perfecto, te lo dejo el martes 16 de junio a las 10:00 con Marta para tinte. ¿Te lo confirmo?",
+      "latency_ms": 16184,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "slot_selected"
+    },
+    {
+      "turn": 7,
+      "user_message": "Sí, confírmalo.",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas...",
+      "latency_ms": 15571,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "policy_gate"
+    },
+    {
+      "turn": 8,
+      "user_message": "Sí, la acepto.",
+      "agent_response": "Necesito continuar con la reserva, pero se ha perdido el contexto del servicio. ¿Me confirmas de nuevo que era tinte?",
+      "latency_ms": 13954,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [
+        {"type": "context_loss", "detail": "After policy acceptance, bot lost the booking context (service=tinte, date=martes 16, time=10:00, stylist=Marta) and re-asked for the service."}
+      ],
+      "milestone": null
+    },
+    {
+      "turn": 9,
+      "user_message": "Sí, era un tinte para señora el martes 16 a las 10:00 con Marta.",
+      "agent_response": "Para dejarla registrada, ¿me das tu nombre y primer apellido?",
+      "latency_ms": 13044,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "customer_registration"
+    },
+    {
+      "turn": 10,
+      "user_message": "Pilar Navarro.",
+      "agent_response": "Gracias, Pilar. ¿Quieres dejarme alguna nota para Marta sobre tu tinte?",
+      "latency_ms": 21321,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "name_captured"
+    },
+    {
+      "turn": 11,
+      "user_message": "No, sin notas. Por favor confirma la cita.",
+      "agent_response": "Ese hueco se ha ocupado justo ahora. Te busco alternativas inmediatas con Marta o, si prefieres, con la estilista con disponibilidad más próxima.",
+      "latency_ms": 19786,
+      "timed_out": false,
+      "tool_calls_observed": ["book", "check_availability"],
+      "bugs": [],
+      "milestone": "slot_collision"
+    },
+    {
+      "turn": 12,
+      "user_message": "Muéstrame las alternativas, por favor.",
+      "agent_response": "Estas son las alternativas más cercanas con Marta:\n\n1. Miércoles 17 de junio a las 10:00\n2. Miércoles 17 de junio a las 10:40\n3. Miércoles 17 de junio a las 11:20\n\n¿Cuál te viene mejor?",
+      "latency_ms": 13782,
+      "timed_out": false,
+      "tool_calls_observed": ["get_next_available_options"],
+      "bugs": [],
+      "milestone": "max_turns_reached"
+    }
+  ],
+  "bugs": [
+    {
+      "turn": 8,
+      "type": "context_loss",
+      "detail": "After policy acceptance, bot lost full booking context (service, date, time, stylist) and asked the customer to re-confirm the service. Caused ~4 wasted turns and prevented reaching the booking milestone within max_turns."
+    }
+  ],
+  "milestones_reached": ["greeting", "service_clarification", "audience_clarification", "monday_blocked", "slots_offered", "slot_selected", "policy_gate", "customer_registration", "name_captured", "slot_collision"],
+  "milestones_not_reached": ["book_confirmed", "reschedule_requested", "reschedule_confirmed"],
+  "db_delta": {
+    "customer_count_delta": 0,
+    "appt_count_delta": 0
+  },
+  "snapshot_before": {"customer_count": 0, "appt_count": 0},
+  "snapshot_after": {"customer_count": 0, "appt_count": 0},
+  "final_state": {"has_checkpoint": false},
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "rescheduled",
+    "db_appointment": {"status": "confirmed"},
+    "tool_calls_required": ["book", "manage_appointments"],
+    "tool_calls_forbidden": [],
+    "tags": ["change-c", "reschedule"]
+  },
+  "passed": false,
+  "root_cause": "context_loss_after_policy_acceptance",
+  "notes": "Slot collision at turn 11 added 2 extra turns. Primary failure driver was context_loss at turn 8 (post-policy-acceptance) which consumed 4 turns to recover, preventing the reschedule phase from being reached within max_turns=12. Reschedule slots were offered at turn 12 but conversation terminated."
+}

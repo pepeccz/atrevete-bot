@@ -190,11 +190,13 @@ class Settings(BaseSettings):
     )
 
     # Langfuse (Observability & Monitoring)
-    LANGFUSE_PUBLIC_KEY: str = Field(
-        default="pk-lf-placeholder", description="Langfuse public key for tracing and monitoring"
+    # Keys are Optional — absence (None) causes langfuse_pull.py to skip gracefully (exit 2).
+    # Set real keys in .env only when L2 trace audits are needed.
+    LANGFUSE_PUBLIC_KEY: str | None = Field(
+        default=None, description="Langfuse public key for tracing and monitoring"
     )
-    LANGFUSE_SECRET_KEY: str = Field(
-        default="sk-lf-placeholder", description="Langfuse secret key for authentication"
+    LANGFUSE_SECRET_KEY: str | None = Field(
+        default=None, description="Langfuse secret key for authentication"
     )
     LANGFUSE_BASE_URL: str = Field(
         default="https://cloud.langfuse.com",
@@ -222,6 +224,15 @@ class Settings(BaseSettings):
         description=(
             "Optional cheaper OpenRouter model slug for summarization "
             "(e.g. 'openai/gpt-4.1-nano'). Empty string → fall back to LLM_MODEL."
+        ),
+    )
+    LLM_PROVIDER_ORDER: str = Field(
+        default="openai",
+        description=(
+            "Comma-separated OpenRouter provider order for sticky routing. "
+            "Pins the provider so the static prompt prefix stays cache-eligible across turns. "
+            "Empty string disables the routing hint (OpenRouter chooses freely). "
+            "Example: 'openai' or 'openai,anthropic'."
         ),
     )
 
@@ -427,6 +438,23 @@ class Settings(BaseSettings):
     POLICY_URL: str = Field(
         default="https://atrevetepeluqueria.com/politica-privacidad/",
         description="Public URL for the salon's privacy and cancellation policy page.",
+    )
+
+    # QA test harness sandbox
+    TEST_MODE_GCAL_SKIP: bool = Field(
+        default=False,
+        description=(
+            "When true, GCal push functions early-return without making any API call. "
+            "QA harness only. Default False so production behavior is unchanged."
+        ),
+    )
+    TEST_PHONE_PREFIX: str = Field(
+        default="+34999",
+        description=(
+            "Sandbox phone prefix for QA harness scenarios. "
+            "All test phones must start with this value to prevent accidental "
+            "cleanup of real customer data."
+        ),
     )
 
     # Rate Limiting (disable in tests and maintenance windows)

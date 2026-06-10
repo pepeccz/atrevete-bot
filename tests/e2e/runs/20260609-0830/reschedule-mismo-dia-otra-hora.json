@@ -1,0 +1,71 @@
+{
+  "scenario_id": "reschedule-mismo-dia-otra-hora",
+  "conv_id": "9adef0ab-3216-4d43-b64d-e81ddd26d736",
+  "run_timestamp": "2026-06-09T09:07:00Z",
+  "persona": {
+    "name": "Pilar Navarro",
+    "phone": "+34999000012",
+    "description": "Cliente con cita confirmada hoy a las 10:30. Solicita cambio de hora al mismo día (12:00)."
+  },
+  "db_setup": {
+    "customer_id": "b1234567-0000-0000-0000-999000000012",
+    "appointment_id": "a1234567-0000-0000-0000-999000000012",
+    "appointment_start_madrid": "2026-06-09T10:30:00+02:00",
+    "service": "Corte de Mujer",
+    "stylist": "Marta",
+    "policy_accepted_at": "pre-set"
+  },
+  "db_snapshot_before": {
+    "total_appointments": 3
+  },
+  "db_snapshot_after": {
+    "total_appointments": 3,
+    "target_appointment_status": "confirmed",
+    "target_appointment_start_unchanged": true
+  },
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, tengo una cita hoy a las 10:30. Me gustaría cambiarla a las 12:00, si es posible.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nAhora mismo no me consta ninguna cita programada con ese número.  \n\nSi quieres, puedo ayudarte a reservar una nueva o, si la cita está a nombre de otra persona o con otro teléfono, tendría que revisarlo alguien del salón.",
+      "timed_out": false,
+      "response_latency_ms": 23238,
+      "tool_evidence": []
+    },
+    {
+      "turn": 2,
+      "user_message": "Soy Pilar Navarro, mi número es +34999000012. Tengo un corte de mujer hoy a las 10:30 con Marta y quiero cambiarlo a las 12:00.",
+      "agent_response": "Ahora mismo sigo sin ver ninguna cita programada con ese teléfono.\n\nComo el cambio de una cita concreta no me aparece disponible desde aquí, si quieres te la gestiono con una persona del salón.",
+      "timed_out": false,
+      "response_latency_ms": 20874,
+      "tool_evidence": []
+    }
+  ],
+  "final_state": {
+    "has_checkpoint": false
+  },
+  "langfuse_traces": null,
+  "outcome_decision": {
+    "outcome": "escalated",
+    "expected_outcome": "rescheduled",
+    "verdict": "FAIL",
+    "root_cause": "CustomerResolveMiddleware failed to link the QA-injected customer (phone +34999000012) to the conversation within the harness flow. The conversation_history row was created with customer_id=NULL, so AppointmentContextMiddleware found no appointments to hydrate. The bot correctly escalated rather than hallucinating, but the reschedule flow never executed.",
+    "db_appointment_modified": false,
+    "tool_calls_required_found": [],
+    "tool_calls_required_missing": ["manage_appointments"],
+    "tool_calls_forbidden_found": [],
+    "bugs": [
+      {
+        "severity": "WARNING",
+        "description": "QA harness: CustomerResolveMiddleware does not resolve customer by phone from the turn args — it relies on Chatwoot webhook context. Pre-seeding the customer in DB is not sufficient; the conv_id passed to qa_turn_helper must map to a conversation_history row that already has customer_id set BEFORE the first turn.",
+        "suggested_fix": "In qa_turn_helper reset or a new 'setup' command, insert conversation_history row with customer_id pre-linked when customer_phone is provided."
+      }
+    ],
+    "l1_db_correct": false,
+    "l2_traces": "skipped",
+    "l3_tool_calls": "FAIL",
+    "l4_safety": "PASS",
+    "l5_ux": 3.5,
+    "notes": "Bot behavior is correct (no hallucination, proper escalation offer). The FAIL is a harness/setup issue, not a bot logic regression. Appointment was not modified. Reset cleaned up all test data."
+  }
+}

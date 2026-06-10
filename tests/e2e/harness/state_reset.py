@@ -11,12 +11,26 @@ import redis.asyncio as redis
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
+from shared.config import get_settings
+
 if TYPE_CHECKING:
     from tests.e2e.harness.run_models import QARunIdentity
 
-# Safety guard: only allow DB cleanup for QA test phone numbers.
-# This prevents accidental deletion of real customer data.
-_QA_PHONE_PREFIX = "+34999"
+
+def _get_qa_phone_prefix() -> str:
+    """Return the QA phone prefix from Settings.
+
+    Raises RuntimeError if the prefix is empty or does not start with '+349'
+    (guard against misconfiguration that could point at real Spanish mobile numbers).
+    """
+    prefix = get_settings().TEST_PHONE_PREFIX.strip()
+    if not prefix:
+        raise RuntimeError("TEST_PHONE_PREFIX is empty — refusing QA cleanup")
+    if not prefix.startswith("+349"):
+        raise RuntimeError(
+            f"TEST_PHONE_PREFIX must start with +349 (got: {prefix!r}) — refusing QA cleanup"
+        )
+    return prefix
 
 
 class ProtectedDataError(RuntimeError):
@@ -24,8 +38,8 @@ class ProtectedDataError(RuntimeError):
 
 
 def is_test_phone(phone: str) -> bool:
-    """Return True only if phone starts with the QA test prefix (+34999)."""
-    return phone.startswith(_QA_PHONE_PREFIX)
+    """Return True only if phone starts with the QA test prefix."""
+    return phone.startswith(_get_qa_phone_prefix())
 
 
 def is_test_conversation(conversation_id: str, run_identity: QARunIdentity) -> bool:
@@ -38,7 +52,7 @@ async def safe_delete_customer(session: AsyncSession, phone: str) -> int:
     if not is_test_phone(phone):
         raise ProtectedDataError(
             f"Refusing to delete non-test data: phone={phone!r} "
-            f"(must start with {_QA_PHONE_PREFIX!r})"
+            f"(must start with {_get_qa_phone_prefix()!r})"
         )
     result = await session.execute(
         text("DELETE FROM customers WHERE phone = :phone"),
@@ -55,7 +69,7 @@ async def safe_delete_appointments(session: AsyncSession, phone: str) -> int:
     if not is_test_phone(phone):
         raise ProtectedDataError(
             f"Refusing to delete non-test data: phone={phone!r} "
-            f"(must start with {_QA_PHONE_PREFIX!r})"
+            f"(must start with {_get_qa_phone_prefix()!r})"
         )
     result = await session.execute(
         text(
@@ -209,14 +223,15 @@ class StateResetHarness:
 
         Creates its own DB session — no injection needed.
 
-        Safety: only processes phone numbers starting with ``_QA_PHONE_PREFIX``
-        (+34999) to prevent accidental deletion of real customer data.
+        Safety: only processes phone numbers starting with the configured
+        TEST_PHONE_PREFIX (+34999 by default) to prevent accidental deletion
+        of real customer data.
 
         Returns a dict with:
             appointments_deleted (int): number of appointments removed.
             customer_deleted (bool): True if the customer row was removed.
         """
-        if not phone or not phone.startswith(_QA_PHONE_PREFIX):
+        if not phone or not phone.startswith(_get_qa_phone_prefix()):
             # Not a QA number — refuse to touch the DB.
             return {"appointments_deleted": 0, "customer_deleted": False}
 
@@ -245,6 +260,18 @@ class StateResetHarness:
             await session.execute(
                 text(
                     "DELETE FROM conversation_history "
+                    "WHERE customer_id = ("
+                    "  SELECT id FROM customers WHERE phone = :phone LIMIT 1"
+                    ")"
+                ),
+                {"phone": phone},
+            )
+
+            # Delete customer_consents rows (FK to customers, no CASCADE).
+            # Added 2026-06-09 after smoke test FK violation.
+            await session.execute(
+                text(
+                    "DELETE FROM customer_consents "
                     "WHERE customer_id = ("
                     "  SELECT id FROM customers WHERE phone = :phone LIMIT 1"
                     ")"

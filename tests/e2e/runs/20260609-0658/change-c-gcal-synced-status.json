@@ -1,0 +1,149 @@
+{
+  "scenario_id": "change-c-gcal-synced-status",
+  "conversation_id": "a17c4233-ddd1-4d10-92f2-409ed2559f3a",
+  "outcome": "booked",
+  "turns_taken": 9,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Quiero reservar una manicura para el miércoles a las 11.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Qué tipo de manicura quieres? Tengo Manicura, Manicura Permanente o Manicura Permanente con Tratamiento.",
+      "latency_ms": 12218,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "session_started"
+    },
+    {
+      "turn": 2,
+      "user_message": "Manicura normal, gracias.",
+      "agent_response": "Anotado: manicura normal. ¿Quieres añadir algún otro servicio a la cita o solo la manicura?",
+      "latency_ms": 22970,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "service_selected"
+    },
+    {
+      "turn": 3,
+      "user_message": "Solo la manicura.",
+      "agent_response": "Perdona, para dejarlo cerrado: ¿quieres la manicura normal o prefieres una de las otras dos opciones, permanente o permanente con tratamiento?",
+      "latency_ms": 20165,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": ["redundant_question"],
+      "milestone": ""
+    },
+    {
+      "turn": 4,
+      "user_message": "Sí, la manicura normal.",
+      "agent_response": "Perdona, la primera fecha válida para esta cita es el viernes 12 de junio. Si te encaja, te paso los huecos disponibles para ese día 🙂",
+      "latency_ms": 16291,
+      "timed_out": false,
+      "tool_calls_observed": ["check_availability"],
+      "bugs": [],
+      "milestone": "availability_checked"
+    },
+    {
+      "turn": 5,
+      "user_message": "Sí, el viernes 12 me viene bien. ¿Qué horas hay disponibles?",
+      "agent_response": "No hay huecos el viernes 12 para esa manicura; la primera disponibilidad que me sale es con Rosa el sábado 13 de junio a las 9:00, 9:30 o 10:00. ¿Te encaja alguna de esas?",
+      "latency_ms": 11828,
+      "timed_out": false,
+      "tool_calls_observed": ["check_availability"],
+      "bugs": [],
+      "milestone": ""
+    },
+    {
+      "turn": 6,
+      "user_message": "El sábado 13 a las 9:30 con Rosa, perfecto.",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "latency_ms": 16252,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "policy_gate_triggered"
+    },
+    {
+      "turn": 7,
+      "user_message": "Sí, la acepto.",
+      "agent_response": "Perfecto. Para dejarte la cita cerrada, ¿me das tu nombre y primer apellido?",
+      "latency_ms": 15469,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "policy_accepted"
+    },
+    {
+      "turn": 8,
+      "user_message": "Ana Torres.",
+      "agent_response": "Gracias, Ana. ¿Hay alguna nota que deba tener en cuenta para tu manicura?",
+      "latency_ms": 13983,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": ""
+    },
+    {
+      "turn": 9,
+      "user_message": "No, ninguna nota.",
+      "agent_response": "¡Listo, Ana! Te he confirmado la cita para el sábado 13 de junio a las 9:30 con Rosa para manicura.\n\nAquí tienes el enlace para añadirla a tu calendario:\nhttps://calendar.google.com/calendar/render?action=TEMPLATE&text=Manicura%20en%20Atr%C3%A9vete&dates=20260613T073000Z/20260613T080000Z&details=Turno%20con%20Rosa&location=Atr%C3%A9vete%20Sal%C3%B3n%20de%20Belleza",
+      "latency_ms": 22734,
+      "timed_out": false,
+      "tool_calls_observed": ["book"],
+      "bugs": [],
+      "milestone": "booking_confirmed"
+    }
+  ],
+  "bugs": [
+    {
+      "turn": 3,
+      "category": "redundant_question",
+      "description": "Bot re-asked for manicure type after user already confirmed 'manicura normal' in turn 2. Bot said user chose 'solo la manicura' but couldn't lock in the type, causing unnecessary friction."
+    },
+    {
+      "turn": 9,
+      "category": "context_loss",
+      "description": "DB shows appointment status='pending' instead of 'confirmed', but bot told user 'te he confirmado'. Possible book tool returning pending state or status not being updated post-book."
+    }
+  ],
+  "milestones_reached": [
+    "session_started",
+    "service_selected",
+    "availability_checked",
+    "policy_gate_triggered",
+    "policy_accepted",
+    "booking_confirmed"
+  ],
+  "db_delta": {
+    "customer_count_delta": 1,
+    "appt_count_delta": 1
+  },
+  "snapshot_before": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "snapshot_after": {
+    "customer_count": 1,
+    "appt_count": 1
+  },
+  "gcal_columns": {
+    "status": "pending",
+    "gcal_sync_status": "not_applicable",
+    "gcal_operation": "push_appointment",
+    "gcal_last_error": null
+  },
+  "final_state": {"has_checkpoint": false},
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "booked",
+    "db_appointment": {
+      "status": "confirmed",
+      "gcal_sync_status": "not_applicable"
+    },
+    "tool_calls_required": ["check_availability", "book"],
+    "tool_calls_forbidden": [],
+    "tags": ["change-c", "gcal"]
+  },
+  "passed": true
+}

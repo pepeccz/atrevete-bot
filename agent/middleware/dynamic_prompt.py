@@ -30,23 +30,25 @@ logger = logging.getLogger(__name__)
 def _slot_today(now_utc: datetime | None = None) -> str:
     """Render the <today> context block with Europe/Madrid local time.
 
+    hora_local is intentionally excluded: omitting it keeps the slot byte-identical
+    across all turns within the same calendar day, enabling OpenRouter/OpenAI prefix
+    cache reuse (~3000-3500 tokens/turn saved on cache hit).
+
     Args:
         now_utc: UTC datetime to use. If None, reads the wall clock. Tests inject a fixed value.
 
     Returns:
-        XML-fenced string with fecha, dia_semana, hora_local, and tz fields.
+        XML-fenced string with fecha, dia_semana, and tz fields.
     """
     if now_utc is None:
         now_utc = datetime.now(tz=UTC)
     local = now_utc.astimezone(_MADRID_TZ)
     fecha = local.strftime("%Y-%m-%d")
     dia_semana = _WEEKDAYS_ES[local.weekday()]
-    hora_local = local.strftime("%H:%M")
     return (
         f"<today>\n"
         f"fecha: {fecha}\n"
         f"dia_semana: {dia_semana}\n"
-        f"hora_local: {hora_local}\n"
         f"tz: Europe/Madrid\n"
         f"</today>"
     )

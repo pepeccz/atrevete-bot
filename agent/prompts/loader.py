@@ -84,8 +84,11 @@ def load_system_prompt() -> str:
         4. shared/glossary.md           — audience taxonomy + service tag glossary
         5. shared/booking_flow.md       — step-by-step booking protocol
         6. shared/tools_contract.md     — tool call rules for all 5 tools
-        7. shared/appointment_management_flow.md — appointment lifecycle flow
-        8. shared/slot_contract.md              — dynamic slot preamble (today, customer, …)
+
+    Note: appointment_management_flow.md is injected conditionally via
+    _slot_appointment_management by AppointmentContextMiddleware (only when the
+    customer has upcoming appointments). slot_contract.md remains on disk as a
+    developer reference but is NOT loaded into the runtime prompt.
 
     Returns:
         str: Full system prompt, newline-separated sections.
@@ -97,7 +100,5 @@ def load_system_prompt() -> str:
         _read("glossary.md"),
         _read("booking_flow.md"),
         _read("tools_contract.md"),
-        _read("appointment_management_flow.md"),
-        _read("slot_contract.md"),
     ]
     return "\n\n---\n\n".join(s for s in sections if s)

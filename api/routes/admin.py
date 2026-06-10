@@ -3350,6 +3350,116 @@ async def delete_appointment(
 
 
 # =============================================================================
+# GCal Retry Endpoint (gcal-sync-resilience)
+# =============================================================================
+
+
+@router.post("/appointments/{appointment_id}/gcal-retry")
+async def retry_gcal_sync(
+    appointment_id: UUID,
+    current_user: Annotated[AdminUser, Depends(require_permission("appointments:write"))],
+):
+    """Retry the Google Calendar sync for a previously failed appointment.
+
+    Dispatches the correct push function based on the stored gcal_operation
+    (book / reschedule / cancel). Status is written by the push function itself.
+    Always returns HTTP 200 — use the ``status`` field in the response to detect failures.
+
+    Returns:
+        200 {status: synced|failed, gcal_event_id: str|null, error: str|null}
+        400 if gcal_operation is NULL (cannot determine what to retry)
+        404 if appointment not found
+
+    Spec: AS6, AS7, AS8, AS10, E3 (gcal-sync-resilience).
+    """
+    from shared.gcal_push_service import (
+        delete_gcal_event,
+        push_appointment_to_gcal,
+        update_appointment_in_gcal,
+    )
+
+    async with get_async_session() as session:
+        result = await session.execute(
+            select(Appointment).where(Appointment.id == appointment_id)
+        )
+        appointment = result.scalar_one_or_none()
+
+        if not appointment:
+            raise HTTPException(status_code=404, detail="Appointment not found")
+
+        if not appointment.gcal_operation:
+            raise HTTPException(
+                status_code=400,
+                detail="appointment has no recorded gcal_operation — contact dev to set it manually",
+            )
+
+    # Dispatch on stored operation. The push function writes gcal_sync_status as a side-effect.
+    operation = appointment.gcal_operation
+
+    if operation == "book":
+        service_names = ""  # Not available without join; endpoint uses stored appointment data
+        await push_appointment_to_gcal(
+            appointment_id=appointment.id,
+            stylist_id=appointment.stylist_id,
+            customer_name=f"{appointment.first_name} {appointment.last_name or ''}".strip(),
+            service_names=service_names,
+            start_time=appointment.start_time,
+            duration_minutes=appointment.duration_minutes,
+            status=appointment.status.value if hasattr(appointment.status, "value") else str(appointment.status),
+            notes=appointment.notes,
+        )
+    elif operation == "reschedule":
+        event_id = appointment.google_calendar_event_id
+        if not event_id:
+            # No existing event — fall back to initial book
+            await push_appointment_to_gcal(
+                appointment_id=appointment.id,
+                stylist_id=appointment.stylist_id,
+                customer_name=f"{appointment.first_name} {appointment.last_name or ''}".strip(),
+                service_names="",
+                start_time=appointment.start_time,
+                duration_minutes=appointment.duration_minutes,
+                status=appointment.status.value if hasattr(appointment.status, "value") else str(appointment.status),
+                notes=appointment.notes,
+            )
+        else:
+            await update_appointment_in_gcal(
+                appointment_id=appointment.id,
+                stylist_id=appointment.stylist_id,
+                event_id=event_id,
+                customer_name=f"{appointment.first_name} {appointment.last_name or ''}".strip(),
+                service_names="",
+                start_time=appointment.start_time,
+                duration_minutes=appointment.duration_minutes,
+                status=appointment.status.value if hasattr(appointment.status, "value") else str(appointment.status),
+                notes=appointment.notes,
+            )
+    elif operation == "cancel":
+        event_id = appointment.google_calendar_event_id or ""
+        await delete_gcal_event(
+            stylist_id=appointment.stylist_id,
+            event_id=event_id,
+            appointment_id=appointment.id,
+        )
+
+    # Re-read updated status (the push function wrote it)
+    async with get_async_session() as session:
+        result = await session.execute(
+            select(Appointment).where(Appointment.id == appointment_id)
+        )
+        updated = result.scalar_one_or_none()
+
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Appointment not found after retry")
+
+    return {
+        "status": updated.gcal_sync_status,
+        "gcal_event_id": updated.google_calendar_event_id,
+        "error": updated.gcal_last_error,
+    }
+
+
+# =============================================================================
 # Calendar Endpoints
 # =============================================================================
 

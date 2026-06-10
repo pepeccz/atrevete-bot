@@ -1,8 +1,8 @@
 """State schema contract tests — Scenarios A-E (Spec: S1–S5).
 
 Tests:
-  T1 — SLOT_REGISTRY is a tuple of exactly 6 values in the correct order
-  T2 — All 6 _slot_* fields in AgentState are typed NotRequired[str]
+  T1 — SLOT_REGISTRY is a tuple of exactly 7 values in the correct order
+  T2 — All 7 _slot_* fields in AgentState are typed NotRequired[str]
   T3 — conversation_summary is typed NotRequired[str | None]
   T4 — _validate_registry() raises RuntimeError on drift (extra TypedDict field)
 """
@@ -25,11 +25,11 @@ class TestSlotRegistry:
 
         assert isinstance(state.SLOT_REGISTRY, tuple)
 
-    def test_slot_registry_has_six_entries(self) -> None:
-        """SLOT_REGISTRY must contain exactly 6 entries."""
+    def test_slot_registry_has_seven_entries(self) -> None:
+        """SLOT_REGISTRY must contain exactly 7 entries."""
         import agent.state as state
 
-        assert len(state.SLOT_REGISTRY) == 6
+        assert len(state.SLOT_REGISTRY) == 7
 
     def test_slot_registry_exact_values_and_order(self) -> None:
         """SLOT_REGISTRY must match the canonical order defined in the spec."""
@@ -39,6 +39,7 @@ class TestSlotRegistry:
             "_slot_today",
             "_slot_customer",
             "_slot_upcoming_appointments",
+            "_slot_appointment_management",
             "_slot_business_hours",
             "_slot_availability",
             "_slot_catalog",
@@ -54,6 +55,7 @@ EXPECTED_SLOT_KEYS = (
     "_slot_today",
     "_slot_customer",
     "_slot_upcoming_appointments",
+    "_slot_appointment_management",
     "_slot_business_hours",
     "_slot_availability",
     "_slot_catalog",
@@ -62,7 +64,7 @@ EXPECTED_SLOT_KEYS = (
 
 class TestAgentStateSlotFields:
     def test_all_slot_fields_exist_in_agent_state(self) -> None:
-        """All 6 _slot_* keys must be declared in AgentState."""
+        """All 7 _slot_* keys must be declared in AgentState."""
         import agent.state as state
 
         hints = typing.get_type_hints(state.AgentState, include_extras=True)

@@ -26,11 +26,15 @@ from zoneinfo import ZoneInfo
 from langchain_core.tools import tool
 from langgraph.prebuilt import InjectedState
 
+from agent.services.availability_service import _load_lead_time_min_days
 from agent.tools._booking_validators import (
     ERROR_ADVANCE_POLICY_VIOLATED,
     ERROR_CLOSED_DAY,
     ERROR_INVALID_RELATIVE_DATE,
     validate_booking_date,
+    validate_service_ids_exist,
+    validate_slot_in_offered,
+    validate_stylist_id_exists,
 )
 from agent.tools.schemas import ToolResponse
 from shared.config import get_settings
@@ -217,6 +221,7 @@ async def update_booking(
             policy_accepted=policy_accepted,
             policy_rejection_count=policy_rejection_count,
             customer_id=_state.get("customer_id"),
+            recently_offered_slots=_state.get("recently_offered_slots") or [],
         )
     except Exception as exc:
         logger.error("update_booking unhandled exception: %s", exc, exc_info=True)
@@ -247,6 +252,7 @@ async def _update_booking_impl(
     policy_accepted: bool = False,
     policy_rejection_count: int = 0,
     customer_id: str | None = None,
+    recently_offered_slots: list[dict] | None = None,
 ) -> str:
     from agent.booking.resolvers.time_resolver import MIN_BOOKING_DAYS
     from agent.tools._booking_helpers import (
@@ -497,6 +503,37 @@ async def _update_booking_impl(
         collected["services"] = services
         collected["service_ids"] = resolved_ids
 
+        # ── J1: FK existence guard — service_ids ─────────────────────────────
+        # Validates that every resolved UUID actually exists in the services table.
+        # Defends against hallucinated UUIDs that might have bypassed name resolution.
+        if resolved_ids:
+            from uuid import UUID as _UUID
+
+            _parsed_service_ids = []
+            for _sid in resolved_ids:
+                try:
+                    _parsed_service_ids.append(_UUID(str(_sid)))
+                except (ValueError, AttributeError):
+                    pass
+            if _parsed_service_ids:
+                _svc_fk_result = await validate_service_ids_exist(session, _parsed_service_ids)
+                if not _svc_fk_result.ok:
+                    logger.info(
+                        "tool.response.rejected",
+                        extra={
+                            "tool_name": "update_booking",
+                            "next_step": "invalid_service_ids",
+                        },
+                    )
+                    return ToolResponse(
+                        status="rejected",
+                        next_step="service_required",
+                        errors=[_svc_fk_result.error_message],
+                        payload={
+                            "missing_service_ids": [str(u) for u in _svc_fk_result.missing_ids]
+                        },
+                    ).model_dump_json()
+
         # ── Step 4: extras loop — must be asked before stylist (ADR-2) ────────
         if len(services) >= 1 and not no_more_services and not extras_asked:
             collected["extras_asked"] = True
@@ -541,6 +578,30 @@ async def _update_booking_impl(
                         "first_available_label": _first_available_label,
                     },
                 ).model_dump_json()
+            # J1: FK existence guard — stylist_id
+            from uuid import UUID as _UUID2
+
+            try:
+                _parsed_stylist_id = _UUID2(str(stylist_id))
+                _sty_fk_result = await validate_stylist_id_exists(session, _parsed_stylist_id)
+                if not _sty_fk_result.ok:
+                    logger.info(
+                        "tool.response.rejected",
+                        extra={
+                            "tool_name": "update_booking",
+                            "next_step": "stylist_required",
+                        },
+                    )
+                    return ToolResponse(
+                        status="rejected",
+                        collected=collected,
+                        missing=["stylist"],
+                        next_step="stylist_required",
+                        errors=[_sty_fk_result.error_message],
+                    ).model_dump_json()
+            except (ValueError, AttributeError):
+                pass  # Invalid UUID already caught by _resolve_stylist
+
             collected["stylist_id"] = str(stylist_id)
             collected["stylist_name"] = stylist_name
 
@@ -598,9 +659,11 @@ async def _update_booking_impl(
         # validate_booking_date resolves relative text (G1), checks closed days (G2),
         # and enforces lead-time policy (G3). Short-circuits on first failure.
         # The adapter maps canonical error codes to this tool's wire-format next_step values.
+        _min_days = await _load_lead_time_min_days()
         _date_validation = await validate_booking_date(
             date_iso=date_iso,
             date_text=date_text,
+            min_days=_min_days,
         )
 
         if not _date_validation.ok:
@@ -784,6 +847,28 @@ async def _update_booking_impl(
             ).model_dump_json()
 
         resolved_stylist_id = collected.get("stylist_id")
+
+        # ── J3: slot-binding guard (recently_offered_slots) ──────────────────
+        # Validates that slot_iso was actually offered to the customer in this session.
+        # Runs BEFORE the DB recheck to fail-fast on hallucinated slots.
+        _offered = recently_offered_slots or []
+        _slot_result = validate_slot_in_offered(slot_iso, resolved_stylist_id, _offered)
+        if not _slot_result.ok:
+            logger.info(
+                "tool.response.partial",
+                extra={
+                    "tool_name": "update_booking",
+                    "next_step": "reoffer_slots",
+                },
+            )
+            return ToolResponse(
+                status="partial",
+                collected=collected,
+                missing=[],
+                next_step="reoffer_slots",
+                errors=[_slot_result.error_message],
+            ).model_dump_json()
+
         validated = _find_matching_check_availability(messages or [], slot_iso, resolved_stylist_id)
 
         if not validated:

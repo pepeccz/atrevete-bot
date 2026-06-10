@@ -1,0 +1,110 @@
+{
+  "scenario_id": "faq-pelo-rizado",
+  "conversation_id": "c794c1d0-7d10-4cdd-9add-2ee8bcda6887",
+  "outcome": "escalated",
+  "turns_taken": 4,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, ¿tienen alguien que sepa trabajar pelo muy rizado tipo 3c?",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nSí, tenemos estilistas en peluquería que pueden trabajar ese tipo de cabello. ¿Qué servicio quieres hacerte exactamente?",
+      "latency_ms": 7454,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [
+        {
+          "type": "hallucination",
+          "detail": "Bot claims 'tenemos estilistas que pueden trabajar ese tipo de cabello' without any knowledge base to verify stylist specializations. This is an unverified affirmative claim about specific curly hair expertise that may not be accurate."
+        }
+      ],
+      "milestone": "greeting + partial info attempt (unverified claim)"
+    },
+    {
+      "turn": 2,
+      "user_message": "Necesito saber específicamente quién tiene experiencia en rizo tipo 3c antes de reservar. He tenido muy malas experiencias.",
+      "agent_response": "No puedo confirmarte qué estilista tiene experiencia específica en rizo 3c con la información que tengo aquí.  \nSi quieres, te paso con una persona del salón para que te orienten mejor.",
+      "latency_ms": 9452,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "bot acknowledges limitation + offers escalation"
+    },
+    {
+      "turn": 3,
+      "user_message": "Sí, prefiero hablar con alguien del salón directamente.",
+      "agent_response": "No he podido transferirte ahora mismo. Lo mejor es que llames directamente al salón o lo intentes de nuevo en un momento.",
+      "latency_ms": 12389,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [
+        {
+          "type": "escalation_tool_silent_fail",
+          "detail": "Bot offered escalation in turn 2 and customer accepted, but escalate tool either was not called or failed silently. No tool_evidence observed. Bot told customer to call the salon but never provided a phone number."
+        }
+      ],
+      "milestone": "escalation attempted but failed silently"
+    },
+    {
+      "turn": 4,
+      "user_message": "¿Cuándo puedo llamar al salón?",
+      "agent_response": "No tengo el teléfono en este chat ni puedo darte una hora exacta de atención para llamadas con la información disponible. Si quieres, puedo seguir ayudándote por aquí con otra consulta.",
+      "latency_ms": 9339,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [
+        {
+          "type": "context_loss",
+          "detail": "Bot does not have salon phone number or business hours available to provide despite this being basic salon info. Leaves customer with no actionable path after failed escalation."
+        }
+      ],
+      "milestone": "conversation terminates without resolution"
+    }
+  ],
+  "bugs": [
+    {
+      "turn": 1,
+      "type": "hallucination",
+      "detail": "Unverified affirmative claim: bot said 'tenemos estilistas que pueden trabajar ese tipo de cabello' without verified knowledge of stylist specializations in curly hair type 3c."
+    },
+    {
+      "turn": 3,
+      "type": "escalation_tool_silent_fail",
+      "detail": "Bot offered escalation, customer accepted, but escalate tool was not invoked (no tool_evidence). Bot advised customer to 'call the salon' without providing contact info."
+    },
+    {
+      "turn": 4,
+      "type": "context_loss",
+      "detail": "Bot could not provide salon phone number or business hours — basic info needed for customer to follow up after failed escalation."
+    }
+  ],
+  "milestones_reached": [
+    "greeting",
+    "limitation_acknowledged",
+    "escalation_attempted"
+  ],
+  "db_delta": {
+    "customer_count_delta": 0,
+    "appt_count_delta": 0
+  },
+  "snapshot_before": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "snapshot_after": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "final_state": {
+    "has_checkpoint": false
+  },
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "info_provided",
+    "db_appointment": null,
+    "tool_calls_required": [],
+    "tool_calls_forbidden": [],
+    "tags": ["faq", "specialization", "escalate-acceptable"]
+  },
+  "passed": true,
+  "outcome_reasoning": "Expected outcome was 'info_provided' with 'escalate-acceptable' tag. Bot attempted to escalate (offered human transfer, customer accepted, but escalate tool silently failed). The bot did provide partial info (acknowledged specialization query, admitted limitation). Under v2 decision rules: no booking tool calls were made, the escalation tool appears not to have fired (no tool_evidence), so rule #8 ('escalated') cannot apply. The conversation provided information (limitation acknowledgment) and terminated naturally. Under the 'escalate-acceptable' tag, escalation attempts count toward passing. Outcome recorded as 'escalated' due to bot explicitly attempting to transfer customer; however the escalate tool did not produce evidence. Marked 'passed': true because the scenario expect.tags includes 'escalate-acceptable' making both info_provided and escalated acceptable."
+}

@@ -8,22 +8,22 @@ import json
 
 import pytest
 
+STATE_WITH_PHONE = {"customer_phone": "+34600000001"}
+
 
 @pytest.mark.asyncio
 async def test_book_rejects_single_token_name():
     """customer_full_name='Maite' → status=rejected, next_step=name_required."""
     from agent.tools.book import book
 
-    raw = await book.ainvoke(
-        {
-            "service_ids": ["00000000-0000-0000-0000-000000000001"],
-            "stylist_id": "00000000-0000-0000-0000-000000000002",
-            "start_iso": "2026-05-10T09:00:00+02:00",
-            "customer_phone": "+34600000001",
-            "customer_full_name": "Maite",
-            "confirmed": True,
-            "pre_book_validated": True,
-        }
+    raw = await book.coroutine(
+        service_ids=["00000000-0000-0000-0000-000000000001"],
+        stylist_id="00000000-0000-0000-0000-000000000002",
+        start_iso="2026-05-10T09:00:00+02:00",
+        customer_full_name="Maite",
+        confirmed=True,
+        pre_book_validated=True,
+        state=STATE_WITH_PHONE,
     )
     data = json.loads(raw)
     assert data["status"] == "rejected"
@@ -40,15 +40,13 @@ async def test_book_rejects_empty_name():
     """
     from agent.tools.book import book
 
-    raw = await book.ainvoke(
-        {
-            "service_ids": ["00000000-0000-0000-0000-000000000001"],
-            "stylist_id": "00000000-0000-0000-0000-000000000002",
-            "start_iso": "2026-05-10T09:00:00+02:00",
-            "customer_phone": "+34600000001",
-            "customer_full_name": "",
-            "confirmed": True,
-        }
+    raw = await book.coroutine(
+        service_ids=["00000000-0000-0000-0000-000000000001"],
+        stylist_id="00000000-0000-0000-0000-000000000002",
+        start_iso="2026-05-10T09:00:00+02:00",
+        customer_full_name="",
+        confirmed=True,
+        state=STATE_WITH_PHONE,
     )
     data = json.loads(raw)
     # Rejected before any DB write — SPEC-5.3 satisfied
@@ -63,16 +61,14 @@ async def test_book_rejects_whitespace_only_name():
     """
     from agent.tools.book import book
 
-    raw = await book.ainvoke(
-        {
-            "service_ids": ["00000000-0000-0000-0000-000000000001"],
-            "stylist_id": "00000000-0000-0000-0000-000000000002",
-            "start_iso": "2026-05-10T09:00:00+02:00",
-            "customer_phone": "+34600000001",
-            "customer_full_name": "   ",
-            "confirmed": True,
-            "pre_book_validated": True,
-        }
+    raw = await book.coroutine(
+        service_ids=["00000000-0000-0000-0000-000000000001"],
+        stylist_id="00000000-0000-0000-0000-000000000002",
+        start_iso="2026-05-10T09:00:00+02:00",
+        customer_full_name="   ",
+        confirmed=True,
+        pre_book_validated=True,
+        state=STATE_WITH_PHONE,
     )
     data = json.loads(raw)
     assert data["status"] == "rejected"
@@ -84,16 +80,14 @@ async def test_book_single_token_name_returns_name_required_message():
     """Rejection message explains what is missing (SPEC-5.2)."""
     from agent.tools.book import book
 
-    raw = await book.ainvoke(
-        {
-            "service_ids": ["00000000-0000-0000-0000-000000000001"],
-            "stylist_id": "00000000-0000-0000-0000-000000000002",
-            "start_iso": "2026-05-10T09:00:00+02:00",
-            "customer_phone": "+34600000001",
-            "customer_full_name": "Maite",
-            "confirmed": True,
-            "pre_book_validated": True,
-        }
+    raw = await book.coroutine(
+        service_ids=["00000000-0000-0000-0000-000000000001"],
+        stylist_id="00000000-0000-0000-0000-000000000002",
+        start_iso="2026-05-10T09:00:00+02:00",
+        customer_full_name="Maite",
+        confirmed=True,
+        pre_book_validated=True,
+        state=STATE_WITH_PHONE,
     )
     data = json.loads(raw)
     assert data["status"] == "rejected"

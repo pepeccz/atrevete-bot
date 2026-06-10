@@ -1,0 +1,85 @@
+{
+  "scenario_id": "change-b-cache-warm-second-turn",
+  "conversation_id": "ed5d6a3d-434c-4a52-a449-e881046c4e93",
+  "outcome": "stuck",
+  "turns_taken": 4,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "¿Tenéis disponibilidad para manicura esta semana?",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Qué tipo de manicura buscas? Tengo Manicura, Manicura Permanente o Manicura Permanente con Tratamiento.",
+      "latency_ms": 9161,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "greeting_shown"
+    },
+    {
+      "turn": 2,
+      "user_message": "Manicura normal. ¿Y qué días tenéis libres?",
+      "agent_response": "Perfecto, te anoto manicura normal. ¿Quieres añadir algún otro servicio a la cita o solo eso?",
+      "latency_ms": 11619,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "service_noted"
+    },
+    {
+      "turn": 3,
+      "user_message": "Solo manicura. ¿Tenéis algo el jueves o viernes?",
+      "agent_response": "Para seguir, necesito que me confirmes si es manicura normal, manicura permanente o manicura permanente con tratamiento.",
+      "latency_ms": 22788,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [
+        {
+          "category": "redundant_question",
+          "detail": "Bot re-asked service type clarification that was already answered in turn 2 ('Manicura normal')"
+        }
+      ],
+      "milestone": ""
+    },
+    {
+      "turn": 4,
+      "user_message": "Manicura normal, ya te lo dije. ¿Hay disponibilidad el jueves o el viernes de esta semana?",
+      "agent_response": "Perdona, para esta semana la primera fecha válida es viernes 12 de junio. Tienes estos huecos:\n\n1. Viernes 12 de junio a las 10:00\n2. Viernes 12 de junio a las 10:30\n3. Viernes 12 de junio a las 11:00\n4. Viernes 12 de junio a las 11:30\n\n¿Cuál te viene mejor?",
+      "latency_ms": 17719,
+      "timed_out": false,
+      "tool_calls_observed": ["check_availability"],
+      "bugs": [],
+      "milestone": "availability_shown"
+    }
+  ],
+  "bugs": [
+    {
+      "turn": 3,
+      "category": "redundant_question",
+      "detail": "Bot re-asked service type clarification already provided in turn 2"
+    }
+  ],
+  "milestones_reached": ["greeting_shown", "service_noted", "availability_shown"],
+  "db_delta": {
+    "customer_count_delta": 0,
+    "appt_count_delta": 0
+  },
+  "snapshot_before": {"customer_count": 0, "appt_count": 0},
+  "snapshot_after": {"customer_count": 0, "appt_count": 0},
+  "final_state": {"has_checkpoint": false},
+  "langfuse_trace_path": null,
+  "latencies": {
+    "turn_1_ms": 9161,
+    "turn_2_ms": 11619,
+    "turn_3_ms": 22788,
+    "turn_4_ms": 17719,
+    "cache_warm_delta_ms": 2458,
+    "note": "Turn 2 (11619ms) was slower than Turn 1 (9161ms) — cache warmth NOT demonstrated. Turn 3 spiked to 22788ms. Turn 4 (first with check_availability tool) was 17719ms."
+  },
+  "expect": {
+    "outcome": "booked",
+    "db_appointment": null,
+    "tool_calls_required": ["check_availability"],
+    "tool_calls_forbidden": [],
+    "tags": ["change-b", "cache", "latency"]
+  },
+  "passed": false
+}

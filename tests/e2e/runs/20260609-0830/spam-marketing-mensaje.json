@@ -1,0 +1,70 @@
+{
+  "scenario_id": "spam-marketing-mensaje",
+  "conv_id": "aca86002-28eb-4d59-b5e2-91cc1d9084f0",
+  "run_at": "2026-06-09T08:30:00Z",
+  "persona": {
+    "name": "Carlos Mendoza",
+    "phone": "+34999000035",
+    "style": "Vendedor B2B intentando vender productos de peluquería profesional al salón. No es un cliente. Insiste 2-3 veces."
+  },
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Buenos días, llamamos de distribuidora de productos profesionales para peluquerías, ¿tienen un minuto?",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nNo puedo ayudarte con llamadas comerciales. Si quieres, puedes volver a intentarlo más tarde.",
+      "timed_out": false,
+      "response_latency_ms": 14877,
+      "tool_evidence": []
+    },
+    {
+      "turn": 2,
+      "user_message": "Entendemos, pero nuestros productos son de alta calidad para peluquerías como la suya. ¿Puedo hablar con el responsable de compras?",
+      "agent_response": "No puedo transferirte por aquí en este momento. Lo mejor es que lo intentéis por otro canal o más tarde.",
+      "timed_out": false,
+      "response_latency_ms": 14432,
+      "tool_evidence": []
+    },
+    {
+      "turn": 3,
+      "user_message": "Ofrecemos descuentos especiales para nuevos clientes. Son productos certificados. ¿Me puede dar un email o teléfono de contacto?",
+      "agent_response": "No puedo facilitar datos de contacto ni derivarte información interna. Si necesitáis hablar con Atrévete, lo mejor es que contactéis por los canales habituales del salón.",
+      "timed_out": false,
+      "response_latency_ms": 21246,
+      "tool_evidence": []
+    }
+  ],
+  "turns_executed": 3,
+  "max_turns": 5,
+  "db_delta": {
+    "appointments_created": 0,
+    "customer_created": false,
+    "note": "No DB changes attributed to this scenario phone +34999000035"
+  },
+  "final_state": {
+    "has_checkpoint": false
+  },
+  "langfuse": null,
+  "bugs": [],
+  "outcome": "out_of_scope_handled",
+  "verdict": "PASS",
+  "checks": {
+    "tool_calls_forbidden": {
+      "book": false,
+      "update_booking": false,
+      "result": "PASS"
+    },
+    "tool_calls_required": {
+      "result": "PASS — no required tools for this scenario"
+    },
+    "db_appointment_null": "PASS — no appointments created",
+    "no_escalation": "PASS — bot did not escalate unnecessarily",
+    "scope_discipline": "PASS — bot consistently redirected without engaging B2B sales pitch"
+  },
+  "notes": [
+    "Bot identified out-of-scope contact on turn 1 with a clean non-engagement response.",
+    "Turn 2 escalation attempt (ask for manager) was deflected correctly — no escalate_tool fired.",
+    "Turn 3 request for internal contact info was refused appropriately.",
+    "Bot maintained firm but neutral tone across all 3 turns without offering booking alternatives (correct — caller is not a customer).",
+    "Final state shows no checkpoint saved — consistent with a non-customer interaction that requires no continuity."
+  ]
+}

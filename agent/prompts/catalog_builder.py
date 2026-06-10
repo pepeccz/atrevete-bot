@@ -248,6 +248,7 @@ def build_catalog_for_prompt(services: list[Any]) -> str:
 # ---------------------------------------------------------------------------
 
 _catalog_cache: _TtlCache[tuple[list[ServiceRow], str]] = _TtlCache(ttl_minutes=5)
+_prompt_section_cache: _TtlCache[str] = _TtlCache(ttl_minutes=5)
 
 _DAY_NAMES = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
 
@@ -364,17 +365,13 @@ async def load_active_catalog() -> list[Any]:
     return await get_active_services()
 
 
-async def build_catalog_prompt_section() -> str:
-    """Load active catalog from DB and return a tagged prompt string.
+async def _load_prompt_section() -> str:
+    """Inner loader for build_catalog_prompt_section — queries DB, renders string.
 
-    Used by DynamicPromptMiddleware to inject catalog per-turn.
-    Falls back to the simpler build_catalog_for_prompt format (with UUIDs).
-    Appends ## Estilistas disponibles section listing active stylists with their UUIDs.
+    Kept private so the cache can monkeypatch it in tests without replacing
+    the full public function.
     """
     try:
-        # For prompt injection we use the simple tagged format (not full markdown)
-        # We need Service ORM-compatible objects; ServiceRow lacks `id` and other fields.
-        # Query directly for the prompt format.
         from sqlalchemy import select
 
         from database.connection import get_async_session
@@ -411,10 +408,20 @@ async def build_catalog_prompt_section() -> str:
         return ""
 
 
+async def build_catalog_prompt_section() -> str:
+    """Load active catalog from DB and return a tagged prompt string.
+
+    Used by DynamicPromptMiddleware to inject catalog per-turn.
+    Result is cached for 5 minutes; invalidated by invalidate_catalog_cache().
+    """
+    return await _prompt_section_cache.get_or_load(_load_prompt_section)
+
+
 def invalidate_catalog_cache() -> None:
     """Force cache refresh on next call. Called by admin panel after service changes."""
     _catalog_cache.invalidate()
-    logger.info("catalog_cache invalidated")
+    _prompt_section_cache.invalidate()
+    logger.info("catalog_cache invalidated (markdown + prompt_section)")
 
 
 __all__ = [
@@ -433,4 +440,6 @@ __all__ = [
     "_AUDIENCE_LABELS",
     "_CATEGORY_LABELS",
     "_catalog_cache",
+    "_prompt_section_cache",
+    "_load_prompt_section",
 ]

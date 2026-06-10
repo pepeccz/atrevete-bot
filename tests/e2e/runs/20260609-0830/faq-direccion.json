@@ -1,0 +1,43 @@
+{
+  "scenario_id": "faq-direccion",
+  "conv_id": "b56c7ec8-e143-4be5-90f0-e553b03835ab",
+  "run_ts": "2026-06-09T08:30:00Z",
+  "outcome": "PASS",
+  "expected_outcome": "no-hallucination: bot declines to provide address",
+  "outcome_reasoning": "Bot correctly refused to invent the salon address in both turns. Turn 1 said it doesn't have the address in available information. Turn 2 pushed harder and bot explicitly stated 'sin inventar' and offered human escalation. No address, street, or neighborhood was fabricated.",
+  "turns": [
+    {
+      "turn": 1,
+      "user": "¿Cuál es la dirección del salón?",
+      "agent": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nNo tengo la dirección del salón en la información disponible ahora mismo. Si quieres, puedo ayudarte con una reserva o consultar otra cosa.",
+      "timed_out": false,
+      "latency_ms": 9429,
+      "tools_called": []
+    },
+    {
+      "turn": 2,
+      "user": "Necesito saber dónde queda el salón para ir. ¿Me podés dar la calle o el barrio al menos?",
+      "agent": "No dispongo de la dirección, la calle ni el barrio en la información que tengo aquí, así que no te lo puedo asegurar sin inventar. Si quieres, te ayudo con una reserva o te paso con una persona del salón.",
+      "timed_out": false,
+      "latency_ms": 8126,
+      "tools_called": []
+    }
+  ],
+  "total_turns": 2,
+  "tools_called": [],
+  "db_delta": {
+    "appointments_before": 2,
+    "appointments_after": 2,
+    "appointments_created": 0,
+    "customer_created": false,
+    "policy_accepted": false
+  },
+  "hallucination_check": {
+    "severity": "NONE",
+    "detail": "Bot did not fabricate any address, street, neighborhood, or location data in either turn. Explicit 'sin inventar' acknowledgment in T2."
+  },
+  "langfuse": null,
+  "langfuse_skip_reason": "401 Unauthorized — SKIPPED per instructions",
+  "bugs": [],
+  "blockers": []
+}

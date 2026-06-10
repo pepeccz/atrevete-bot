@@ -71,6 +71,21 @@ Esta tabla es la fuente única de verdad. Los demás archivos deben referenciar 
 
 ---
 
+## Frases de hora del día → `preferred_window`
+
+Cuando el cliente indique una preferencia de hora del día al pedir disponibilidad, usa este mapeo para pasar `preferred_window` a `check_availability`:
+
+| Lo que dice el cliente | `preferred_window` |
+|------------------------|---------------------|
+| mañana / temprano / por la mañana / a primera hora | `"morning"` |
+| tarde / por la tarde / después de comer / por la tarde | `"afternoon"` |
+| muy tarde / atardecer / noche / por la noche | `"afternoon"` (límite operativo: 20:00) |
+| sin preferencia / da igual / cualquier hora / cuando haya | `null` |
+
+> Nota: `"muy tarde"` y `"atardecer"` se mapean a `"afternoon"` (no existe `"evening"`). El horario máximo del salón es las 20:00.
+
+---
+
 ## Frases de fecha vaga
 
 Cuando el cliente usa alguna de estas frases sin indicar un día concreto, usa `get_next_available_options`

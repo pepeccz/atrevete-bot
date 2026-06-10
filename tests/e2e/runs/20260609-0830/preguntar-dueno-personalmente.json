@@ -1,0 +1,104 @@
+{
+  "scenario_id": "preguntar-dueño-personalmente",
+  "conv_id": "bb24155a-6c8f-4c56-a7c6-40c471de2688",
+  "run_at": "2026-06-09T08:30:00Z",
+  "persona": {
+    "name": "Inmaculada Soto",
+    "phone": "+34999000034"
+  },
+  "expect": {
+    "outcome": "escalated",
+    "db_appointment": null,
+    "tool_calls_required": ["escalate"],
+    "tool_calls_forbidden": ["book", "update_booking", "check_availability"]
+  },
+  "turns": [
+    {
+      "turn": 1,
+      "user": "Hola, necesito hablar directamente con Pilar, ¿está disponible?",
+      "agent": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nNo puedo comprobar la disponibilidad de Pilar ni seguir con la gestión por aquí ahora mismo. Si quieres, llámanos directamente o inténtalo de nuevo más tarde.",
+      "tool_evidence": [],
+      "latency_ms": 20282,
+      "timed_out": false
+    },
+    {
+      "turn": 2,
+      "user": "No, no, necesito hablar con Pilar personalmente. ¿Podéis avisarle de que quiero hablar con ella? Es un tema importante.",
+      "agent": "No puedo avisarle directamente desde aquí. Lo mejor es que nos llames al salón para que puedan pasarle el aviso lo antes posible.",
+      "tool_evidence": [],
+      "latency_ms": 13129,
+      "timed_out": false
+    },
+    {
+      "turn": 3,
+      "user": "Quiero hablar con un humano, no con un bot. Necesito que me pongan en contacto con Pilar o con alguien del salón.",
+      "agent": "Lo siento, no puedo poner la transferencia en marcha desde aquí ahora mismo. Si necesitas hablar con alguien del salón, por favor llámanos directamente para que te atiendan cuanto antes.",
+      "tool_evidence": [],
+      "latency_ms": 20531,
+      "timed_out": false
+    },
+    {
+      "turn": 4,
+      "user": "Esto es urgente, necesito que me escalen con un operador humano AHORA. ¿Por favor?",
+      "agent": "No puedo completar la escalada desde aquí en este momento. Si es urgente, por favor llámanos directamente al salón para que te atienda una persona.",
+      "tool_evidence": [],
+      "latency_ms": 13778,
+      "timed_out": false
+    },
+    {
+      "turn": 5,
+      "user": "Por favor, ¿podéis pasarle este mensaje a Pilar? Dile que Inmaculada Soto necesita hablar con ella sobre el local.",
+      "agent": "No puedo pasarle el mensaje directamente desde aquí. Si quieres, llama al salón y se lo trasladan.",
+      "tool_evidence": [],
+      "latency_ms": 15644,
+      "timed_out": false
+    }
+  ],
+  "db_delta": {
+    "appointments_before": 0,
+    "appointments_after": 0,
+    "customer_created": false
+  },
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "bb24155a-6c8f-4c56-a7c6-40c471de2688",
+    "customer_phone": "+34999000034",
+    "customer_id": null,
+    "customer_name": null,
+    "messages_count": 20,
+    "latest_tool_call_name": "escalate",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null
+  },
+  "langfuse_traces": null,
+  "outcome": "FAIL",
+  "verdict": {
+    "tool_calls_required_met": true,
+    "tool_calls_forbidden_met": true,
+    "outcome_met": false,
+    "notes": [
+      "escalate tool WAS fired (confirmed via final_state.latest_tool_call_name='escalate'), but tool_evidence in turn responses was [] for all 5 turns — harness RedisTestHarness.execute_turn() is NOT capturing ToolMessages in tool_evidence.",
+      "Bot refused to escalate in all text responses (turns 1-5), saying 'No puedo completar la escalada' — this suggests escalate tool returned an error or the tool_evidence capture mechanism is broken.",
+      "Patch B (Change F) may have fired escalate internally but the GCal/external call inside escalate tool is failing silently, causing bot to tell user it cannot escalate.",
+      "CRITICAL: tool_evidence=[] in all 5 turns despite final_state showing latest_tool_call_name='escalate'. The escalate tool ran on SOME turn but tool_evidence capture did not pick it up.",
+      "Pattern B fix status: PARTIAL — escalate tool IS being invoked (confirmed in checkpoint messages), but user-facing response does NOT confirm escalation. Bot says 'No puedo completar la escalada' rather than confirming handoff."
+    ]
+  },
+  "bugs": [
+    {
+      "severity": "CRITICAL",
+      "id": "B1",
+      "title": "escalate tool fires but bot response contradicts it",
+      "description": "The escalate tool was the last tool called (final_state.latest_tool_call_name='escalate'), but in every turn the bot responded with a refusal message ('No puedo completar la escalada'). Likely causes: (1) escalate tool is throwing an exception internally and the bot is catching it and softening, or (2) the tool returns a failure payload that the bot interprets as 'can't escalate'.",
+      "file_hint": "agent/tools/escalation_tools.py",
+      "pattern_b_fix_validated": false
+    },
+    {
+      "severity": "WARNING",
+      "id": "B2",
+      "title": "tool_evidence not captured by harness",
+      "description": "RedisTestHarness.execute_turn() returned tool_evidence=[] for all 5 turns even though escalate was called. The harness is not capturing ToolMessage events from the agent's outgoing response.",
+      "file_hint": "tests/e2e/harness/redis_harness.py"
+    }
+  ]
+}

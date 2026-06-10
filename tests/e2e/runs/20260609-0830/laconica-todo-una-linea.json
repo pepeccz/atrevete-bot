@@ -1,0 +1,134 @@
+{
+  "scenario_id": "laconica-todo-una-linea",
+  "conv_id": "bc237c9c-ba1d-49b7-9b5a-9f2bc6e00896",
+  "run_ts": "2026-06-09T08:30:00Z",
+  "persona": {
+    "name": "Alejandra Pinto",
+    "phone": "+34999000030"
+  },
+  "expected_outcome": "booked",
+  "actual_outcome": "incomplete_policy_gate",
+  "verdict": "FAIL",
+  "turns_used": 8,
+  "max_turns": 8,
+  "db_appointment_created": false,
+  "langfuse_traces": null,
+  "turns": [
+    {
+      "turn": 1,
+      "user": "Corte dama mañana 17h Carmen.",
+      "agent": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Es para señora, caballero, niña, niño o bebé?",
+      "timed_out": false,
+      "response_latency_ms": 9178,
+      "tool_evidence": [],
+      "bug": "BUG-1: Bot asked for audience despite 'Corte dama' encoding adult_female explicitly."
+    },
+    {
+      "turn": 2,
+      "user": "Señora.",
+      "agent": "Te anoto corte de mujer. ¿Quieres añadir algún otro servicio a la cita?",
+      "timed_out": false,
+      "response_latency_ms": 12823,
+      "tool_evidence": [],
+      "bug": "BUG-2: Bot asked 'do you want to add another service?' — still no tool call despite having service+date+time+stylist. Should have called check_availability immediately."
+    },
+    {
+      "turn": 3,
+      "user": "No.",
+      "agent": "No tengo a Carmen como estilista disponible en Atrévete.\n\n¿Quieres elegir entre Harolyn, Marta, Pilar o Victor, o prefieres la primera con disponibilidad?",
+      "timed_out": false,
+      "response_latency_ms": 15493,
+      "tool_evidence": [],
+      "note": "Carmen does NOT exist in DB (confirmed). Scenario definition uses non-existent stylist — this is a scenario config issue, not a bot bug."
+    },
+    {
+      "turn": 4,
+      "user": "La primera con disponibilidad.",
+      "agent": "Perdona, no puedo reservar mañana: la primera fecha válida es el viernes 12 de junio.\n\nEstas son las primeras citas disponibles:\n1. Viernes 12 de junio a las 10:00\n2. Viernes 12 de junio a las 10:40\n3. Viernes 12 de junio a las 11:20\n\n¿Cuál te viene mejor?",
+      "timed_out": false,
+      "response_latency_ms": 20435,
+      "tool_evidence": [],
+      "note": "BUG-3: 17h slot requested but bot only offered morning slots without attempting 17h first. Also 'mañana' (tomorrow = 2026-06-10) was rejected — unclear why (possible business_hours or booking window constraint)."
+    },
+    {
+      "turn": 5,
+      "user": "La 1.",
+      "agent": "Perfecto, te dejo el viernes 12 de junio a las 10:00 para corte de mujer con la primera estilista disponible.\n\n¿Te lo confirmo?",
+      "timed_out": false,
+      "response_latency_ms": 13922,
+      "tool_evidence": []
+    },
+    {
+      "turn": 6,
+      "user": "Sí.",
+      "agent": "Para dejarla cerrada, dime tu nombre y primer apellido.",
+      "timed_out": false,
+      "response_latency_ms": 17216,
+      "tool_evidence": []
+    },
+    {
+      "turn": 7,
+      "user": "Alejandra Pinto.",
+      "agent": "¿Quieres añadir alguna nota para la cita?",
+      "timed_out": false,
+      "response_latency_ms": 15361,
+      "tool_evidence": [],
+      "bug": "BUG-4: Asking for notes adds an unnecessary turn that could be skipped or combined with confirmation."
+    },
+    {
+      "turn": 8,
+      "user": "No.",
+      "agent": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "timed_out": false,
+      "response_latency_ms": 21115,
+      "tool_evidence": []
+    }
+  ],
+  "final_state": {
+    "has_checkpoint": false
+  },
+  "db_delta": {
+    "appointments_before": 0,
+    "appointments_after": 0,
+    "net_created": 0
+  },
+  "bugs": [
+    {
+      "id": "BUG-1",
+      "severity": "HIGH",
+      "turn": 1,
+      "description": "Bot asked for audience ('señora/caballero/niña...') despite 'Corte dama' explicitly encoding adult_female. Failed one-shot parsing for audience.",
+      "expected": "Bot should resolve audience from 'dama' without asking",
+      "actual": "Asked: ¿Es para señora, caballero, niña, niño o bebé?"
+    },
+    {
+      "id": "BUG-2",
+      "severity": "MEDIUM",
+      "turn": 2,
+      "description": "After resolving service, bot asked 'do you want another service?' without checking availability. Should have called check_availability with all known parameters (service, date=tomorrow, time=17h).",
+      "expected": "check_availability tool call immediately",
+      "actual": "Unnecessary upsell question"
+    },
+    {
+      "id": "BUG-3",
+      "severity": "MEDIUM",
+      "turn": 4,
+      "description": "Bot rejected 'mañana' (2026-06-10) without explanation and offered only morning slots on 2026-06-12, ignoring the customer's stated preference for 17h.",
+      "expected": "Either book at 17h if available or explain WHY 17h is unavailable",
+      "actual": "Offered arbitrary morning slots on a different day without mentioning 17h"
+    },
+    {
+      "id": "BUG-4",
+      "severity": "LOW",
+      "turn": 7,
+      "description": "Unnecessary 'notes' question adds a turn for a terse customer who wants speed.",
+      "expected": "Skip notes question or make it optional inline with confirmation",
+      "actual": "Separate turn asking for notes"
+    }
+  ],
+  "scenario_config_issue": {
+    "description": "Stylist 'Carmen' referenced in scenario intent does not exist in DB. Active stylists: Harolyn, Marta, Pilar, Victor, Rosa. Scenario YAML should use an existing stylist name.",
+    "severity": "SCENARIO_CONFIG"
+  },
+  "summary": "FAIL — booking did NOT complete in 8 turns. The bot required 8 turns to reach the policy gate (not yet accepted), versus the ideal 2-3 turns. Primary failure is one-shot parsing: the bot did not extract audience from 'Corte dama', wasted 2 turns on service clarification questions, and ignored the stated time preference (17h). Scenario config uses non-existent stylist Carmen."
+}

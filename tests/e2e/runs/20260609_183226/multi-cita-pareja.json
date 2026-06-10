@@ -1,0 +1,133 @@
+{
+  "scenario_id": "multi-cita-pareja",
+  "conversation_id": "b6f2546a-fd95-4f84-b7cb-b64e3f2b757a",
+  "outcome": "partial_completed",
+  "turns_taken": 7,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, queremos venir mi marido y yo a la vez, yo un corte y él también.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Para quién es cada corte: señora, caballero, niña, niño o bebé?",
+      "latency_ms": 13429,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "R-39_clarification_gate_triggered"
+    },
+    {
+      "turn": 2,
+      "user_message": "Yo soy señora y mi marido caballero.",
+      "agent_response": "Tengo estos huecos para los dos cortes, con la estilista con disponibilidad más próxima:\n\n1. Sábado 13 de junio a las 9:00 con Marta\n2. Sábado 13 de junio a las 10:20 con Marta\n3. Sábado 13 de junio a las 11:40 con Marta\n\n¿Cuál os viene mejor?",
+      "latency_ms": 15399,
+      "timed_out": false,
+      "tool_calls_observed": ["get_next_available_options"],
+      "bugs": [],
+      "milestone": "availability_shown_for_both_services"
+    },
+    {
+      "turn": 3,
+      "user_message": "La primera, el sábado a las 9.",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "latency_ms": 12527,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "policy_gate_triggered"
+    },
+    {
+      "turn": 4,
+      "user_message": "Sí, acepto.",
+      "agent_response": "Perfecto, ahora me falta tu nombre y primer apellido para dejarlo cerrado.",
+      "latency_ms": 12652,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "policy_accepted"
+    },
+    {
+      "turn": 5,
+      "user_message": "Mónica Salinas.",
+      "agent_response": "¿Alguna nota para Marta?",
+      "latency_ms": 21463,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "customer_name_captured"
+    },
+    {
+      "turn": 6,
+      "user_message": "No, ninguna. Y el de mi marido, ¿podéis ponerlo también?",
+      "agent_response": "Ahora mismo no me consta ninguna cita creada para añadirle otra al mismo tiempo.\n\nSi quieres, puedo seguir con la reserva del tuyo y dejar el de tu marido como cita aparte después.",
+      "latency_ms": 19419,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "multi_customer_gap_surfaces"
+    },
+    {
+      "turn": 7,
+      "user_message": "Sí, confirma la mía primero.",
+      "agent_response": "¡Listo! Te he dejado confirmada tu cita con Marta el sábado 13 de junio a las 9:00 para corte de mujer y corte de hombre.\n\nAquí tienes el enlace del calendario:\nhttps://calendar.google.com/calendar/render?action=TEMPLATE&text=Corte%20de%20Mujer%2C%20Corte%20de%20Hombre%20en%20Atr%C3%A9vete&dates=20260613T070000Z/20260613T082000Z&details=Turno%20con%20Marta&location=Atr%C3%A9vete%20Sal%C3%B3n%20de%20Belleza",
+      "latency_ms": 22149,
+      "timed_out": false,
+      "tool_calls_observed": ["book"],
+      "bugs": [],
+      "milestone": "appointment_confirmed"
+    }
+  ],
+  "bugs": [],
+  "milestones_reached": [
+    "R-39_clarification_gate_triggered",
+    "availability_shown_for_both_services",
+    "policy_gate_triggered",
+    "policy_accepted",
+    "customer_name_captured",
+    "multi_customer_gap_surfaces",
+    "appointment_confirmed"
+  ],
+  "db_delta": {
+    "customer_count_delta": 1,
+    "appt_count_delta": 1
+  },
+  "snapshot_before": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "snapshot_after": {
+    "customer_count": 1,
+    "appt_count": 1
+  },
+  "final_state": {
+    "has_checkpoint": false
+  },
+  "langfuse_trace_path": null,
+  "appointment_evidence": {
+    "appointment_id": "b1cc9e7f-329b-4f50-9d7c-d75ea236f751",
+    "status": "confirmed",
+    "gcal_sync_status": "not_applicable",
+    "service_ids": [
+      "cb7ae91c-97ff-e1d1-3b0b-696b11467add",
+      "39251edd-8ac0-efb3-9836-fa744baa08cc"
+    ],
+    "service_names": [
+      "Corte de Mujer",
+      "Corte de Hombre"
+    ],
+    "start_time": "2026-06-13 07:00:00+00",
+    "stylist_id": "5f1745ba-d2b1-4d87-8d47-79821a99ae93",
+    "service_ids_valid_in_db": true,
+    "hallucinated_service_ids": false
+  },
+  "validator_rejection_evidence": {
+    "observed": false,
+    "note": "No hallucinated UUIDs detected. Both service_ids found in services table: Corte de Mujer (adult_female), Corte de Hombre (adult_male)."
+  },
+  "expect": {
+    "outcome": "multi_completed",
+    "db_appointment": {
+      "status": "confirmed"
+    }
+  },
+  "passed": false,
+  "verdict_note": "WARN: Expected multi_completed (2 bookings — one per customer). Bot booked ONE appointment combining both services (Corte de Mujer + Corte de Hombre) under a single record for Mónica. The husband's appointment was NOT created as a separate booking. Known gap: NEW-F (multi-customer split not yet implemented). Service_ids are VALID (no hallucination). gcal_sync_status=not_applicable as expected. This is partial_completed: Mónica's booking succeeded, husband's booking was deferred."
+}

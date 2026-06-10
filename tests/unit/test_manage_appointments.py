@@ -1,64 +1,62 @@
 """
 Tests for manage_appointments_tool module.
 
-Verifies the consolidated tool schema:
-- ManageAppointmentsSchema has action as Literal["list", "cancel", "reschedule"]
-- customer_phone is required
+Verifies the consolidated tool function signature:
+- manage_appointments has action as Literal["list", "cancel", "reschedule", ...]
+- customer_phone is injected from state (InjectedState), NOT a tool argument
 """
 
+import inspect
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
-from pydantic import ValidationError
 
-from agent.tools.manage_appointments_tool import ManageAppointmentsSchema
-
-
-def test_schema_has_action_field():
-    """ManageAppointmentsSchema has action field."""
-    fields = ManageAppointmentsSchema.model_fields
-    assert "action" in fields, "action field is missing from ManageAppointmentsSchema"
+from agent.tools.manage_appointments_tool import manage_appointments
 
 
-def test_action_values_list():
-    """Schema accepts 'list' as action value."""
-    schema = ManageAppointmentsSchema(action="list", customer_phone="+34612345678")
-    assert schema.action == "list"
+def _get_sig():
+    fn = manage_appointments.coroutine if hasattr(manage_appointments, "coroutine") else manage_appointments
+    return inspect.signature(fn)
 
 
-def test_action_values_cancel():
-    """Schema accepts 'cancel' as action value."""
-    schema = ManageAppointmentsSchema(action="cancel", customer_phone="+34612345678")
-    assert schema.action == "cancel"
+def test_tool_has_action_param():
+    """manage_appointments function has an 'action' parameter."""
+    sig = _get_sig()
+    assert "action" in sig.parameters, "action parameter is missing from manage_appointments"
 
 
-def test_action_values_reschedule():
-    """Schema accepts 'reschedule' as action value."""
-    schema = ManageAppointmentsSchema(action="reschedule", customer_phone="+34612345678")
-    assert schema.action == "reschedule"
+def test_action_param_has_literal_annotation():
+    """action parameter annotation includes expected action values."""
+    sig = _get_sig()
+    annotation = sig.parameters["action"].annotation
+    ann_str = str(annotation)
+    assert "list" in ann_str, f"'list' not in annotation: {ann_str}"
+    assert "cancel" in ann_str, f"'cancel' not in annotation: {ann_str}"
+    assert "reschedule" in ann_str, f"'reschedule' not in annotation: {ann_str}"
 
 
-def test_action_rejects_unknown_value():
-    """Schema rejects unknown action values via Literal validation."""
-    with pytest.raises(ValidationError):
-        ManageAppointmentsSchema(action="delete", customer_phone="+34612345678")
-
-
-def test_customer_phone_required():
-    """customer_phone is a required field — omitting it raises ValidationError."""
-    with pytest.raises(ValidationError):
-        ManageAppointmentsSchema(action="list")
+def test_customer_phone_not_in_tool_params():
+    """customer_phone must NOT be an explicit tool parameter (it is InjectedState)."""
+    sig = _get_sig()
+    # state parameter carries customer_phone via InjectedState; no raw customer_phone param
+    assert "customer_phone" not in sig.parameters, (
+        "customer_phone should be removed from tool params and injected via InjectedState"
+    )
 
 
 def test_action_accepts_confirm():
-    schema = ManageAppointmentsSchema(action="confirm", customer_phone="+34612345678")
-    assert schema.action == "confirm"
+    """confirm is a valid Literal value in the action annotation."""
+    sig = _get_sig()
+    ann_str = str(sig.parameters["action"].annotation)
+    assert "confirm" in ann_str
 
 
 def test_action_accepts_decline():
-    schema = ManageAppointmentsSchema(action="decline", customer_phone="+34612345678")
-    assert schema.action == "decline"
+    """decline is a valid Literal value in the action annotation."""
+    sig = _get_sig()
+    ann_str = str(sig.parameters["action"].annotation)
+    assert "decline" in ann_str
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -66,12 +64,14 @@ def test_action_accepts_decline():
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+_STATE_WITH_PHONE = {"customer_phone": "+34612345678"}
+
+
 @pytest.mark.asyncio
 async def test_confirm_action_happy():
     """confirm action delegates to handle_tool_action with CONFIRM_APPOINTMENT."""
     from agent.routing.intent_types import IntentType
     from agent.services.confirmation_service import ConfirmationResult
-    from agent.tools.manage_appointments_tool import manage_appointments
 
     appt_id = uuid4()
     fake_result = ConfirmationResult(
@@ -83,12 +83,10 @@ async def test_confirm_action_happy():
         "agent.services.confirmation_service.handle_tool_action",
         new=AsyncMock(return_value=fake_result),
     ) as mock_handler:
-        out = await manage_appointments.ainvoke(
-            {
-                "action": "confirm",
-                "customer_phone": "+34612345678",
-                "appointment_id": str(appt_id),
-            }
+        out = await manage_appointments.coroutine(
+            action="confirm",
+            appointment_id=str(appt_id),
+            state=_STATE_WITH_PHONE,
         )
     assert "confirmada" in out.lower()
     mock_handler.assert_awaited_once()
@@ -103,7 +101,6 @@ async def test_decline_action_happy():
     """decline action delegates to handle_tool_action with DECLINE_APPOINTMENT."""
     from agent.routing.intent_types import IntentType
     from agent.services.confirmation_service import ConfirmationResult
-    from agent.tools.manage_appointments_tool import manage_appointments
 
     appt_id = uuid4()
     fake_result = ConfirmationResult(
@@ -115,12 +112,10 @@ async def test_decline_action_happy():
         "agent.services.confirmation_service.handle_tool_action",
         new=AsyncMock(return_value=fake_result),
     ) as mock_handler:
-        out = await manage_appointments.ainvoke(
-            {
-                "action": "decline",
-                "customer_phone": "+34612345678",
-                "appointment_id": str(appt_id),
-            }
+        out = await manage_appointments.coroutine(
+            action="decline",
+            appointment_id=str(appt_id),
+            state=_STATE_WITH_PHONE,
         )
     assert "cancelada" in out.lower()
     mock_handler.assert_awaited_once()
@@ -130,27 +125,19 @@ async def test_decline_action_happy():
 
 @pytest.mark.asyncio
 async def test_confirm_invalid_uuid():
-    from agent.tools.manage_appointments_tool import manage_appointments
-
-    out = await manage_appointments.ainvoke(
-        {
-            "action": "confirm",
-            "customer_phone": "+34612345678",
-            "appointment_id": "not-a-uuid",
-        }
+    out = await manage_appointments.coroutine(
+        action="confirm",
+        appointment_id="not-a-uuid",
+        state=_STATE_WITH_PHONE,
     )
     assert "no es válido" in out.lower() or "inválido" in out.lower()
 
 
 @pytest.mark.asyncio
 async def test_confirm_missing_appointment_id():
-    from agent.tools.manage_appointments_tool import manage_appointments
-
-    out = await manage_appointments.ainvoke(
-        {
-            "action": "confirm",
-            "customer_phone": "+34612345678",
-        }
+    out = await manage_appointments.coroutine(
+        action="confirm",
+        state=_STATE_WITH_PHONE,
     )
     assert "id" in out.lower()
 

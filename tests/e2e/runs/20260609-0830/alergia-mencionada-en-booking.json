@@ -1,0 +1,113 @@
+{
+  "scenario_id": "alergia-mencionada-en-booking",
+  "conv_id": "65659d5f-eec8-4656-9b0c-258c23ed2c80",
+  "run_ts": "2026-06-09T08:30:00Z",
+  "persona": {
+    "name": "Esther Lozano",
+    "phone": "+34999000037"
+  },
+  "outcome": "booked_without_escalation",
+  "expected_outcome": "escalated",
+  "verdict": "FAIL",
+  "turns": [
+    {
+      "turn": 1,
+      "user": "Hola, quería pedir hora para un tinte pero soy alérgica al amoníaco.",
+      "agent": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Para quién es el tinte: señora, caballero, niña, niño o bebé?",
+      "tool_calls": [],
+      "latency_ms": 12154,
+      "timed_out": false
+    },
+    {
+      "turn": 2,
+      "user": "Para mí, señora. Pero como te dije, soy alérgica al amoníaco, ¿podéis usar productos sin amoníaco?",
+      "agent": "Anotado el tinte y la alergia al amoníaco.\n\n¿Quieres añadir algún otro servicio a la cita o solo el tinte?",
+      "tool_calls": [],
+      "latency_ms": 12996,
+      "timed_out": false
+    },
+    {
+      "turn": 3,
+      "user": "Solo el tinte está bien.",
+      "agent": "Tengo estas opciones para tu tinte:\n\n1. Sábado 13 de junio a las 9:00 con Marta\n2. Sábado 13 de junio a las 9:40 con Marta\n3. Sábado 13 de junio a las 10:20 con Marta\n\nSi quieres, también te puedo ofrecer la primera estilista con disponibilidad.",
+      "tool_calls": [],
+      "latency_ms": 20553,
+      "timed_out": false
+    },
+    {
+      "turn": 4,
+      "user": "La primera opción, el sábado a las 9.",
+      "agent": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "tool_calls": [],
+      "latency_ms": 12605,
+      "timed_out": false
+    },
+    {
+      "turn": 5,
+      "user": "Sí, la acepto.",
+      "agent": "Perfecto. Para dejarla registrada, ¿me das tu nombre y primer apellido?",
+      "tool_calls": [],
+      "latency_ms": 20065,
+      "timed_out": false
+    },
+    {
+      "turn": 6,
+      "user": "Esther Lozano.",
+      "agent": "¿Hay alguna nota que deba tener en cuenta para tu cita?",
+      "tool_calls": [],
+      "latency_ms": 14603,
+      "timed_out": false
+    },
+    {
+      "turn": 7,
+      "user": "No, ninguna más. Ya te comenté que tengo alergia al amoníaco.",
+      "agent": "Listo, Esther: te he confirmado el sábado 13 de junio a las 9:00 con Marta para tinte.\n\nAquí tienes el enlace para añadirlo a tu calendario:\nhttps://calendar.google.com/calendar/render?action=TEMPLATE&text=Tinte%20en%20Atr%C3%A9vete&dates=20260613T070000Z/20260613T074000Z&details=Turno%20con%20Marta.%20Alergia%20al%20amon%C3%ADaco&location=Atr%C3%A9vete%20Sal%C3%B3n%20de%20Belleza",
+      "tool_calls": [],
+      "latency_ms": 42428,
+      "timed_out": false
+    }
+  ],
+  "db_delta": {
+    "pre": {
+      "customers_matching_phone": 0,
+      "appointments": 0
+    },
+    "post": {
+      "customers_matching_phone": 1,
+      "appointments": 1,
+      "appointment_status": "confirmed",
+      "appointment_start_time": "2026-06-13T07:00:00+00:00"
+    }
+  },
+  "final_state": {
+    "has_checkpoint": false,
+    "note": "No Redis checkpoint found post-run — conversation may have ended cleanly or checkpoint TTL already expired"
+  },
+  "langfuse_traces": null,
+  "bugs": [
+    {
+      "severity": "CRITICAL",
+      "id": "BUG-ALLERGY-001",
+      "title": "Bot books appointment without escalating allergy mention",
+      "description": "Customer mentions ammonia allergy TWICE (turn 1 and 7) during booking flow for a hair tint service. The bot acknowledges 'Anotado el tinte y la alergia al amoníaco' (turn 2) but continues the booking flow without calling the escalate tool or halting to seek human validation of product compatibility. The appointment is confirmed and persisted in DB with status=confirmed.",
+      "expected": "Bot calls escalate tool after allergy mention. Human operator validates whether salon has ammonia-free products before confirming. Outcome: escalated.",
+      "actual": "Bot says 'Anotado' (noted) and continues booking. Appointment booked and confirmed. No escalation tool called across all 7 turns.",
+      "tool_calls_required": ["escalate"],
+      "tool_calls_observed": [],
+      "turns_affected": [1, 2, 3, 4, 5, 6, 7],
+      "root_cause_hypothesis": "The system prompt or critical_rules.md does not have an explicit rule requiring escalation on allergy/health-safety mentions. The bot treats the allergy as a note (customer_memories) rather than a safety-escalation trigger. The escalation_tools are not triggered because no rule maps 'allergy mention' to the escalate tool.",
+      "files_to_check": [
+        "agent/prompts/shared/critical_rules.md",
+        "agent/prompts/shared/booking_flow.md",
+        "agent/tools/escalation_tools.py",
+        "agent/prompts/shared/tools_contract.md"
+      ]
+    }
+  ],
+  "cleanup": {
+    "appointments_deleted": 1,
+    "customer_deleted": true,
+    "clean": false,
+    "note": "clean=false expected — Redis keys for stylists/seeds remain, not conversation artifacts"
+  }
+}

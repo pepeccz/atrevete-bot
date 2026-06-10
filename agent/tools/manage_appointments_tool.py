@@ -11,42 +11,23 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from langchain_core.tools import tool
-from pydantic import BaseModel, Field
+from langgraph.prebuilt import InjectedState
 
-from agent.tools._booking_validators import validate_booking_date
+from agent.services.availability_service import _load_lead_time_min_days
+from agent.tools._booking_validators import (
+    validate_appointment_belongs_to_customer,
+    validate_booking_date,
+)
+from database.connection import get_async_session
 
 logger = logging.getLogger(__name__)
 
 MADRID_TZ = ZoneInfo("Europe/Madrid")
-
-
-class ManageAppointmentsSchema(BaseModel):
-    """Input schema for manage_appointments tool."""
-
-    action: Literal["list", "cancel", "reschedule", "confirm", "decline"] = Field(
-        description=(
-            "Action to perform: list (view upcoming), cancel, reschedule, "
-            "confirm (accept a pending confirmation), or decline (reject a pending confirmation)."
-        )
-    )
-    customer_phone: str = Field(description="Customer phone number (E.164 format).")
-    appointment_id: str | None = Field(
-        default=None,
-        description="Appointment UUID — required for cancel and reschedule actions.",
-    )
-    new_date: str | None = Field(
-        default=None,
-        description="New date (YYYY-MM-DD) — required for reschedule action.",
-    )
-    new_time: str | None = Field(
-        default=None,
-        description="New time slot (HH:MM) — required for reschedule action.",
-    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -131,16 +112,21 @@ async def _cancel_appointment(
     customer_phone: str,
     appointment_id: str,
     reason: str | None,
+    customer_id: UUID | None = None,
 ) -> dict:
     """
     Cancel a specific appointment by UUID.
+
+    customer_id is the resolved customer UUID from state (CustomerResolveMiddleware).
+    When provided, an IDOR guard verifies ownership before any cancellation attempt.
 
     Returns:
         dict with keys:
             success (bool)
             appointment_id (str)
             message (str)
-            error_code (str | None) — APPOINTMENT_ID_REQUIRED | INVALID_UUID | WINDOW | SERVICE_ERROR
+            error_code (str | None) — APPOINTMENT_ID_REQUIRED | INVALID_UUID |
+                CUSTOMER_ID_REQUIRED | APPOINTMENT_NOT_OWNED | WINDOW | SERVICE_ERROR
             within_window (bool)
             hours_until_appointment (int | None)
     """
@@ -150,6 +136,17 @@ async def _cancel_appointment(
             "appointment_id": appointment_id or "",
             "message": "Para cancelar necesito el ID de la cita.",
             "error_code": "APPOINTMENT_ID_REQUIRED",
+            "within_window": False,
+            "hours_until_appointment": None,
+        }
+
+    # J2: customer_id must be resolved before any mutation
+    if customer_id is None:
+        return {
+            "success": False,
+            "appointment_id": appointment_id,
+            "message": "No pude verificar tu identidad. Por favor, inténtalo de nuevo.",
+            "error_code": "CUSTOMER_ID_REQUIRED",
             "within_window": False,
             "hours_until_appointment": None,
         }
@@ -166,11 +163,48 @@ async def _cancel_appointment(
             "hours_until_appointment": None,
         }
 
+    # J2: IDOR guard — verify ownership before any mutation
+    try:
+        async with get_async_session() as session:
+            idor_result = await validate_appointment_belongs_to_customer(
+                session, appt_uuid, customer_id
+            )
+        if not idor_result.ok:
+            logger.warning(
+                "manage_appointments.idor_rejected",
+                extra={
+                    "action": "cancel",
+                    "appointment_id": str(appt_uuid),
+                    "customer_id": str(customer_id),
+                    "error_code": idor_result.error_code,
+                },
+            )
+            return {
+                "success": False,
+                "appointment_id": appointment_id,
+                "message": idor_result.error_message
+                or "No encontré esa cita asociada a tu cuenta.",
+                "error_code": idor_result.error_code,
+                "within_window": False,
+                "hours_until_appointment": None,
+            }
+    except Exception as exc:
+        logger.error("_cancel_appointment idor check failed: %s", exc, exc_info=True)
+        return {
+            "success": False,
+            "appointment_id": appointment_id,
+            "message": "Hubo un problema al verificar la cita.",
+            "error_code": "SERVICE_ERROR",
+            "within_window": False,
+            "hours_until_appointment": None,
+        }
+
     try:
         from agent.services.cancellation_service import execute_cancellation
 
         result = await execute_cancellation(
             appointment_id=appt_uuid,
+            customer_phone=customer_phone,
             reason=reason,
             conversation_id=None,
         )
@@ -212,9 +246,13 @@ async def _reschedule_appointment(
     new_date: str,
     new_time: str,
     reason: str | None,
+    customer_id: UUID | None = None,
 ) -> dict:
     """
     Reschedule a specific appointment.
+
+    customer_id is the resolved customer UUID from state (CustomerResolveMiddleware).
+    When provided, an IDOR guard verifies ownership before any reschedule attempt.
 
     Returns:
         dict with keys:
@@ -222,7 +260,8 @@ async def _reschedule_appointment(
             appointment_id (str)
             message (str)
             error_code (str | None) — APPOINTMENT_ID_REQUIRED | RESCHEDULE_PARAMS_REQUIRED |
-                INVALID_UUID | BAD_DATE_FORMAT | INELIGIBLE | SLOT_TAKEN | SERVICE_ERROR
+                INVALID_UUID | CUSTOMER_ID_REQUIRED | APPOINTMENT_NOT_OWNED |
+                BAD_DATE_FORMAT | INELIGIBLE | SLOT_TAKEN | SERVICE_ERROR
             new_start_time (str | None) — ISO format when success=True
     """
     if not appointment_id:
@@ -243,6 +282,16 @@ async def _reschedule_appointment(
             "new_start_time": None,
         }
 
+    # J2: customer_id must be resolved before any mutation
+    if customer_id is None:
+        return {
+            "success": False,
+            "appointment_id": appointment_id,
+            "message": "No pude verificar tu identidad. Por favor, inténtalo de nuevo.",
+            "error_code": "CUSTOMER_ID_REQUIRED",
+            "new_start_time": None,
+        }
+
     try:
         appt_uuid = UUID(appointment_id)
     except ValueError:
@@ -251,6 +300,40 @@ async def _reschedule_appointment(
             "appointment_id": appointment_id,
             "message": "El identificador de la cita no es válido.",
             "error_code": "INVALID_UUID",
+            "new_start_time": None,
+        }
+
+    # J2: IDOR guard — verify ownership before any mutation
+    try:
+        async with get_async_session() as session:
+            idor_result = await validate_appointment_belongs_to_customer(
+                session, appt_uuid, customer_id
+            )
+        if not idor_result.ok:
+            logger.warning(
+                "manage_appointments.idor_rejected",
+                extra={
+                    "action": "reschedule",
+                    "appointment_id": str(appt_uuid),
+                    "customer_id": str(customer_id),
+                    "error_code": idor_result.error_code,
+                },
+            )
+            return {
+                "success": False,
+                "appointment_id": appointment_id,
+                "message": idor_result.error_message
+                or "No encontré esa cita asociada a tu cuenta.",
+                "error_code": idor_result.error_code,
+                "new_start_time": None,
+            }
+    except Exception as exc:
+        logger.error("_reschedule_appointment idor check failed: %s", exc, exc_info=True)
+        return {
+            "success": False,
+            "appointment_id": appointment_id,
+            "message": "Hubo un problema al verificar la cita.",
+            "error_code": "SERVICE_ERROR",
             "new_start_time": None,
         }
 
@@ -276,7 +359,10 @@ async def _reschedule_appointment(
 
         # Step 1b — booking-date validation (G1 → G2 → G3)
         # Called before datetime.strptime so guard errors are caught early without DB writes.
-        date_validation = await validate_booking_date(date_iso=new_date, date_text=new_date)
+        _min_days = await _load_lead_time_min_days()
+        date_validation = await validate_booking_date(
+            date_iso=new_date, date_text=new_date, min_days=_min_days
+        )
         if not date_validation.ok:
             return {
                 "success": False,
@@ -409,25 +495,46 @@ async def _decline_appointment(customer_phone: str, appointment_id: str) -> dict
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-@tool(args_schema=ManageAppointmentsSchema)
+@tool
 async def manage_appointments(
     action: Literal["list", "cancel", "reschedule", "confirm", "decline"],
-    customer_phone: str,
     appointment_id: str | None = None,
     new_date: str | None = None,
     new_time: str | None = None,
+    state: Annotated[dict, InjectedState] = None,
 ) -> str:
     """Manage customer appointments: list, cancel, reschedule, confirm or decline.
 
-    Use 'list' to show upcoming appointments, 'cancel' to cancel (requires
-    appointment_id), 'reschedule' to change date/time (requires appointment_id,
-    new_date, new_time), 'confirm' to accept a pending 48h confirmation
-    (requires appointment_id), or 'decline' to reject a pending confirmation
-    (requires appointment_id).
+    customer_phone is injected from session state; it is not a tool argument.
+
+    Args:
+        action: Action to perform — list (view upcoming), cancel, reschedule,
+            confirm (accept a pending confirmation), or decline (reject one).
+        appointment_id: Appointment UUID — required for cancel, reschedule, confirm, decline.
+        new_date: New date (YYYY-MM-DD) — required for reschedule action.
+        new_time: New time slot (HH:MM) — required for reschedule action.
 
     Reprogramar solo cambia fecha y hora. El cambio de estilista no está
     disponible por chat; si el cliente lo pide, escala a un humano.
     """
+    _state = state or {}
+    customer_phone = _state.get("customer_phone") or ""
+    if not customer_phone:
+        logger.error(
+            "manage_appointments.state.missing_customer_phone",
+            extra={"tool_name": "manage_appointments"},
+        )
+        return "Estado de conversación incompleto. No puedo gestionar la cita."
+
+    # J2: extract customer_id from state (set by CustomerResolveMiddleware)
+    _customer_id_raw = _state.get("customer_id")
+    _customer_id: UUID | None = None
+    if _customer_id_raw is not None:
+        try:
+            _customer_id = UUID(str(_customer_id_raw))
+        except (ValueError, AttributeError):
+            pass
+
     try:
         if action == "list":
             result = await _list_appointments(customer_phone=customer_phone)
@@ -450,6 +557,7 @@ async def manage_appointments(
                 customer_phone=customer_phone,
                 appointment_id=appointment_id or "",
                 reason=None,
+                customer_id=_customer_id,
             )
             return result["message"]
 
@@ -474,6 +582,7 @@ async def manage_appointments(
                 new_date=new_date or "",
                 new_time=new_time or "",
                 reason=None,
+                customer_id=_customer_id,
             )
             return result["message"]
 

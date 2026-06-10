@@ -19,7 +19,6 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from agent.batching.message_batcher import MessageBatcher
 from agent.checkpointer import get_checkpointer, setup_checkpointer
 from agent.graph import create_graph
-from agent.resume_handler import build_invoke_input
 from agent.utils.monitoring import get_langfuse_client, get_langfuse_handler
 from shared.config import get_settings
 from shared.logging_config import configure_logging
@@ -314,7 +313,7 @@ async def subscribe_to_incoming_messages():
         logger.info("AsyncRedisSaver ready — indexes created/verified")
 
         graph = create_graph(checkpointer=saver)
-        logger.info("Authoritative v7 conversation graph created successfully")
+        logger.info("Conversation graph created successfully")
 
         # Initialize message batcher with configurable window and Redis for crash recovery
         batch_window = settings.MESSAGE_BATCH_WINDOW_SECONDS
@@ -423,38 +422,26 @@ async def subscribe_to_incoming_messages():
 
             try:
                 # ================================================================
-                # INTERRUPT RESUME DETECTION (Phase 7)
-                # ================================================================
-                # If the graph is paused at await_confirmation, resume with
-                # Command(resume=combined_text) instead of a fresh state dict.
-                invoke_payload, was_interrupted = await build_invoke_input(
-                    graph, config, combined_text, state
-                )
-                if was_interrupted:
-                    logger.info(
-                        f"Resuming interrupted graph (await_confirmation) | "
-                        f"conversation_id={conversation_id}",
-                        extra={"conversation_id": conversation_id},
-                    )
-
-                # ================================================================
                 # GRAPH INVOCATION WITH CHECKPOINT FLUSH (ADR-010)
                 # Wrap ainvoke in propagate_attributes so session_id / user_id /
                 # tags flow into every OTEL child span without os.environ mutation.
                 # ================================================================
                 _t0 = perf_counter()
                 if langfuse_ctx is not None:
-                    async with langfuse_ctx:
-                        result = await graph.ainvoke(invoke_payload, config=config)
+                    # propagate_attributes returns a SYNC context manager
+                    # (sets OTEL contextvars, no I/O). Using `async with` here
+                    # raised TypeError and triggered the user-facing fallback.
+                    with langfuse_ctx:
+                        result = await graph.ainvoke(state, config=config)
                 else:
-                    result = await graph.ainvoke(invoke_payload, config=config)
+                    result = await graph.ainvoke(state, config=config)
                 _latency_ms = int((perf_counter() - _t0) * 1000)
 
                 # ================================================================
                 # CHECKPOINT PERSISTENCE (ADR-011: Single Source of Truth)
                 # ================================================================
                 logger.debug(
-                    f"Checkpoint persisted (FSM consolidated) | conversation_id={conversation_id}",
+                    f"Checkpoint persisted | conversation_id={conversation_id}",
                     extra={"conversation_id": conversation_id},
                 )
 
@@ -863,7 +850,6 @@ async def subscribe_to_outgoing_messages():
             "message": "AI response text"
         }
     """
-    # TODO Phase 7: move ChatwootClient to shared/ or agent/services/; agent/tools/ deleted
     from shared.chatwoot_client import ChatwootClient  # type: ignore[import]
 
     client = get_redis_client()

@@ -35,30 +35,38 @@ class TestManageAppointmentsImportable:
         # StructuredTool instances expose invoke()/ainvoke() rather than __call__
         assert hasattr(manage_appointments, "invoke") or callable(manage_appointments)
 
-    def test_manage_appointments_schema_has_action(self):
-        """ManageAppointmentsSchema must have an 'action' field."""
+    def test_manage_appointments_has_action_param(self):
+        """manage_appointments must have an 'action' parameter in its function signature.
 
-        from agent.tools.manage_appointments_tool import ManageAppointmentsSchema
+        ManageAppointmentsSchema was removed (IDOR fix — args_schema and InjectedState
+        don't compose). The action param now lives directly on the function signature.
+        """
+        import inspect
 
-        fields = ManageAppointmentsSchema.model_fields
-        assert "action" in fields, "ManageAppointmentsSchema missing 'action' field"
+        from agent.tools.manage_appointments_tool import manage_appointments
 
-    def test_manage_appointments_schema_action_has_literal_type(self):
-        """action field must be a Literal with list/cancel/reschedule values."""
-        import typing
+        # The underlying coroutine/function carries the signature
+        fn = manage_appointments.coroutine if hasattr(manage_appointments, "coroutine") else manage_appointments
+        sig = inspect.signature(fn)
+        assert "action" in sig.parameters, "manage_appointments missing 'action' parameter"
 
-        from agent.tools.manage_appointments_tool import ManageAppointmentsSchema
+    def test_manage_appointments_action_param_has_literal_annotation(self):
+        """action parameter must carry a Literal type annotation with required values.
 
-        annotation = ManageAppointmentsSchema.model_fields["action"].annotation
-        origin = typing.get_origin(annotation)
-        args = typing.get_args(annotation)
-        # Literal type has __origin__ == Literal
-        assert origin is typing.Literal or str(origin) == "typing.Literal", (
-            f"action field is not a Literal type, got {annotation}"
-        )
-        assert "list" in args
-        assert "cancel" in args
-        assert "reschedule" in args
+        Uses string representation for Python 3.14+ where get_args/get_origin
+        behavior for Literal changed.
+        """
+        import inspect
+
+        from agent.tools.manage_appointments_tool import manage_appointments
+
+        fn = manage_appointments.coroutine if hasattr(manage_appointments, "coroutine") else manage_appointments
+        sig = inspect.signature(fn)
+        annotation = sig.parameters["action"].annotation
+        ann_str = str(annotation)
+        assert "list" in ann_str, f"'list' not in action annotation: {ann_str}"
+        assert "cancel" in ann_str, f"'cancel' not in action annotation: {ann_str}"
+        assert "reschedule" in ann_str, f"'reschedule' not in action annotation: {ann_str}"
 
     def test_manage_appointments_tool_name_is_manage_appointments(self):
         """The LangChain tool name must be 'manage_appointments'."""

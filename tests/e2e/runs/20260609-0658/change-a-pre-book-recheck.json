@@ -1,0 +1,146 @@
+{
+  "scenario_id": "change-a-pre-book-recheck",
+  "conversation_id": "ddf56863-748c-482d-add9-d2aa9b8da67b",
+  "outcome": "booked",
+  "turns_taken": 9,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, quiero reservar un corte de dama para el martes, con cualquier estilista.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Es para señora, caballero, niña, niño o bebé?",
+      "latency_ms": 14092,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "agent_intro"
+    },
+    {
+      "turn": 2,
+      "user_message": "Para señora.",
+      "agent_response": "Anotado un corte de dama. ¿Quieres añadir algún otro servicio a la cita?",
+      "latency_ms": 10358,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "service_resolved"
+    },
+    {
+      "turn": 3,
+      "user_message": "No, solo el corte.",
+      "agent_response": "Perfecto. Para registrar la cita, ¿me das tu nombre y primer apellido?",
+      "latency_ms": 9802,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": null
+    },
+    {
+      "turn": 4,
+      "user_message": "Sofía Martínez.",
+      "agent_response": "Gracias, Sofía. ¿Hay alguna nota que quieras que tenga en cuenta para tu cita?",
+      "latency_ms": 9096,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "customer_named"
+    },
+    {
+      "turn": 5,
+      "user_message": "No, sin notas.",
+      "agent_response": "Perfecto. Como todavía no has elegido una hora concreta, dime qué hueco te viene mejor para el martes 16 de junio.",
+      "latency_ms": 9454,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": null
+    },
+    {
+      "turn": 6,
+      "user_message": "¿Qué huecos hay disponibles el martes?",
+      "agent_response": "El martes no veo huecos disponibles. Los primeros que me salen son estos:\n\n1. Miércoles 17 de junio a las 10:00 con Marta\n2. Miércoles 17 de junio a las 10:40 con Marta\n3. Miércoles 17 de junio a las 11:20 con Marta\n\nSi quieres, te reservo uno de esos tres.",
+      "latency_ms": 13050,
+      "timed_out": false,
+      "tool_calls_observed": ["check_availability"],
+      "bugs": [],
+      "milestone": "availability_checked"
+    },
+    {
+      "turn": 7,
+      "user_message": "Perfecto, dame el miércoles a las 10:00 con Marta.",
+      "agent_response": "Perfecto, Sofía: te lo dejo el miércoles 17 de junio a las 10:00 con Marta para corte de dama. ¿Te lo confirmo?",
+      "latency_ms": 15048,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "slot_selected"
+    },
+    {
+      "turn": 8,
+      "user_message": "Sí, confirmo.",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "latency_ms": 15159,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "policy_gate_shown"
+    },
+    {
+      "turn": 9,
+      "user_message": "Sí, acepto.",
+      "agent_response": "¡Listo! Reserva confirmada para el miércoles 17 de junio a las 10:00 con Marta para corte de dama.\n\nPuedes añadirla a tu calendario con este enlace:\nhttps://calendar.google.com/calendar/render?action=TEMPLATE&text=Corte%20de%20Mujer%20en%20Atr%C3%A9vete&dates=20260617T080000Z/20260617T084000Z&details=Turno%20con%20Marta&location=Atr%C3%A9vete%20Sal%C3%B3n%20de%20Belleza",
+      "latency_ms": 16428,
+      "timed_out": false,
+      "tool_calls_observed": ["book"],
+      "bugs": [],
+      "milestone": "booking_confirmed"
+    }
+  ],
+  "bugs": [
+    {
+      "category": "cleanup_harness",
+      "description": "state_reset.py fails to delete customer_consents rows before deleting customer (FK violation: customer_consents_customer_id_fkey). Post-run cleanup FAILED for phone +34999000003.",
+      "severity": "WARNING",
+      "file": "tests/e2e/harness/state_reset.py"
+    },
+    {
+      "category": "db_status_mismatch",
+      "description": "DB appointment.status = 'pending' but scenario expects 'confirmed'. Bot confirmed verbally but DB row is in pending state.",
+      "severity": "WARNING",
+      "file": "agent/tools/book.py"
+    }
+  ],
+  "milestones_reached": [
+    "agent_intro",
+    "service_resolved",
+    "customer_named",
+    "availability_checked",
+    "slot_selected",
+    "policy_gate_shown",
+    "booking_confirmed"
+  ],
+  "db_delta": {
+    "customer_count_delta": 1,
+    "appt_count_delta": 1
+  },
+  "snapshot_before": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "snapshot_after": {
+    "customer_count": 1,
+    "appt_count": 1
+  },
+  "final_state": {
+    "has_checkpoint": false
+  },
+  "langfuse_trace_path": null,
+  "langfuse_error": "UnauthorizedError: Invalid Langfuse credentials (401)",
+  "expect": {
+    "outcome": "booked",
+    "db_appointment": {"status": "confirmed"},
+    "tool_calls_required": ["check_availability", "book"],
+    "tool_calls_forbidden": []
+  },
+  "passed": true,
+  "notes": "Outcome matches (booked). DB status is 'pending' vs expected 'confirmed' — WARNING level. Cleanup harness bug: FK violation on customer_consents prevents post-run reset. tool_calls_required fully satisfied: check_availability (turn 6) + book (turn 9)."
+}

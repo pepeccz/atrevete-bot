@@ -34,6 +34,7 @@ python-dotenv>=1.0.0
 # Testing
 pytest>=8.3.0
 pytest-asyncio>=0.24.0
+freezegun>=1.5.0
 
 # HTTP Client
 httpx>=0.27.0
@@ -61,7 +62,6 @@ aiohttp>=3.9.0
 tenacity
 phonenumbers
 schedule>=1.2.0
-pybreaker>=1.0.0  # Circuit breaker pattern for resilience
 pytz>=2024.1  # Timezone conversion for Europe/Madrid
 python-dateutil>=2.8.0  # ISO 8601 date parsing
 dateparser>=1.2.0  # Multilingual natural language date parsing (es + en fallback)

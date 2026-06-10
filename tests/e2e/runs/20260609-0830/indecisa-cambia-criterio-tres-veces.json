@@ -1,0 +1,161 @@
+{
+  "scenario_id": "indecisa-cambia-criterio-tres-veces",
+  "conv_id": "3873c74c-8279-474f-9b38-5d0a829734d0",
+  "run_ts": "2026-06-09T08:30:00Z",
+  "outcome": "booked",
+  "pattern_e_reproduced": true,
+  "turns": [
+    {
+      "turn": 1,
+      "user": "Hola, quiero hacerme algo en el pelo pero no sé qué exactamente. ¿Qué me recomiendas?",
+      "agent": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nTe puedo orientar, claro. Para recomendarte bien, ¿es para un look de diario o para algo más especial?",
+      "tool_calls": [],
+      "latency_ms": 15484,
+      "timed_out": false
+    },
+    {
+      "turn": 2,
+      "user": "Es para el día a día. Creo que me haré un corte, sí. Cuando tienes para el martes?",
+      "agent": "¿Qué tipo de corte buscas? Tengo corte de bebé, corte de flequillo, corte de hombre, corte de mujer, corte de niña o corte de niño.",
+      "tool_calls": [],
+      "latency_ms": 14278,
+      "timed_out": false,
+      "note": "Bot asks for service sub-type instead of checking availability — correct disambiguation behavior."
+    },
+    {
+      "turn": 3,
+      "user": "Corte de mujer. Pero espera, pensándolo mejor me gustaría un tinte. ¿Qué opciones de tinte tienen?",
+      "agent": "Tenemos tinte y tinte para hombre. Si me dices para quién es, te digo cuál encaja mejor y te sigo ayudando con la reserva.",
+      "tool_calls": [],
+      "latency_ms": 14511,
+      "timed_out": false,
+      "pivot": "corte → tinte (PIVOT 1 — service)",
+      "note": "Bot handled service pivot cleanly. Did NOT carry forward the 'corte dama' service_id."
+    },
+    {
+      "turn": 4,
+      "user": "Para mí, soy mujer. Ah no espera, mejor unas mechas. ¿Qué mechas tienen? Con Carmen si puede ser",
+      "agent": "¿Qué tipo de mechas buscas? Tengo mechas, mechas localizadas y mechas localizadas exprés.",
+      "tool_calls": [],
+      "latency_ms": 20451,
+      "timed_out": false,
+      "pivot": "tinte → mechas (PIVOT 2 — service) + stylist pref Carmen (PIVOT 1 — stylist)",
+      "note": "Second service pivot handled. Stylist preference (Carmen) received but deferred. No partial_resolved_ids stale ref observed yet."
+    },
+    {
+      "turn": 5,
+      "user": "Mechas normales. Quería con Carmen pero si no hay hueco el martes, ponme con cualquiera. Y si el martes no hay, el jueves",
+      "agent": "No me aparece Carmen entre las estilistas disponibles.\n\nPuedes reservar con:\n0) La primera con disponibilidad (mín. 3 días de antelación)\n1) Harolyn\n2) Marta\n3) Pilar\n4) Victor\n\n¿Cuál prefieres?",
+      "tool_calls": ["check_availability"],
+      "latency_ms": 16999,
+      "timed_out": false,
+      "pivot": "date martes proposed (PIVOT 1 — date)",
+      "note": "Carmen not in stylist catalog — correct rejection. Bot does not hallucinate Carmen. check_availability called. Date preference acknowledged but pre-empted by 3-day min rule."
+    },
+    {
+      "turn": 6,
+      "user": "Con Lucía entonces. Ah, Lucía tampoco está en la lista... Ponme con Pilar.",
+      "agent": "Perdona, con Pilar la primera fecha válida es el viernes 12 de junio.\n\nEstas son las próximas opciones con Pilar:\n[list of 20 slots fri 12 → thu 18]",
+      "tool_calls": ["check_availability"],
+      "latency_ms": 14890,
+      "timed_out": false,
+      "pivot": "stylist Carmen → Lucía → Pilar (PIVOT 2 — stylist)",
+      "note": "Stylist pivot handled correctly. Available slots returned for Pilar. Min 3-day advance booking enforced (today=Jun 9, first slot=Jun 12)."
+    },
+    {
+      "turn": 7,
+      "user": "El martes me iba mejor pero bueno, ponme el jueves 12 a las 10. No espera, mejor el sábado. El sábado 13 a las 11",
+      "agent": "Perfecto, te lo dejo el sábado 13 de junio a las 11:00 con Pilar para mechas. ¿Te lo confirmo?",
+      "tool_calls": ["update_booking"],
+      "latency_ms": 20825,
+      "timed_out": false,
+      "pivot": "date viernes 12 → sábado 13 (PIVOT 2 and 3 — date)",
+      "note": "Multiple date changes in one message handled correctly. Final selection (sáb 13 @ 11) correctly resolved. update_booking called with correct slot."
+    },
+    {
+      "turn": 8,
+      "user": "Sí, confirma",
+      "agent": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\n[policy text + URL]",
+      "tool_calls": [],
+      "latency_ms": 16935,
+      "timed_out": false,
+      "note": "Policy gate triggered correctly for new customer before book call."
+    },
+    {
+      "turn": 9,
+      "user": "Sí, acepto",
+      "agent": "Me falta la información del servicio para poder cerrar la reserva. Si quieres, te la rehago enseguida.",
+      "tool_calls": [],
+      "latency_ms": 19829,
+      "timed_out": false,
+      "bug": "PATTERN_E_REPRODUCED — After policy acceptance, booking context (service=mechas, stylist=Pilar, slot=sáb 13 11:00) was LOST. Bot says 'me falta información del servicio'. This is the confirmed Pattern E regression: policy gate flow clears or fails to carry partial_resolved_ids and draft booking state across the policy acceptance turn."
+    },
+    {
+      "turn": 10,
+      "user": "Sí, rehácela. Era mechas con Pilar el sábado 13 de junio a las 11",
+      "agent": "Listo, reserva confirmada ✅\n\nTe la he dejado para el sábado 13 de junio a las 11:00 con Pilar para mechas.\n\n[Google Calendar link]",
+      "tool_calls": ["book"],
+      "latency_ms": 17765,
+      "timed_out": false,
+      "note": "User was forced to re-provide all booking details. book() called successfully after user repeated context."
+    }
+  ],
+  "final_state": {
+    "has_checkpoint": false,
+    "note": "No LangGraph checkpoint persisted post-booking — expected for ephemeral conversations."
+  },
+  "db_snapshot_post": {
+    "appointment_id": "8b5a6262-b553-44d4-ba9e-a05698e22961",
+    "phone": "+34999000029",
+    "service": "Mechas",
+    "stylist": "Pilar",
+    "start_time": "2026-06-13T09:00:00+00:00",
+    "status": "confirmed",
+    "gcal_sync_status": "not_applicable"
+  },
+  "tool_calls_observed": ["check_availability", "check_availability", "update_booking", "book"],
+  "tool_calls_required": ["check_availability", "book"],
+  "tool_calls_forbidden": [],
+  "verdict": "PASS_WITH_CRITICAL_BUG",
+  "scores": {
+    "L1_booking_correctness": "PASS",
+    "L2_langfuse": "SKIP",
+    "L3_tool_contract": "PASS",
+    "L4_context_retention": "FAIL",
+    "L5_ux_quality": 2.5
+  },
+  "bugs": [
+    {
+      "id": "BUG-PATTERN-E",
+      "severity": "CRITICAL",
+      "pattern": "Pattern E — Context Loss After Policy Acceptance",
+      "turn": 9,
+      "description": "After the user accepted the privacy policy (turn 9), the bot lost all booking context: service (mechas), stylist (Pilar), and slot (sábado 13 jun 11:00). It responded 'Me falta la información del servicio' despite having confirmed the slot in turn 7. The user was forced to re-dictate all three booking parameters from scratch in turn 10.",
+      "hypothesis": "The policy acceptance gate introduces a state transition that does not correctly preserve partial_resolved_ids and the active booking draft. When policy_accepted_at is written to state, the draft booking fields (service_ids, stylist_id, slot) are likely reset or not forwarded across the graph turn boundary.",
+      "impact": "Severe UX degradation. Customer must repeat booking information after accepting policy — this is likely to cause abandonment in production. Compounds on top of the existing 3-pivot context retention challenge.",
+      "files_suspected": [
+        "agent/middleware/prompt_assembly.py",
+        "agent/prompts/shared/booking_flow.md",
+        "agent/tools/_booking_validators.py",
+        "agent/tools/book.py"
+      ],
+      "reproduced": true,
+      "workaround_observed": "User manually re-provided full booking context in turn 10; bot booked correctly on recovery."
+    }
+  ],
+  "observations": [
+    "Service pivots (corte→tinte→mechas) handled CORRECTLY — no stale service_ids leaked across pivots.",
+    "Stylist pivots (Carmen→Lucía→Pilar) handled CORRECTLY — Carmen correctly flagged as not in catalog (not hallucinated), Lucía correctly rejected.",
+    "Multiple date changes in a single message (turn 7) resolved correctly to the LAST stated preference (sáb 13 @ 11).",
+    "3-day minimum booking advance rule correctly enforced (Jun 9 → first available Jun 12).",
+    "Policy gate fired at correct moment (turn 8, before book call) for new customer.",
+    "Pattern E reproduces specifically at the policy acceptance → book transition, not during the service/stylist/date pivots themselves.",
+    "Bot confirmed booking with correct details after user repeated context in turn 10 — recovery path works."
+  ],
+  "langfuse": "SKIPPED",
+  "cleanup_post": {
+    "appointments_deleted": 1,
+    "customer_deleted": true,
+    "clean": true
+  }
+}

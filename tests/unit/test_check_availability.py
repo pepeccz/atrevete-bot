@@ -5,16 +5,22 @@ Tasks 3.1 (RED) → 3.2 (GREEN): REQ-P2A-2 / REQ-P2A-3.
 When ALL queried days in the result are closed-day rejections (i.e. no slots returned
 because every day in the candidate range is closed), check_availability must return
 next_step="closed_day" instead of a generic no-slots response.
+
+B5 extension: check_availability must use Madrid local date as the "today" lower bound,
+not UTC date. When UTC is 23:30 (Madrid is 01:30 next day), today must resolve to next day.
 """
 
 from __future__ import annotations
 
 import json
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import pytest
+
+_MADRID_TZ = ZoneInfo("Europe/Madrid")
 
 FAKE_SERVICE_ID = uuid4()
 FAKE_STYLIST_ID = uuid4()
@@ -357,3 +363,74 @@ async def test_slot_time_exact_seconds_00_passes():
     data = parse_response(raw)
     assert data.get("status") == "ok", f"Expected ok for exact :00 match, got: {data}"
     assert data.get("payload", {}).get("exact_match") is True
+
+
+# ---------------------------------------------------------------------------
+# B5 — T14: check_availability uses Madrid TZ for 'today' lower bound
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_today_bound_uses_madrid_tz():
+    """B5: check_availability must use Madrid local date as 'today' lower bound.
+
+    Scenario: UTC clock is 23:30 on 2026-06-07 (Madrid = 01:30 on 2026-06-08).
+    - date.today() in UTC returns 2026-06-07.
+    - datetime.now(Madrid).date() returns 2026-06-08 (correct).
+
+    When we query date_iso="2026-06-07" (which is in the past in Madrid),
+    check_availability must reject with 'date in the past' (today is 06-08 Madrid).
+    Without the TZ fix, it would use 2026-06-07 as today and NOT reject it.
+
+    Strategy: patch `date.today` in the module to return UTC date (2026-06-07),
+    and separately patch `datetime.now` to return the Madrid datetime (01:30 2026-06-08).
+    Before T15 fix: `date.today()` is used → 2026-06-07 → same as query → NOT rejected.
+    After T15 fix: `datetime.now(_MADRID_TZ).date()` is used → 2026-06-08 → query is past → rejected.
+    """
+    from agent.tools.check_availability import check_availability
+
+    # The queried date: 2026-06-07 (UTC today, but Madrid yesterday)
+    query_date = "2026-06-07"
+    # UTC today when UTC is 23:30
+    utc_date = date(2026, 6, 7)
+    # Madrid tomorrow (23:30 UTC = 01:30 Madrid next day)
+    madrid_date = date(2026, 6, 8)
+
+    class _FakeDate(date):
+        @classmethod
+        def today(cls):
+            return utc_date  # UTC date — would NOT trigger rejection if used
+
+    # Patch `date` in the module to control `date.today()` return value
+    # AND provide `datetime.now()` that returns Madrid datetime
+    class _FakeDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):  # type: ignore[override]
+            if tz is not None:
+                return datetime(2026, 6, 8, 1, 30, 0, tzinfo=_MADRID_TZ)
+            return datetime(2026, 6, 7, 23, 30, 0)
+
+    with (
+        patch(
+            "agent.tools.check_availability._load_lead_time_settings",
+            new=AsyncMock(return_value=(0, 0)),
+        ),
+        patch("agent.tools.check_availability.date", _FakeDate),
+        patch("agent.tools.check_availability.datetime", _FakeDatetime),
+    ):
+        raw = await check_availability.coroutine(
+            service_ids=[str(FAKE_SERVICE_ID)],
+            stylist_id=str(FAKE_STYLIST_ID),
+            date_iso=query_date,
+            slot_time=None,
+        )
+
+    data = json.loads(raw)
+    # With Madrid TZ fix (T15): today = datetime.now(_MADRID_TZ).date() = 2026-06-08
+    #   → query date 2026-06-07 < 2026-06-08 → rejected with "past date" error
+    # Without fix (current code): today = date.today() = 2026-06-07
+    #   → query date 2026-06-07 is NOT < 2026-06-07 → NOT rejected for being past
+    assert data.get("status") == "rejected", (
+        f"Expected rejected (date is past in Madrid TZ), got: {data}. "
+        f"This likely means date.today() was used instead of Madrid-aware datetime.now()."
+    )

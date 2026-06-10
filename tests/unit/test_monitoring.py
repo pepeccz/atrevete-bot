@@ -250,3 +250,39 @@ def test_get_langfuse_handler_raises_when_callback_handler_fails(monkeypatch):
                 customer_phone="+34999999999",
                 customer_name=None,
             )
+
+
+# ---------------------------------------------------------------------------
+# Test 5 — ctx is a SYNC context manager (regression guard)
+# ---------------------------------------------------------------------------
+
+
+def test_get_langfuse_handler_returns_sync_context_manager(monkeypatch):
+    """
+    Regression: prod incident 2026-06-07 — agent/main.py wrapped the returned
+    ctx with `async with`, but `propagate_attributes()` returns a SYNC context
+    manager. Python raised TypeError on every turn and users got the fallback
+    "Lo siento, tuve un problema técnico...".
+
+    Guard: the returned ctx must implement __enter__/__exit__ (sync protocol)
+    and must NOT implement __aenter__/__aexit__.
+    """
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test")
+
+    from agent.utils.monitoring import get_langfuse_handler
+
+    _, ctx = get_langfuse_handler(
+        conversation_id="conv-sync",
+        customer_phone="+34111111111",
+        customer_name=None,
+    )
+
+    assert hasattr(ctx, "__enter__"), "ctx must support sync `with` protocol"
+    assert hasattr(ctx, "__exit__"), "ctx must support sync `with` protocol"
+    assert not hasattr(ctx, "__aenter__"), (
+        "ctx must NOT be an async context manager — agent/main.py uses sync `with`"
+    )
+    assert not hasattr(ctx, "__aexit__"), (
+        "ctx must NOT be an async context manager — agent/main.py uses sync `with`"
+    )

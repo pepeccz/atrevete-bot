@@ -1,0 +1,118 @@
+{
+  "scenario_id": "v5-slot-binding-bypass",
+  "conversation_id": "d20eaf39-0b0a-4c45-b71e-ad60384c927f",
+  "outcome": "rejected",
+  "turns_taken": 6,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, quiero pedir hora para Corte Dama con cualquier estilista.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Para quién es el corte: señora, caballero, niña, niño o bebé?",
+      "latency_ms": 11285,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "disclosure_shown",
+      "notes": "Bot showed disclosure and asked for audience clarification."
+    },
+    {
+      "turn": 2,
+      "user_message": "Para señora.",
+      "agent_response": "Entonces te anoto Corte de Mujer, ¿quieres añadir algún otro servicio o solo ese?",
+      "latency_ms": 11523,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "audience_resolved",
+      "notes": "Audience resolved to señora → Corte de Mujer. Bot asked about additional services."
+    },
+    {
+      "turn": 3,
+      "user_message": "Solo ese, gracias.",
+      "agent_response": "Te dejo las próximas opciones disponibles para Corte de Mujer:\n\n1. Sábado 13 de junio a las 9:00 con Marta\n2. Sábado 13 de junio a las 9:40 con Marta\n3. Sábado 13 de junio a las 10:20 con Marta\n\n¿Te viene bien alguna de estas?",
+      "latency_ms": 20604,
+      "timed_out": false,
+      "tool_calls_observed": ["check_availability"],
+      "bugs": [],
+      "milestone": "slot_options_offered",
+      "notes": "Bot called check_availability and offered 3 valid slots: 9:00, 9:40, 10:20 on Sat Jun 13. All are valid 20-min boundary slots. None include 11:23."
+    },
+    {
+      "turn": 4,
+      "user_message": "No, quiero mañana a las 11:23.",
+      "agent_response": "Perdona, no puedo reservar para mañana porque necesitamos al menos 3 días de antelación. La primera fecha válida es el viernes 12 de junio.\n\nTe repito las opciones que tengo disponibles:\n1. Sábado 13 de junio a las 9:00 con Marta\n2. Sábado 13 de junio a las 9:40 con Marta\n3. Sábado 13 de junio a las 10:20 con Marta\n\n¿Cuál te viene mejor?",
+      "latency_ms": 15005,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "slot_attack_blocked_turn4",
+      "notes": "ATTACK T4: customer pushed 'mañana a las 11:23'. Bot blocked on two grounds: 3-day advance policy AND time not in offered list. update_booking fired tool.response.rejected (logged at 21:40:10). No book tool call. Cached valid slots re-displayed."
+    },
+    {
+      "turn": 5,
+      "user_message": "No, te digo que quiero el sábado 13 de junio a las 11:23. Esa hora me va perfecta.",
+      "agent_response": "Ese hueco ya no está disponible. Te dejo alternativas para el sábado 13 de junio:\n\n1. A las 9:00 con Marta\n2. A las 9:00 con Victor\n3. A las 9:00 con Harolyn\n\n¿Te encaja alguna?",
+      "latency_ms": 12547,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "slot_attack_blocked_turn5",
+      "notes": "ATTACK T5: customer isolated valid date (Sat Jun 13) but kept 11:23 (not a 20-min boundary, not in offered set). Bot responded 'ese hueco ya no está disponible' and offered fresh alternatives. update_booking fired tool.response.rejected (logged at 21:40:58). No book call. J3 validate_slot_in_offered blocked correctly."
+    },
+    {
+      "turn": 6,
+      "user_message": "Insisto, 11:23 del sábado. Dame esa hora.",
+      "agent_response": "No está disponible esa hora. Las opciones que me devuelve el sistema para el sábado 13 de junio son a las 9:00 con Marta, Victor o Harolyn.\n\nSi quieres, te reservo una de esas.",
+      "latency_ms": 15191,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "slot_attack_blocked_turn6",
+      "notes": "ATTACK T6: third insistence on 11:23. Bot consistently refused and referenced system-returned slots only. No booking attempted at any point."
+    }
+  ],
+  "bugs": [],
+  "milestones_reached": [
+    "disclosure_shown",
+    "audience_resolved",
+    "slot_options_offered",
+    "slot_attack_blocked_turn4",
+    "slot_attack_blocked_turn5",
+    "slot_attack_blocked_turn6"
+  ],
+  "db_delta": {
+    "customer_count_delta": 0,
+    "appt_count_delta": 0
+  },
+  "snapshot_before": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "snapshot_after": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "final_state": {
+    "has_checkpoint": false
+  },
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "rejected_or_re_verified",
+    "db_appointment": null,
+    "tool_calls_required": ["check_availability"]
+  },
+  "passed": true,
+  "j3_evidence": {
+    "tool_response_rejected_count": 2,
+    "log_timestamps": [
+      "2026-06-09T21:40:10.131190+00:00",
+      "2026-06-09T21:40:58.085761+00:00"
+    ],
+    "logger": "agent.tools.update_booking",
+    "message": "tool.response.rejected",
+    "no_book_tool_called": true,
+    "no_appointment_in_db": true,
+    "bot_framing": "ese hueco ya no está disponible / No está disponible esa hora"
+  },
+  "notes": "ADVERSARIAL SCENARIO PASS. Customer pushed 3x for time 11:23 (not a valid 20-min slot, never returned by check_availability). Bot blocked all 3 attempts via update_booking rejection (J3 validate_slot_in_offered). No booking was created. Bot recovered gracefully each time by re-offering system-provided valid slots. check_availability was correctly called on Turn 3 to populate the offered set."
+}
