@@ -175,3 +175,26 @@ def test_r41_applies_when_both_slots_empty(rules_text: str) -> None:
     # Both slots must be mentioned
     has_both = "customer_memories" in r41_block and "past_appointments" in r41_block
     assert has_both, "R-41 must reference both <customer_memories> and <past_appointments>"
+
+
+# ---------------------------------------------------------------------------
+# Change N (N4) — R-37 cancellation exemption with empathy (UX-05)
+# ---------------------------------------------------------------------------
+
+
+def test_r37_cancellation_exemption_with_empathy(rules_text: str) -> None:
+    """R-37 must route illness-as-cancel-reason to the normal cancel flow with empathy."""
+    r37_start = rules_text.find("[R-37]")
+    assert r37_start != -1, "R-37 entry missing"
+    next_rule = rules_text.find("[R-38]", r37_start)
+    block = rules_text[r37_start:next_rule] if next_rule != -1 else rules_text[r37_start:]
+    lowered = block.lower()
+    assert "manage_appointments" in block, (
+        "R-37 must route illness cancellations to manage_appointments"
+    )
+    assert "empat" in lowered or "mejores" in lowered, (
+        "R-37 must require an empathetic sentence on illness cancellations"
+    )
+    assert "48" in block, (
+        "R-37 must cover the 48h window case (in-channel escalation with empathy)"
+    )

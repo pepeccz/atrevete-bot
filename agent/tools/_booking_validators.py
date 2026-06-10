@@ -149,8 +149,7 @@ async def validate_booking_date(
             date_iso=None,
             error_code=ERROR_CLOSED_DAY,
             error_message=(
-                f"El salón está cerrado el {resolved.isoformat()} ({weekday_name}). "
-                "Por favor, elige otro día."
+                f"El salón está cerrado el {_human_date_es(resolved)}. " "¿Te viene bien otro día?"
             ),
             payload={
                 "closed_date": resolved.isoformat(),
@@ -166,9 +165,9 @@ async def validate_booking_date(
             date_iso=None,
             error_code=ERROR_ADVANCE_POLICY_VIOLATED,
             error_message=(
-                f"La fecha {resolved.isoformat()} viola la política de antelación mínima "
-                f"({effective_min_days} días). "
-                f"La primera fecha válida es el {min_date.isoformat()}."
+                f"Esa fecha no llega a la antelación mínima de {effective_min_days} días "
+                "con la que trabajamos. "
+                f"La primera fecha disponible es el {_human_date_es(min_date)}."
             ),
             payload={
                 "min_date": min_date.isoformat(),
@@ -203,12 +202,56 @@ class FKValidationResult:
     On success: ok=True, error_code=None, error_message=None, missing_ids=[].
     On failure: ok=False, error_code set, error_message is a Spanish instruction
                 for the LLM so it can self-correct by re-reading <catalog>.
+    payload may carry recovery ground truth (N3): valid_candidates is a list of
+    {"id", "name"} dicts of active services sharing the dimension(s) of the
+    valid IDs in the same call, included only when small enough.
     """
 
     ok: bool
     error_code: str | None
     error_message: str | None
     missing_ids: list = field(default_factory=list)
+    payload: dict = field(default_factory=dict)
+
+
+_VALID_CANDIDATES_MAX = 12
+"""Cap for the valid_candidates recovery list (avoid dumping the catalog)."""
+
+
+async def _fetch_valid_candidate_services(session, found_uuids: set) -> list[dict]:
+    """Fetch active services sharing the dimension(s) of the given valid IDs.
+
+    Returns [] when no dimension is inferable (all IDs fabricated), when the
+    candidate list exceeds _VALID_CANDIDATES_MAX, or on any error (fail-open —
+    the candidates are a recovery aid, never a blocker).
+    """
+    if not found_uuids:
+        return []
+    try:
+        from sqlalchemy import text as _text
+
+        dim_result = await session.execute(
+            _text("SELECT DISTINCT metadata->>'dimension' FROM services WHERE id = ANY(:ids)"),
+            {"ids": [str(u) for u in found_uuids]},
+        )
+        dims = [row[0] for row in dim_result.fetchall() if row[0]]
+        if not dims:
+            return []
+
+        cand_result = await session.execute(
+            _text(
+                "SELECT id, name FROM services "
+                "WHERE is_active = true AND metadata->>'dimension' = ANY(:dims)"
+            ),
+            {"dims": dims},
+        )
+        rows = cand_result.fetchall()
+        if not rows or len(rows) > _VALID_CANDIDATES_MAX:
+            return []
+        return [{"id": str(row[0]), "name": row[1]} for row in rows]
+    except Exception as exc:
+        logger.warning("valid_candidates fetch failed (fail-open): %s", exc)
+        return []
 
 
 async def validate_service_ids_exist(session, service_ids: list) -> FKValidationResult:
@@ -258,15 +301,29 @@ async def validate_service_ids_exist(session, service_ids: list) -> FKValidation
     if not missing:
         return FKValidationResult(ok=True, error_code=None, error_message=None)
 
+    # N3: include recovery ground truth — active services of the same dimension(s)
+    # as the valid IDs in this call, so the LLM can self-correct without guessing.
+    candidates = await _fetch_valid_candidate_services(session, found_uuids)
+    payload: dict = {}
+    if candidates:
+        payload["valid_candidates"] = candidates
+
     missing_str = ", ".join(str(m) for m in missing)
+    candidates_hint = (
+        " El payload incluye valid_candidates con los servicios válidos de esa dimensión."
+        if candidates
+        else ""
+    )
     return FKValidationResult(
         ok=False,
         error_code=ERROR_INVALID_SERVICE_IDS,
         error_message=(
             f"service_id inválido: {missing_str}. "
             "Vuelve a leer el <catalog> y usa solo UUIDs que aparezcan tras id=."
+            f"{candidates_hint}"
         ),
         missing_ids=missing,
+        payload=payload,
     )
 
 
@@ -484,6 +541,13 @@ _DAY_NAMES_ES = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado"
 def _weekday_name_es(d: date) -> str:
     """Return the Spanish weekday name for a date."""
     return _DAY_NAMES_ES[d.weekday()]
+
+
+def _human_date_es(d: date) -> str:
+    """Return a natural Spanish date, e.g. 'lunes 15 de junio' (UX-10)."""
+    from shared.date_format import format_date_spanish
+
+    return format_date_spanish(d)
 
 
 def _is_valid_iso_date(value: str) -> bool:

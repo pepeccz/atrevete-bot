@@ -31,6 +31,7 @@ from agent.tools._booking_validators import (
     validate_slot_in_offered,
     validate_stylist_id_exists,
 )
+from agent.tools._rejection_strikes import apply_rejection_strike_json
 from agent.tools.schemas import ToolResponse
 from shared.config import get_settings
 
@@ -193,6 +194,34 @@ async def book(
         JSON-serialized ToolResponse with payload containing:
         appointment_id, customer_id, start_iso, end_iso, stylist_id.
     """
+    raw = await _book_impl(
+        service_ids=service_ids,
+        stylist_id=stylist_id,
+        start_iso=start_iso,
+        customer_full_name=customer_full_name,
+        confirmed=confirmed,
+        pre_book_validated=pre_book_validated,
+        notes=notes,
+        policy_accepted=policy_accepted,
+        state=state,
+    )
+    # N3 — strike layer: the 2nd consecutive identical rejection becomes an
+    # explicit escalation directive (deterministic exit from rejection loops).
+    return apply_rejection_strike_json(raw, (state or {}).get("messages", []), "book")
+
+
+async def _book_impl(
+    service_ids: list[str],
+    stylist_id: str,
+    start_iso: str,
+    customer_full_name: str,
+    confirmed: bool = False,
+    pre_book_validated: bool = False,
+    notes: str | None = None,
+    policy_accepted: bool = False,
+    state: dict | None = None,
+) -> str:
+    """Implementation body of the book tool. See the `book` docstring."""
     # --- Inject customer_phone from state (InjectedState — not LLM-controlled) ---
     customer_phone = (state or {}).get("customer_phone") or ""
     conversation_id = (state or {}).get("conversation_id") or ""
@@ -321,7 +350,10 @@ async def book(
                 return ToolResponse(
                     status="rejected",
                     next_step="invalid_service_ids",
-                    payload={"missing_service_ids": [str(u) for u in svc_result.missing_ids]},
+                    payload={
+                        "missing_service_ids": [str(u) for u in svc_result.missing_ids],
+                        **svc_result.payload,  # N3: valid_candidates recovery ground truth
+                    },
                     errors=[svc_result.error_message],
                 ).model_dump_json()
 

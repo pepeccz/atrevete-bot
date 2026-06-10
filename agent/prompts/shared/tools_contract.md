@@ -36,6 +36,7 @@ Antes de llamar a `book`, DEBES llamar a `check_availability(slot_time=HH:MM, �
 | `closed_day` | Ídem |
 | `advance_policy_violated` | Disculparse citando `first_valid_date` + re-presentar menú previo |
 | `date_required` | Preguntar fecha al cliente (solo tras `get_next_available_options` devolvió 0 opciones) |
+| `escalation_required` | Llamar `escalate(reason="technical_error")` INMEDIATAMENTE. NO reintentar la llamada rechazada ni pedir permiso al cliente. El motivo está en `payload.rejection_reason` |
 
 **update_booking**: `date_text` para frases relativas (ej: "mañana") o `date_iso` para fechas exactas. No ambos.
 - Cuándo llamar: en el primer turno donde aparece un servicio, ANTES de `check_availability`/`book`.
@@ -67,3 +68,5 @@ Antes de llamar a `book`, DEBES llamar a `check_availability(slot_time=HH:MM, �
 - Cuándo llamar: cuando el cliente pide hablar con alguien o tras 3 errores.
 - Nunca llamar: para eludir preguntas del catálogo.
 - Args requeridos: `reason`.
+- Resultado con éxito → confirma el traspaso y deja de gestionar reservas en esta conversación: una persona tomará el relevo. Este bloqueo aplica SOLO tras un resultado de éxito.
+- Resultado `status=ESCALATION_FAILED` → el traspaso NO ocurrió y nadie fue avisado. NUNCA digas que ya has avisado a un compañero. Discúlpate, di que avisaremos al equipo por otro medio y sigue atendiendo con normalidad. NUNCA pidas al cliente que llame al salón.

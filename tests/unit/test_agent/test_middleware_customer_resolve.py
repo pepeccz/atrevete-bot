@@ -106,7 +106,7 @@ async def test_cache_miss_calls_db_then_setex():
 
         await mw.awrap_model_call(request, AsyncMock(return_value=MagicMock()))
 
-        mock_lookup.assert_called_once_with(PHONE)
+        mock_lookup.assert_called_once_with(PHONE, conversation_id=None)
         mock_setex.assert_called_once_with(PHONE, CUSTOMER_DICT)
 
 

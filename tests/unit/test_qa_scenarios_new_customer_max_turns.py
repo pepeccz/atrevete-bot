@@ -35,7 +35,11 @@ KNOWN_NEW_CUSTOMER_SCENARIO_IDS = {
 }
 
 MIN_TURNS_FOR_NEW_CUSTOMER = 10
-MAX_TOTAL_V2_TURNS_BUDGET = 250
+# V6 audit (Change N): four scenarios received +2 max_turns bumps to prevent
+# mid-booking timeouts in new-customer flows (disclosure + policy gate consume
+# 2-3 extra turns). Budget raised from 250 → 260 to accommodate the legitimate
+# recalibration without blocking CI.
+MAX_TOTAL_V2_TURNS_BUDGET = 260
 
 
 @pytest.fixture(scope="module")

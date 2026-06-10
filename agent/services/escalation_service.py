@@ -11,9 +11,11 @@ This service is responsible for:
 The escalation system ensures conversations that the AI cannot handle are
 properly transferred to human agents with full context preserved.
 
-Architecture:
-- Step 1 (disable_bot) is CRITICAL — failure marks success=False but still continues
-- Steps 2-5 are best-effort — individual failures are logged and tracked
+Architecture (N2 — DB-record-first):
+- The escalation DB record (S5) is written FIRST and is the source of truth.
+  success=True means the escalation IS recorded; success=False means it is NOT.
+- All Chatwoot steps (disable bot, labels, note, team assign) are best-effort.
+  A Chatwoot outage or non-integer conversation_id never prevents the record.
 
 Entry points:
 - perform_escalation(): Central entrypoint (new, recommended)
@@ -247,8 +249,9 @@ async def perform_escalation(
     customer_id: str | None = None,
 ) -> EscalationResult:
     """
-    Central escalation entrypoint. 5-step pipeline with graceful degradation.
-    Step 1 (disable bot) is critical. Steps 2-5 are best-effort.
+    Central escalation entrypoint. DB-record-first pipeline (N2).
+    The escalation DB record is critical (success reflects it); Chatwoot
+    steps and the admin notification are best-effort.
 
     Args:
         conversation_id: Chatwoot conversation ID (numeric string)
@@ -281,30 +284,7 @@ async def perform_escalation(
             "Con mucho gusto te paso con alguien del equipo. Un momento por favor. 🙏"
         )
 
-    # Validate conversation_id can be parsed as integer
-    try:
-        client = ChatwootClient()
-        conv_id_int = int(conversation_id)
-    except (ValueError, Exception) as e:
-        logger.error(f"Cannot initialize escalation client: {e}")
-        result.success = False
-        return result
-
-    # S1 — CRITICAL: Disable bot in Chatwoot
-    try:
-        await client.update_conversation_attributes(
-            conversation_id=conv_id_int,
-            attributes={"atencion_automatica": False},
-        )
-        result.steps_completed.append("disable_bot")
-        logger.info(f"[escalation] Bot disabled for conversation {conversation_id}")
-    except Exception as e:
-        logger.critical(f"[escalation] CRITICAL: Failed to disable bot for {conversation_id}: {e}")
-        result.success = False
-        result.steps_failed.append("disable_bot")
-        # Continue anyway — we still want to record and notify
-
-    # Dedupe check (only blocks S2-S5, not S1)
+    # Dedupe check — fail-open. Runs first so a duplicate never writes a second row.
     existing = None
     try:
         async with get_async_session() as db:
@@ -318,45 +298,10 @@ async def perform_escalation(
         result.escalation_id = existing.id  # propagate existing escalation ID
         return result
 
-    # S2 — best-effort: Add labels
-    try:
-        labels = ["escalado", "error-tecnico"] if is_technical_error else ["escalado"]
-        await client.add_conversation_labels(conv_id_int, labels)
-        result.steps_completed.append("labels")
-    except Exception as e:
-        logger.warning(f"[escalation] S2 labels failed: {e}")
-        result.steps_failed.append("labels")
-
-    # S3 — best-effort: Add private note
-    try:
-        note_parts = [
-            "🚨 *Escalación a humano*",
-            f"• Razón: {reason}",
-            f"• Origen: {source}",
-            f"• Teléfono: {customer_phone}",
-            f"• Conversación: {conversation_id}",
-        ]
-        if issue_summary:
-            note_parts.append(f"• Problema: {issue_summary}")
-        if contact_preference:
-            note_parts.append(f"• Contacto preferido: {contact_preference}")
-        note_parts.append(f"• Timestamp: {datetime.now(tz=UTC).isoformat()}")
-        await client.add_private_note(conv_id_int, "\n".join(note_parts))
-        result.steps_completed.append("private_note")
-    except Exception as e:
-        logger.warning(f"[escalation] S3 private note failed: {e}")
-        result.steps_failed.append("private_note")
-
-    # S4 — best-effort: Assign to team
-    try:
-        if settings.CHATWOOT_TEAM_ID:
-            await client.assign_to_team(conv_id_int, settings.CHATWOOT_TEAM_ID)
-            result.steps_completed.append("team_assign")
-    except Exception as e:
-        logger.warning(f"[escalation] S4 team assign failed: {e}")
-        result.steps_failed.append("team_assign")
-
-    # S5 — best-effort: DB record
+    # S5 — DB record FIRST (N2 / V6 C2): the escalation row is the source of truth.
+    # It must be written independently of any Chatwoot client work so a Chatwoot
+    # outage (or a non-integer conversation_id) can never produce a phantom
+    # escalation where the bot claims a handoff that was never recorded.
     try:
         from database.models import Escalation, EscalationSource
 
@@ -375,10 +320,7 @@ async def perform_escalation(
             is_technical_error=is_technical_error,
             issue_summary=issue_summary,
             contact_preference=contact_preference,
-            metadata_={
-                "steps_completed": result.steps_completed,
-                "steps_failed": result.steps_failed,
-            },
+            metadata_={"recorded": "before_chatwoot_steps"},
         )
         if customer_id:
             try:
@@ -393,8 +335,84 @@ async def perform_escalation(
             result.steps_completed.append("db_record")
 
     except Exception as e:
-        logger.warning(f"[escalation] S5 DB record failed: {e}")
+        logger.error(f"[escalation] S5 DB record failed: {e}", exc_info=True)
+        result.success = False
         result.steps_failed.append("db_record")
+
+    # Chatwoot phase — best-effort. A non-integer conversation_id (e.g. UUID in
+    # the QA harness) or a client init failure skips ALL Chatwoot calls without
+    # affecting the recorded escalation.
+    client = None
+    conv_id_int: int | None = None
+    try:
+        conv_id_int = int(conversation_id)
+        client = ChatwootClient()
+    except (ValueError, Exception) as e:  # noqa: B014 — client init can raise anything
+        logger.warning(
+            f"[escalation] Chatwoot phase skipped for conversation {conversation_id}: {e}"
+        )
+        result.steps_failed.extend(["disable_bot", "labels", "private_note", "team_assign"])
+
+    # W2 / V6: skip the entire Chatwoot notification phase when the DB record
+    # failed. Running disable_bot after a failed write would gate the customer
+    # off Chatwoot while the tool returns ESCALATION_FAILED to the LLM — the
+    # bot would be disabled in Chatwoot but the LLM would keep serving, leaving
+    # the customer in an inconsistent state. Bot state must follow DB truth.
+    db_write_ok = "db_record" in result.steps_completed
+
+    if client is not None and conv_id_int is not None and db_write_ok:
+        # S1 — Disable bot in Chatwoot
+        try:
+            await client.update_conversation_attributes(
+                conversation_id=conv_id_int,
+                attributes={"atencion_automatica": False},
+            )
+            result.steps_completed.append("disable_bot")
+            logger.info(f"[escalation] Bot disabled for conversation {conversation_id}")
+        except Exception as e:
+            logger.critical(
+                f"[escalation] CRITICAL: Failed to disable bot for {conversation_id}: {e}"
+            )
+            result.steps_failed.append("disable_bot")
+            # Continue anyway — the escalation is already recorded
+
+        # S2 — best-effort: Add labels
+        try:
+            labels = ["escalado", "error-tecnico"] if is_technical_error else ["escalado"]
+            await client.add_conversation_labels(conv_id_int, labels)
+            result.steps_completed.append("labels")
+        except Exception as e:
+            logger.warning(f"[escalation] S2 labels failed: {e}")
+            result.steps_failed.append("labels")
+
+        # S3 — best-effort: Add private note
+        try:
+            note_parts = [
+                "🚨 *Escalación a humano*",
+                f"• Razón: {reason}",
+                f"• Origen: {source}",
+                f"• Teléfono: {customer_phone}",
+                f"• Conversación: {conversation_id}",
+            ]
+            if issue_summary:
+                note_parts.append(f"• Problema: {issue_summary}")
+            if contact_preference:
+                note_parts.append(f"• Contacto preferido: {contact_preference}")
+            note_parts.append(f"• Timestamp: {datetime.now(tz=UTC).isoformat()}")
+            await client.add_private_note(conv_id_int, "\n".join(note_parts))
+            result.steps_completed.append("private_note")
+        except Exception as e:
+            logger.warning(f"[escalation] S3 private note failed: {e}")
+            result.steps_failed.append("private_note")
+
+        # S4 — best-effort: Assign to team
+        try:
+            if settings.CHATWOOT_TEAM_ID:
+                await client.assign_to_team(conv_id_int, settings.CHATWOOT_TEAM_ID)
+                result.steps_completed.append("team_assign")
+        except Exception as e:
+            logger.warning(f"[escalation] S4 team assign failed: {e}")
+            result.steps_failed.append("team_assign")
 
     # ── S6 — Admin notification (best-effort) ────────────────────────────
     try:

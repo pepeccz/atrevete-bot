@@ -1,0 +1,115 @@
+{
+  "scenario_id": "mensaje-no-procesable-emoji-solo",
+  "conversation_id": "0ebe1dce-18a4-4480-8fd2-0d63a4f90fd4",
+  "outcome": "stuck",
+  "turns_taken": 5,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "💇‍♀️",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿En qué puedo ayudarte?",
+      "latency_ms": 10515,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "emoji_handled_open_question",
+      "notes": "R-39 PASS: bot responded with a pure open clarification question. No category enumeration (no 'corte, color, depilación o tratamiento?' list). Change K symptom NOT observed."
+    },
+    {
+      "turn": 2,
+      "user_message": "Quiero pedir una cita para un corte",
+      "agent_response": "¿Te refieres a corte de mujer, corte de hombre, corte de niña, corte de niño o corte de bebé?",
+      "latency_ms": 11615,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "service_disambiguation",
+      "notes": "Bot asks for cut-type disambiguation. Not a repeat of turn-1. Change K symptom (verbatim repeat of turn-1 question) NOT observed."
+    },
+    {
+      "turn": 3,
+      "user_message": "Corte de mujer",
+      "agent_response": "¿Es para señora, caballero, niña, niño o bebé?",
+      "latency_ms": 13331,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [
+        {
+          "type": "redundant_question",
+          "description": "User explicitly said 'Corte de mujer' (woman's cut). Bot ignored the 'mujer' qualifier and re-asked for gender/audience disambiguation with the same options. The answer was already provided in the user message.",
+          "turn": 3,
+          "user_said": "Corte de mujer",
+          "bot_asked": "¿Es para señora, caballero, niña, niño o bebé?"
+        }
+      ],
+      "milestone": null
+    },
+    {
+      "turn": 4,
+      "user_message": "Para señora, soy mujer",
+      "agent_response": "Entonces te anoto corte de mujer, ¿quieres añadir algún otro servicio o solo ese?",
+      "latency_ms": 16416,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "service_confirmed"
+    },
+    {
+      "turn": 5,
+      "user_message": "Solo ese",
+      "agent_response": "Tengo estas próximas opciones para corte de mujer, con la primera disponibilidad más próxima:\n\n1. Martes 16 de junio a las 10:00 con Marta\n2. Martes 16 de junio a las 10:40 con Marta\n3. Martes 16 de junio a las 11:20 con Marta\n\n¿cuál te viene mejor?",
+      "latency_ms": 18191,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "availability_offered",
+      "notes": "Max turns reached. Bot was progressing toward booking but scenario caps at 5 turns."
+    }
+  ],
+  "bugs": [
+    {
+      "type": "redundant_question",
+      "turn": 3,
+      "description": "After user said 'Corte de mujer', bot ignored the 'mujer' qualifier and re-asked gender/audience disambiguation. The information was already provided.",
+      "severity": "WARNING"
+    }
+  ],
+  "milestones_reached": [
+    "emoji_handled_open_question",
+    "service_disambiguation",
+    "service_confirmed",
+    "availability_offered"
+  ],
+  "r39_check": {
+    "result": "PASS",
+    "details": "Turn 1 response to emoji-only input was a pure open clarification question ('¿En qué puedo ayudarte?'). No service category enumeration observed (no 'corte, color, depilación o tratamiento?' pattern)."
+  },
+  "change_k_check": {
+    "result": "NOT_OBSERVED",
+    "details": "Turn 2 did not repeat turn-1 question verbatim. Bot correctly transitioned to service disambiguation after user provided specific intent."
+  },
+  "db_delta": {
+    "customer_count_delta": 0,
+    "appt_count_delta": 0
+  },
+  "snapshot_before": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "snapshot_after": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "final_state": {
+    "has_checkpoint": false
+  },
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "stuck",
+    "db_appointment": null,
+    "tool_calls_required": [],
+    "tool_calls_forbidden": [],
+    "tags": ["media", "emoji", "ambiguous-input"]
+  },
+  "passed": true
+}

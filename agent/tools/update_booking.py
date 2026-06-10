@@ -41,6 +41,7 @@ from agent.tools._booking_validators import (
     validate_slot_in_offered,
     validate_stylist_id_exists,
 )
+from agent.tools._rejection_strikes import apply_rejection_strike_json
 from agent.tools.schemas import ToolResponse
 from shared.config import get_settings
 
@@ -244,7 +245,7 @@ async def update_booking(
     _state = state or {}
     messages = _state.get("messages", [])
     try:
-        return await _update_booking_impl(
+        raw = await _update_booking_impl(
             services=services,
             stylist_name=stylist_name,
             no_preference_stylist=no_preference_stylist,
@@ -267,6 +268,9 @@ async def update_booking(
             conversation_id=_state.get("conversation_id"),
             recently_offered_slots=_state.get("recently_offered_slots") or [],
         )
+        # N3 — strike layer: the 2nd consecutive identical rejection becomes an
+        # explicit escalation directive (deterministic exit from rejection loops).
+        return apply_rejection_strike_json(raw, messages, "update_booking")
     except Exception as exc:
         logger.error("update_booking unhandled exception: %s", exc, exc_info=True)
         return ToolResponse(
@@ -575,7 +579,8 @@ async def _update_booking_impl(
                         next_step="service_required",
                         errors=[_svc_fk_result.error_message],
                         payload={
-                            "missing_service_ids": [str(u) for u in _svc_fk_result.missing_ids]
+                            "missing_service_ids": [str(u) for u in _svc_fk_result.missing_ids],
+                            **_svc_fk_result.payload,  # N3: valid_candidates ground truth
                         },
                     ).model_dump_json()
 

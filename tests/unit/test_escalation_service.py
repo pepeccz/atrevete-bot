@@ -831,8 +831,9 @@ class TestPerformEscalation:
         assert result.duplicate_prevented is True
 
     @pytest.mark.asyncio
-    async def test_perform_escalation_s1_failure_sets_success_false(self):
-        """S1 (disable_bot) failure marks success=False but S2-S5 still attempted."""
+    async def test_perform_escalation_s1_failure_keeps_success_true(self):
+        """N2: S1 (disable_bot) failure no longer flips success — the DB record
+        is the source of truth. The failed step is still tracked."""
         mock_client = AsyncMock()
         mock_client.update_conversation_attributes = AsyncMock(
             side_effect=Exception("Chatwoot down")
@@ -863,7 +864,8 @@ class TestPerformEscalation:
                 source="manual",
             )
 
-        assert result.success is False
+        assert result.success is True
+        assert "db_record" in result.steps_completed
         assert "disable_bot" in result.steps_failed
 
     @pytest.mark.asyncio
@@ -953,3 +955,168 @@ class TestPerformEscalation:
 
         assert result.duplicate_prevented is False
         assert result.success is True
+
+
+# ============================================================================
+# Change N (N2) — DB-record-first escalation contract
+# ============================================================================
+
+
+def _working_db_session():
+    """Async session mock that satisfies dedupe + S5 record + S6 notification."""
+    session = AsyncMock()
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=None)
+    session.execute = AsyncMock(
+        return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None))
+    )
+    session.add = MagicMock()
+    session.commit = AsyncMock()
+    session.refresh = AsyncMock()
+    return session
+
+
+class TestEscalationDbRecordFirst:
+    """N2: the escalation DB record is written FIRST, independent of Chatwoot."""
+
+    @pytest.mark.asyncio
+    async def test_uuid_conversation_id_still_writes_db_record(self):
+        """Non-integer conversation_id: skip Chatwoot calls, still record, no crash."""
+        mock_session = _working_db_session()
+        mock_client = AsyncMock()
+
+        with (
+            patch("shared.chatwoot_client.ChatwootClient", return_value=mock_client),
+            patch(
+                "agent.services.escalation_service.get_async_session",
+                return_value=mock_session,
+            ),
+        ):
+            result = await perform_escalation(
+                conversation_id="389a06a0-1234-5678-9abc-def012345678",
+                customer_phone="+34999000023",
+                reason="manual_request",
+                source="manual",
+            )
+
+        assert result.success is True, (
+            "UUID conversation_id must not abort the escalation — the DB record "
+            "is the source of truth (V6 C2 phantom escalation)"
+        )
+        assert "db_record" in result.steps_completed
+        assert result.escalation_id is not None
+        mock_session.add.assert_called()
+        # No Chatwoot API call may fire with a non-integer conversation id
+        mock_client.update_conversation_attributes.assert_not_called()
+        mock_client.add_conversation_labels.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_chatwoot_down_still_writes_db_record(self):
+        """All Chatwoot calls raising must not prevent the DB record (success=True)."""
+        mock_session = _working_db_session()
+        mock_client = AsyncMock()
+        mock_client.update_conversation_attributes = AsyncMock(
+            side_effect=Exception("Chatwoot 502")
+        )
+        mock_client.add_conversation_labels = AsyncMock(side_effect=Exception("Chatwoot 502"))
+        mock_client.add_private_note = AsyncMock(side_effect=Exception("Chatwoot 502"))
+        mock_client.assign_to_team = AsyncMock(side_effect=Exception("Chatwoot 502"))
+
+        with (
+            patch("shared.chatwoot_client.ChatwootClient", return_value=mock_client),
+            patch(
+                "agent.services.escalation_service.get_async_session",
+                return_value=mock_session,
+            ),
+        ):
+            result = await perform_escalation(
+                conversation_id="123",
+                customer_phone="+34999000023",
+                reason="manual_request",
+                source="manual",
+            )
+
+        assert (
+            result.success is True
+        ), "Chatwoot outage must not flip success — escalation IS recorded"
+        assert "db_record" in result.steps_completed
+        assert "disable_bot" in result.steps_failed
+
+    @pytest.mark.asyncio
+    async def test_db_record_failure_sets_success_false(self):
+        """If the escalation DB record cannot be written, success must be False."""
+        call_count = 0
+
+        def session_factory():
+            nonlocal call_count
+            call_count += 1
+            session = AsyncMock()
+            session.__aenter__ = AsyncMock(return_value=session)
+            session.__aexit__ = AsyncMock(return_value=None)
+            # Dedupe check fails open; S5 commit raises; S6 also fails.
+            session.execute = AsyncMock(side_effect=Exception("DB down"))
+            session.add = MagicMock()
+            session.commit = AsyncMock(side_effect=Exception("DB down"))
+            return session
+
+        mock_client = AsyncMock()
+
+        with (
+            patch("shared.chatwoot_client.ChatwootClient", return_value=mock_client),
+            patch(
+                "agent.services.escalation_service.get_async_session",
+                side_effect=lambda: session_factory(),
+            ),
+        ):
+            result = await perform_escalation(
+                conversation_id="123",
+                customer_phone="+34999000023",
+                reason="manual_request",
+                source="manual",
+            )
+
+        assert (
+            result.success is False
+        ), "DB record failure must produce an explicit failure (no phantom escalation)"
+        assert "db_record" in result.steps_failed
+
+    @pytest.mark.asyncio
+    async def test_db_record_failure_skips_disable_bot(self):
+        """W2 / V6: when the DB write fails, disable_bot must NOT be called.
+
+        Running disable_bot after a failed write would gate the customer off
+        Chatwoot while the tool returns ESCALATION_FAILED to the LLM, leaving
+        the bot disabled in Chatwoot but the LLM still serving. Bot state must
+        be consistent with DB truth.
+        """
+
+        def session_factory():
+            session = AsyncMock()
+            session.__aenter__ = AsyncMock(return_value=session)
+            session.__aexit__ = AsyncMock(return_value=None)
+            session.execute = AsyncMock(side_effect=Exception("DB down"))
+            session.add = MagicMock()
+            session.commit = AsyncMock(side_effect=Exception("DB down"))
+            return session
+
+        mock_client = AsyncMock()
+
+        with (
+            patch("shared.chatwoot_client.ChatwootClient", return_value=mock_client),
+            patch(
+                "agent.services.escalation_service.get_async_session",
+                side_effect=lambda: session_factory(),
+            ),
+        ):
+            result = await perform_escalation(
+                conversation_id="123",
+                customer_phone="+34999000023",
+                reason="manual_request",
+                source="manual",
+            )
+
+        assert result.success is False
+        mock_client.update_conversation_attributes.assert_not_called(), (
+            "disable_bot (update_conversation_attributes) must not fire when the "
+            "DB record write failed — bot state must be consistent with DB truth"
+        )

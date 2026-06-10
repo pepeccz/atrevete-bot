@@ -301,6 +301,8 @@ class ConversationTurnAdapter:
             tool_name = entry.get("name", "")
             args = entry.get("args", {}) or {}
             result_summary = entry.get("result_summary", "")
+            # Change N (W8): crashed tool calls carry status "error" / "missing"
+            call_status = entry.get("status", "")
 
             # Normalise timestamp: created_at from DB is timezone-aware if TIMESTAMP(tz=True)
             if created_at is not None and hasattr(created_at, "astimezone"):
@@ -310,11 +312,17 @@ class ConversationTurnAdapter:
             else:
                 ts = datetime.now(UTC)
 
+            result_payload: dict[str, Any] = {}
+            if result_summary:
+                result_payload["result_summary"] = result_summary
+            if call_status:
+                result_payload["status"] = call_status
+
             result.append(
                 ToolCallEvidence(
                     tool_name=tool_name,
                     arguments=dict(args) if isinstance(args, dict) else {},
-                    result={"result_summary": result_summary} if result_summary else {},
+                    result=result_payload,
                     source="db_turns",
                     timestamp=ts,
                 )

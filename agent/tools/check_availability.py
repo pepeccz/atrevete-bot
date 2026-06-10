@@ -348,7 +348,7 @@ async def check_availability(
                     "stylist_id": stylist_id,
                     "service_ids": service_ids,
                 },
-                errors=[f"El salón está cerrado el {date_iso}."],
+                errors=[f"El salón está cerrado el {format_date_spanish(target_date)}."],
             ).model_dump_json()
 
     # --- slot_time exact-match filter (pre-book re-validation, ADR-7) ---

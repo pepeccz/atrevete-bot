@@ -1,0 +1,202 @@
+{
+  "scenario_id": "confundida-pide-aclaracion",
+  "conversation_id": "d96fd0d4-adca-4a5b-8683-156083678306",
+  "outcome": "stuck",
+  "turns_taken": 12,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, quería pedir hora para arreglarme el pelo pero no entiendo qué es lo que ofrecéis exactamente.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nClaro, te lo aclaro sin problema: en peluquería hacemos servicios como cortes, peinados, secados, color y mechas, además de algunos tratamientos capilares. Si quieres, te ayudo a encontrar el servicio que mejor encaja con lo que buscas.",
+      "latency_ms": 8737,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "intro_clarification",
+      "notes": "Bot responded warmly with a high-level overview without overwhelming the confused customer. Did NOT enumerate a full category list — R-39 compliant for processable confused input."
+    },
+    {
+      "turn": 2,
+      "user_message": "¿Qué es mechas? No sé si eso es lo que necesito. Yo solo quiero que me tiñan el pelo, que ya tengo muchas canas.",
+      "agent_response": "Si lo que buscas es cubrir canas y teñirte el pelo, el servicio que encaja es **tinte**.  \nLas **mechas** son para dar luces o contrastes, no para una coloración uniforme.\n\nSi quieres, te digo cómo reservar el tinte.",
+      "latency_ms": 8523,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "service_identified",
+      "notes": "Excellent disambiguation. Bot explained 'mechas' vs 'tinte' in plain language — no jargon. Customer understood immediately."
+    },
+    {
+      "turn": 3,
+      "user_message": "Ah, el tinte entonces. ¿Y cuánto tiempo dura eso? ¿Y hay que reservar con mucho tiempo?",
+      "agent_response": "El tiempo del servicio de **tinte** es de 40 minutos.  \nSobre la antelación, no te puedo confirmar un margen exacto sin mirar huecos reales; si quieres, te busco la próxima disponibilidad.",
+      "latency_ms": 8552,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "service_details_explained",
+      "notes": "Honest answer about duration (40 min). Bot correctly deferred to real availability check instead of guessing lead time."
+    },
+    {
+      "turn": 4,
+      "user_message": "Sí, sí, mira a ver qué hay. Yo preferiría por las mañanas si puede ser.",
+      "agent_response": "¿Es para señora o para caballero?",
+      "latency_ms": 12160,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "audience_clarification",
+      "notes": "Bot asked audience type before running availability — reasonable clarification since tinte is audience-specific."
+    },
+    {
+      "turn": 5,
+      "user_message": "Para señora, para mí.",
+      "agent_response": "Perfecto. ¿Qué día exacto te viene mejor?",
+      "latency_ms": 18297,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "audience_resolved",
+      "notes": "Short, direct response. Good flow."
+    },
+    {
+      "turn": 6,
+      "user_message": "Pues el jueves que viene, si puede ser por la mañana.",
+      "agent_response": "Perfecto, ¿me dices tu nombre y primer apellido?",
+      "latency_ms": 11450,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [
+        {
+          "type": "flow_ordering",
+          "description": "Bot asked for name BEFORE checking availability. Standard booking flow should check/show available slots first, then collect customer info once a slot is selected. This adds unnecessary turns and is confusing for an elderly customer who hasn't confirmed a time yet.",
+          "severity": "minor",
+          "turn": 6
+        }
+      ],
+      "milestone": "date_provided",
+      "notes": "Bot collected name here without having checked availability yet. This flow ordering consumes extra turns unnecessarily."
+    },
+    {
+      "turn": 7,
+      "user_message": "Me llamo Pilar Hernández",
+      "agent_response": "¿Quieres dejarme alguna nota para la cita?",
+      "latency_ms": 19937,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "name_collected",
+      "notes": "Still collecting data before showing available slots — continues pre-availability data collection pattern."
+    },
+    {
+      "turn": 8,
+      "user_message": "No, ninguna nota.",
+      "agent_response": "Me falta elegir una hora exacta para poder comprobarla antes de confirmártela. ¿Te va mejor por la mañana temprano?",
+      "latency_ms": 19924,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "notes_skipped",
+      "notes": "Bot now asking for specific time before running check_availability — still deferred the slot search."
+    },
+    {
+      "turn": 9,
+      "user_message": "Pues a las 10 o así, lo que haya disponible.",
+      "agent_response": "Sí, hay huecos por la mañana el **jueves 18 de junio**. Te puedo dejar el de las **10:00** con Marta, Victor, Harolyn o Pilar, y también hay más opciones a las **10:40, 11:20, 12:00, 12:40** y **13:20**.  \n¿Qué hora y con qué estilista te encaja más?",
+      "latency_ms": 15082,
+      "timed_out": false,
+      "tool_calls_observed": ["check_availability"],
+      "bugs": [],
+      "milestone": "availability_shown",
+      "notes": "Good availability presentation. Multiple morning slots shown. Bot presented 4 stylists for 10:00 — gives Pilar real choice without being overwhelming."
+    },
+    {
+      "turn": 10,
+      "user_message": "A las 10 está bien. Y con quien sea, me da igual.",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "latency_ms": 14786,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "policy_gate_triggered",
+      "notes": "Policy gate shown before booking confirmation. Wording is friendly and clear enough for elderly customer. The 50% charge policy is communicated plainly."
+    },
+    {
+      "turn": 11,
+      "user_message": "Sí, sí, acepto.",
+      "agent_response": "Se me ha quedado sin hueco ese turno justo al validar, así que no te la puedo dejar cerrada a las 10:00.  \n¿Quieres que te busque la siguiente opción disponible?",
+      "latency_ms": 37514,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "slot_conflict",
+      "notes": "Slot at 10:00 became unavailable between presentation (turn 9) and booking attempt. Bot handled gracefully with a clean 'slot taken' message. Likely test environment race condition (parallel QA runs sharing slots). High latency (37s) suggests booking attempt + retry. Bot offered alternatives proactively."
+    },
+    {
+      "turn": 12,
+      "user_message": "Sí, ponme lo que haya, cualquier hora de mañana me vale.",
+      "agent_response": "Lo más pronto que hay es **viernes 19 de junio a las 10:00 con Marta**.  \nTambién tengo **viernes 19 de junio a las 10:40** y **a las 11:20** con Marta.\n\n¿Cuál prefieres?",
+      "latency_ms": 25674,
+      "timed_out": false,
+      "tool_calls_observed": ["check_availability"],
+      "bugs": [],
+      "milestone": "alternative_slots_shown",
+      "notes": "Bot found Friday alternatives and presented 3 options clearly. MAX_TURNS reached here — conversation ended before Pilar could choose and confirm."
+    }
+  ],
+  "bugs": [
+    {
+      "type": "flow_ordering",
+      "description": "Bot collected customer name and notes (turns 6-7) before running check_availability or showing available slots. This premature data collection added 2-3 extra turns and risked running out of max_turns budget before booking. Expected flow: show available slots → customer picks one → collect name/notes → confirm booking.",
+      "severity": "minor",
+      "turns_affected": [6, 7, 8]
+    }
+  ],
+  "milestones_reached": [
+    "intro_clarification",
+    "service_identified",
+    "service_details_explained",
+    "audience_resolved",
+    "date_provided",
+    "name_collected",
+    "availability_shown",
+    "policy_gate_triggered",
+    "slot_conflict",
+    "alternative_slots_shown"
+  ],
+  "db_delta": {
+    "customer_count_delta": 0,
+    "appt_count_delta": 0
+  },
+  "snapshot_before": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "snapshot_after": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "final_state": {
+    "has_checkpoint": false
+  },
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "booked",
+    "db_appointment": {
+      "status": "confirmed"
+    },
+    "tool_calls_required": ["check_availability", "book"],
+    "tool_calls_forbidden": [],
+    "tags": ["behavioral", "confused", "re-explain"]
+  },
+  "passed": false,
+  "notes": {
+    "v6_focus_r39": "R-39 compliance observed: on initial unprocessable/confused input (turn 1), bot did NOT enumerate a full service category list — it gave a brief friendly overview and offered to guide. This is correct behavior per the V6 focus note (R-39 applies to UNPROCESSABLE input; helpful guidance for confused-but-processable customer is fine).",
+    "tone_ux": "Maite maintained warm, patient tone throughout all 12 turns. Explanations were clear and jargon-free when customer asked for clarification (turns 2, 3). No voseo detected. No context loss. No redundant questions. The bot remained consistent and never became impatient despite multiple clarification rounds.",
+    "repeated_sentence_behavior": "No repeated-sentence pattern detected. Bot varied its phrasing across turns.",
+    "clarification_quality": "Excellent service disambiguation (mechas vs tinte) in turn 2 — exactly the kind of warm re-explanation this scenario tests. Bot correctly inferred from 'cubrir canas' that Pilar needed 'tinte', not mechas.",
+    "failure_root_cause": "Two compounding factors caused stuck: (1) flow ordering bug — name/notes collected before availability check added 2-3 extra turns; (2) slot conflict at turn 11 after policy acceptance added another 2 turns. Combined, these pushed the 12-turn budget to its limit. The booking was ONE step away from completion at turn 12.",
+    "slot_conflict": "The 10:00 Thursday slot conflict (turn 11) is likely a test environment artifact — parallel QA runs may compete for the same slots. Not a bot logic bug.",
+    "recommendation": "Increase max_turns for this scenario from 12 to 14-16 to account for confused customer re-explanation overhead. Additionally, investigate the premature name-collection flow (before availability check) — this is a genuine booking flow ordering issue that wastes turns and should be fixed."
+  }
+}

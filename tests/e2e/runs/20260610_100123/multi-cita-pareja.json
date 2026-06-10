@@ -1,0 +1,208 @@
+{
+  "scenario_id": "multi-cita-pareja",
+  "conversation_id": "5e5ed28a-3fbb-4e2d-ba0e-566188978fd2",
+  "outcome": "stuck",
+  "turns_taken": 12,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, queremos venir mi marido y yo a la vez, yo un corte y él también.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Para quién es el corte de tu marido: caballero, niño o bebé?",
+      "latency_ms": 14309,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "duo_intent_detected"
+    },
+    {
+      "turn": 2,
+      "user_message": "Él es caballero, y yo corte de señora.",
+      "agent_response": "Perfecto, ya tengo dos cortes: el de señora y el de caballero. 😊\n\nEstas son las próximas opciones disponibles:\n1. Martes 16 de junio a las 10:00 con Marta\n2. Martes 16 de junio a las 11:20 con Marta\n3. Martes 16 de junio a las 12:40 con Marta\n\n¿cuál os viene mejor?",
+      "latency_ms": 15671,
+      "timed_out": false,
+      "tool_calls_observed": ["check_availability"],
+      "bugs": [],
+      "milestone": "availability_offered"
+    },
+    {
+      "turn": 3,
+      "user_message": "La primera, el martes a las 10:00 con Marta.",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "latency_ms": 12116,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "policy_gate_shown"
+    },
+    {
+      "turn": 4,
+      "user_message": "Sí, acepto la política.",
+      "agent_response": "Perfecto. Me falta vuestro nombre y apellido para dejarla cerrada. ¿Me lo das?",
+      "latency_ms": 12339,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "policy_accepted"
+    },
+    {
+      "turn": 5,
+      "user_message": "Mónica Salinas.",
+      "agent_response": "Gracias, Mónica. ¿Quieres dejar alguna nota para Marta?",
+      "latency_ms": 25709,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "name_captured"
+    },
+    {
+      "turn": 6,
+      "user_message": "No, ninguna nota. ¿Y el de mi marido queda también reservado?",
+      "agent_response": "Se ha quedado a medias porque al reanotar los datos se ha colado un identificador incorrecto. No te la dejo como confirmada aún.\n\n¿Quieres que la rehaga para dejarla bien cerrada?",
+      "latency_ms": 20465,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [
+        {
+          "type": "hallucination",
+          "description": "Bot attempted to book with a hallucinated service UUID that the FK validator rejected. This caused the booking to fail. The bot tried to call book tool with a fabricated service_id not present in the DB catalog."
+        },
+        {
+          "type": "multi_customer_gap",
+          "description": "Bot did not ask for the husband's name or treat him as a separate customer entity — it handled both as one booking unit under Mónica's account. This is the known Change M deferred gap: true multi-customer split is not implemented. Bot handled companion as part of same booking, not a separate customer record."
+        }
+      ],
+      "milestone": "fk_validator_triggered"
+    },
+    {
+      "turn": 7,
+      "user_message": "Sí, por favor rehazla.",
+      "agent_response": "He detectado que se volvió a colar un UUID incorrecto al intentar cerrarla, así que no quiero inventarme nada ni dejarte una reserva mal hecha.\n\nSi quieres, la rehago desde cero correctamente con los dos cortes y te la deja cerrada.",
+      "latency_ms": 30268,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [
+        {
+          "type": "dead_loop",
+          "description": "Bot keeps detecting hallucinated UUID on each attempt. Cannot self-recover by re-fetching valid service_ids from catalog. Begins loop: offer redo → try → fail → offer redo."
+        }
+      ],
+      "milestone": null
+    },
+    {
+      "turn": 8,
+      "user_message": "Sí, reházla desde cero con los dos cortes.",
+      "agent_response": "Ahora mismo no me deja crearla porque el sistema me pide revalidar y reofrecer el hueco antes de reservar.\n\n¿Te mantengo el martes 16 a las 10:00 con Marta para los dos cortes, o prefieres que busque otra opción?",
+      "latency_ms": 15951,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": null
+    },
+    {
+      "turn": 9,
+      "user_message": "Sí, mantén el martes 16 a las 10:00 con Marta para los dos.",
+      "agent_response": "No me está dejando revalidarlo porque se ha perdido el identificador correcto de uno de los servicios. Para no darte una respuesta incorrecta, necesito rehacer la selección.\n\n¿Quieres que empecemos otra vez con los dos cortes?",
+      "latency_ms": 17748,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": null
+    },
+    {
+      "turn": 10,
+      "user_message": "Sí, empecemos otra vez.",
+      "agent_response": "Estas son las próximas citas disponibles:\n1. Martes 16 de junio a las 10:00 con Marta\n2. Martes 16 de junio a las 11:20 con Marta\n3. Martes 16 de junio a las 12:40 con Marta\n\n¿Cuál os viene mejor?",
+      "latency_ms": 24492,
+      "timed_out": false,
+      "tool_calls_observed": ["check_availability"],
+      "bugs": [],
+      "milestone": null
+    },
+    {
+      "turn": 11,
+      "user_message": "La primera, martes 16 a las 10.",
+      "agent_response": "¿Quieres dejar alguna nota para Marta?",
+      "latency_ms": 31885,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": null
+    },
+    {
+      "turn": 12,
+      "user_message": "No, ninguna nota, confirma la cita.",
+      "agent_response": "Ahora mismo el sistema me vuelve a pedir revalidar el hueco antes de cerrar la reserva, y no quiero prometerte algo que no quede bien guardado.\n\n¿Te parece si lo revalido otra vez para Marta el martes 16 a las 10:00?",
+      "latency_ms": 33589,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [
+        {
+          "type": "dead_loop",
+          "description": "Second full cycle confirms the bot is stuck in an unrecoverable FK validation loop. It can fetch availability, collect name/policy, but cannot successfully commit a booking for a duo service request without hallucinating service_ids."
+        }
+      ],
+      "milestone": null
+    }
+  ],
+  "bugs": [
+    {
+      "turn": 6,
+      "type": "hallucination",
+      "severity": "critical",
+      "description": "Bot hallucinated a service UUID when attempting to book multiple services for a couple. The FK validator in book.py (or update_booking.py) correctly rejected the invalid service_id. Root cause: the LLM fabricates a service UUID when handling multi-service (duo) bookings instead of looking up valid IDs from the catalog via check_availability tool evidence.",
+      "regression_from_v4": false,
+      "notes": "V4 baseline notes this scenario as exercising the FK validator. The validator IS working correctly — it blocks the hallucination. The bug is that the bot cannot self-recover by re-fetching valid service_ids, creating an infinite loop."
+    },
+    {
+      "turn": 7,
+      "type": "dead_loop",
+      "severity": "critical",
+      "description": "After FK validation failure, bot enters an unrecoverable loop: offer redo → attempt with hallucinated UUID → fail → offer redo. Loop persists even after user agrees to restart from scratch (turns 7–12 cover 2 full cycles). Bot never escalates or asks for human help despite being unable to complete the task.",
+      "regression_from_v4": false,
+      "notes": "Known gap — no escalation fallback when book tool fails repeatedly. Bot should escalate after N consecutive booking failures."
+    },
+    {
+      "turn": 6,
+      "type": "multi_customer_gap",
+      "severity": "deferred",
+      "description": "Bot handled husband's service as part of Mónica's booking rather than creating a separate customer record for the partner. This is the known Change M deferred gap (true multi-customer split not implemented). Bot asked Mónica's name only, did not ask for husband's name or phone. Companion handling UX: bot treats both services as a single booking for the primary phone holder.",
+      "regression_from_v4": false,
+      "notes": "DEFERRED per scenario instructions — do not report as new bug. Recording for completeness: companion booking UX currently collapses both people's services into one appointment entry under the primary customer."
+    }
+  ],
+  "milestones_reached": [
+    "duo_intent_detected",
+    "availability_offered",
+    "policy_gate_shown",
+    "policy_accepted",
+    "name_captured",
+    "fk_validator_triggered"
+  ],
+  "db_delta": {
+    "customer_count_delta": 0,
+    "appt_count_delta": 0
+  },
+  "snapshot_before": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "snapshot_after": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "final_state": {
+    "has_checkpoint": false
+  },
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "multi_completed",
+    "db_appointment": {
+      "status": "confirmed"
+    },
+    "tool_calls_required": ["check_availability", "book"],
+    "tool_calls_forbidden": [],
+    "tags": ["multi-intent", "couple", "complex"]
+  },
+  "passed": false,
+  "notes": "V6 regression focus: FK validator correctly blocks hallucinated service_ids (validator working as designed since V4). New finding: bot has no self-recovery path after repeated FK failures — it loops indefinitely instead of escalating. Companion handling UX (Change M deferred gap): bot treats both services as one booking under Mónica's account; does not create a separate customer for the partner or ask for his name/phone. The bot DID correctly understand the duo intent, disambiguate services (corte dama vs corte caballero), offer availability, present policy gate, and capture Mónica's name — all pre-commit steps worked. The failure point is exclusively at the book tool call where service_id hallucination occurs."
+}

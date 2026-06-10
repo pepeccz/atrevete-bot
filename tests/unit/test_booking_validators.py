@@ -439,3 +439,68 @@ async def test_validate_booking_date_default_min_days():
     assert result.ok is True, (
         f"Expected ok=True with default min_days={MIN_BOOKING_DAYS} for +{MIN_BOOKING_DAYS + 1} days, got: {result}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Change N (N6) — humanized fallback messages (UX-10)
+# ---------------------------------------------------------------------------
+
+
+class TestHumanizedMessages:
+    """G2/G3 fallback strings must use natural Spanish dates and warm phrasing.
+
+    V6 UX review: "El salón está cerrado el 2026-06-15 (lunes)" and
+    "viola la política de antelación mínima" read like legal/log output.
+    """
+
+    @pytest.mark.asyncio
+    async def test_closed_day_message_uses_natural_date(self):
+        from unittest.mock import AsyncMock, patch
+
+        from agent.tools import _booking_validators as bv
+
+        with patch.object(bv, "is_date_closed", new=AsyncMock(return_value=True)):
+            result = await bv.validate_booking_date(
+                date_iso="2026-06-15",  # a Monday
+                date_text=None,
+                ref_date=date(2026, 6, 10),
+            )
+
+        assert result.error_code == bv.ERROR_CLOSED_DAY
+        assert "lunes 15 de junio" in result.error_message, (
+            f"Closed-day message must use a natural Spanish date, got: {result.error_message}"
+        )
+        assert "2026-06-15" not in result.error_message, (
+            "Closed-day message must not expose ISO dates to the customer"
+        )
+        # payload keeps the machine-readable ISO date
+        assert result.payload["closed_date"] == "2026-06-15"
+
+    @pytest.mark.asyncio
+    async def test_advance_policy_message_is_warm_and_natural(self):
+        from unittest.mock import AsyncMock, patch
+
+        from agent.tools import _booking_validators as bv
+
+        ref = date(2026, 6, 10)
+        with patch.object(bv, "is_date_closed", new=AsyncMock(return_value=False)):
+            result = await bv.validate_booking_date(
+                date_iso="2026-06-11",
+                date_text=None,
+                ref_date=ref,
+                min_days=3,
+            )
+
+        assert result.error_code == bv.ERROR_ADVANCE_POLICY_VIOLATED
+        msg = result.error_message
+        assert "viola" not in msg, f"Legal tone must be gone, got: {msg}"
+        assert "antelación mínima de 3 días" in msg, (
+            f"Message must explain the minimum lead time warmly, got: {msg}"
+        )
+        # min_date 2026-06-13 is a Saturday
+        assert "sábado 13 de junio" in msg, (
+            f"First valid date must be a natural Spanish date, got: {msg}"
+        )
+        assert "2026-06-1" not in msg, "No ISO dates in the customer-facing message"
+        # payload keeps machine-readable fields
+        assert result.payload["min_date"] == "2026-06-13"

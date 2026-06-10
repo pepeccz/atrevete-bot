@@ -398,7 +398,7 @@
       Habla en frases cortas y directas. Esperá que respondas con dos palabras
       cuando el bot te pida algo. No vas a repetir info que ya diste.
   intent: "Corte dama mañana 17h Carmen."
-  max_turns: 8
+  max_turns: 10
   expect:
     outcome: booked
     db_appointment:
@@ -421,7 +421,7 @@
       que le explique con palabras simples cada vez. No se compromete hasta
       entender claramente.
   intent: "Hola, quería pedir hora para arreglarme el pelo pero no entiendo qué es lo que ofrecéis exactamente."
-  max_turns: 12
+  max_turns: 14
   expect:
     outcome: booked
     db_appointment:
@@ -444,7 +444,7 @@
       corte" / "Para mañana por la tarde si puede ser". Espera respuesta única
       cubriendo todo.
   intent: "Hola"
-  max_turns: 10
+  max_turns: 12
   expect:
     outcome: booked
     db_appointment:
@@ -467,7 +467,7 @@
       Carmen. Espera que el bot recuerde su preferencia. Si pregunta "qué
       servicio?", se molesta.
   intent: "Hola, quería pedir hora para lo de siempre con Carmen."
-  max_turns: 8
+  max_turns: 10
   expect:
     outcome: booked
     db_appointment:

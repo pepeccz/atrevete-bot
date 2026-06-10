@@ -57,7 +57,7 @@ async def test_injects_phone_when_db_miss():
         patch_lookup(return_value=None) as mock_lookup,
     ):
         await middleware.awrap_model_call(request, handler)
-        mock_lookup.assert_called_once_with(phone)
+        mock_lookup.assert_called_once_with(phone, conversation_id=None)
 
     assert len(received_requests) == 1, "handler must be called exactly once"
     passed_req = received_requests[0]

@@ -42,6 +42,14 @@ def truncate_message(message: str, max_length: int = 200) -> str:
     return f"{message[:max_length]}... (truncated, total: {len(message)} chars)"
 
 
+# Standard LogRecord attributes — everything NOT in this set is an `extra`
+# supplied by the caller and must be serialized (Change N / V6 W2: dropping
+# extras left `tool.response.rejected` lines without reason/conversation_id).
+_STANDARD_LOG_ATTRS: frozenset[str] = frozenset(
+    vars(logging.LogRecord("", 0, "", 0, "", (), None)).keys()
+) | {"message", "asctime", "taskName"}
+
+
 class JSONFormatter(logging.Formatter):
     """
     Custom JSON formatter for structured logging.
@@ -51,9 +59,8 @@ class JSONFormatter(logging.Formatter):
     - level (INFO, ERROR, etc.)
     - logger (module name)
     - message
-    - conversation_id (if available in extra)
-    - appointment_id (if available in extra)
-    - request_path (if available in extra)
+    - every `extra` field passed by the caller (conversation_id, tool_name,
+      next_step, reason, …). Non-JSON-serializable values are stringified.
     """
 
     def format(self, record: logging.LogRecord) -> str:
@@ -73,21 +80,15 @@ class JSONFormatter(logging.Formatter):
             "message": record.getMessage(),
         }
 
-        # Add extra fields if present
-        if hasattr(record, "conversation_id"):
-            log_data["conversation_id"] = record.conversation_id
-
-        if hasattr(record, "customer_phone"):
-            log_data["customer_phone"] = record.customer_phone
-
-        if hasattr(record, "node_name"):
-            log_data["node_name"] = record.node_name
-
-        if hasattr(record, "appointment_id"):
-            log_data["appointment_id"] = record.appointment_id
-
-        if hasattr(record, "request_path"):
-            log_data["request_path"] = record.request_path
+        # Add ALL extra fields (anything beyond the standard LogRecord attrs)
+        for key, value in record.__dict__.items():
+            if key in _STANDARD_LOG_ATTRS or key in log_data:
+                continue
+            try:
+                json.dumps(value)
+                log_data[key] = value
+            except (TypeError, ValueError):
+                log_data[key] = str(value)
 
         # Add exception info if present
         if record.exc_info:
@@ -141,6 +142,4 @@ def configure_logging() -> None:
         logging.getLogger(logger_name).setLevel(logging.WARNING)
 
     # Log configuration complete
-    root_logger.info(
-        f"Logging configured: level={settings.LOG_LEVEL}, format=JSON"
-    )
+    root_logger.info(f"Logging configured: level={settings.LOG_LEVEL}, format=JSON")
