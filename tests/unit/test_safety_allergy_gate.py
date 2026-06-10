@@ -105,3 +105,56 @@ def test_booking_flow_step50_present():
     assert step50_pos < step55_pos, (
         "Step 5.0 must appear BEFORE Step 5.5 in booking_flow.md"
     )
+
+# ---------------------------------------------------------------------------
+# Change N (N4) — R-37 negative scope: illness as cancellation reason
+# ---------------------------------------------------------------------------
+
+
+def test_r37_negative_scope_cancellation_present():
+    """R-37 must scope itself OUT of cancellation/reschedule context.
+
+    V6 audit C4: 'tengo fiebre' as a cancel reason triggered an immediate
+    safety escalation and manage_appointments was never called.
+    """
+    content = CRITICAL_RULES.read_text(encoding="utf-8").lower()
+    # The rule must mention illness/fever as a cancellation reason being out of scope
+    assert "fiebre" in content, (
+        "R-37 must explicitly mention 'fiebre' (illness) as NOT a safety trigger "
+        "when given as a cancellation/reschedule reason"
+    )
+    assert "cancelar" in content or "cancelación" in content, (
+        "R-37 negative scope must reference the cancellation context"
+    )
+    assert "manage_appointments" in content, (
+        "R-37 negative scope must route illness-cancellations to manage_appointments"
+    )
+
+
+def test_r37_scoped_to_booking_of_chemical_services():
+    """R-37 must state it applies to BOOKING of chemical services only."""
+    content = CRITICAL_RULES.read_text(encoding="utf-8")
+    # Find the R-37 block and scope the check to it
+    start = content.find("[R-37]")
+    assert start >= 0
+    end = content.find("[R-38]", start)
+    block = content[start:end] if end > 0 else content[start:]
+    lowered = block.lower()
+    assert "reserva" in lowered or "booking" in lowered, (
+        "R-37 must scope the gate to the booking flow"
+    )
+    assert "no es un trigger" in lowered or "no activa" in lowered or "fuera de" in lowered, (
+        "R-37 must contain an explicit negative-scope clause"
+    )
+
+
+def test_r37_never_tells_customer_to_phone_salon():
+    """UX-05: in-channel escalation — never refer the customer to call the salon."""
+    content = CRITICAL_RULES.read_text(encoding="utf-8")
+    start = content.find("[R-37]")
+    end = content.find("[R-38]", start)
+    block = (content[start:end] if end > 0 else content[start:]).lower()
+    assert "nunca" in block and ("llame" in block or "llamar" in block), (
+        "R-37 must explicitly forbid telling the customer to phone the salon "
+        "(they are already in the salon's official channel)"
+    )

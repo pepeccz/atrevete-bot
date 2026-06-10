@@ -82,8 +82,14 @@ async def _invalidate_cached_customer(phone: str) -> None:
         logger.warning("customer cache DEL failed phone=…: %s", exc)
 
 
-async def _lookup_customer(phone: str) -> dict | None:
-    """Query Customer by phone. Returns dict with id, name, is_returning, notes or None."""
+async def _lookup_customer(phone: str, conversation_id: str | None = None) -> dict | None:
+    """Query Customer by phone. Returns dict with id, name, is_returning, notes or None.
+
+    Fail-open on exceptions (a DB outage must not kill the turn), but LOUD:
+    failures log at ERROR with conversation_id and phone. A silent fail-open
+    WARNING hid the V6 C1 P0 (`Customer.name` AttributeError) for multiple
+    deploys — every returning customer was treated as new.
+    """
     try:
         from sqlalchemy import select
 
@@ -102,9 +108,13 @@ async def _lookup_customer(phone: str) -> dict | None:
             )
             has_appointments = appt_result.scalars().first() is not None
 
+            # Customer model has first_name/last_name — there is NO `name` column.
+            # Compose the full name here (last_name is nullable).
+            full_name = f"{customer.first_name} {customer.last_name or ''}".strip()
+
             return {
                 "id": customer.id,
-                "name": customer.name,
+                "name": full_name,
                 "phone": customer.phone,
                 "is_returning": has_appointments,
                 "notes": customer.notes,  # D5: staff notes (allergies/restrictions)
@@ -112,7 +122,14 @@ async def _lookup_customer(phone: str) -> dict | None:
                 "policy_version": customer.policy_version,  # version accepted
             }
     except Exception as exc:
-        logger.warning("Customer lookup failed for phone %s: %s", phone, exc)
+        logger.error(
+            "customer_resolve.lookup_failed conversation_id=%s phone=%s: %s",
+            conversation_id,
+            phone,
+            exc,
+            exc_info=True,
+            extra={"conversation_id": conversation_id, "customer_phone": phone},
+        )
         return None
 
 
@@ -199,7 +216,7 @@ class CustomerResolveMiddleware(AgentMiddleware):
         # Cache-aside: attempt Redis GET before DB
         customer = await _get_cached_customer(phone)
         if customer is None:
-            customer = await _lookup_customer(phone)
+            customer = await _lookup_customer(phone, conversation_id=state.get("conversation_id"))
             if customer is not None:
                 await _set_cached_customer(phone, customer)
 

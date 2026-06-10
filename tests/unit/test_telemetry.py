@@ -127,8 +127,8 @@ class TestExtractToolCalls:
         assert result is not None
         assert result[0]["result_summary"] == "ok"
 
-    def test_tool_calls_contains_name_args_result_summary_keys(self):
-        """Each entry has exactly {name, args, result_summary}."""
+    def test_tool_calls_contains_name_args_result_summary_status_keys(self):
+        """Each entry has exactly {name, args, result_summary, status}."""
         from agent.main import _extract_tool_calls
 
         ai_msg = AIMessage(
@@ -140,8 +140,52 @@ class TestExtractToolCalls:
 
         assert result is not None
         entry = result[0]
-        assert set(entry.keys()) == {"name", "args", "result_summary"}
+        assert set(entry.keys()) == {"name", "args", "result_summary", "status"}
         assert entry["args"] == {"reason": "complex"}
+        assert entry["status"] == "success"
+
+    # ── Change N (N7 / V6 W8) — crashed tool calls must still be recorded ──
+
+    def test_tool_call_with_error_tool_message_records_error_status(self):
+        """A ToolMessage with status='error' (tool raised) must be recorded as such."""
+        from agent.main import _extract_tool_calls
+
+        ai_msg = AIMessage(
+            content="",
+            tool_calls=[{"id": "call_err", "name": "escalate", "args": {"reason": "x"}}],
+        )
+        tool_msg = ToolMessage(
+            content="ValueError: invalid literal for int()",
+            tool_call_id="call_err",
+            status="error",
+        )
+        result = _extract_tool_calls([ai_msg, tool_msg])
+
+        assert result is not None
+        entry = result[0]
+        assert entry["name"] == "escalate"
+        assert entry["status"] == "error"
+        assert "invalid literal" in entry["result_summary"]
+
+    def test_tool_call_without_tool_message_still_recorded(self):
+        """A tool call whose ToolMessage never arrived (crash before write)
+        must still appear in the evidence with status='missing'."""
+        from agent.main import _extract_tool_calls
+
+        ai_msg = AIMessage(
+            content="",
+            tool_calls=[{"id": "call_lost", "name": "escalate", "args": {"reason": "x"}}],
+        )
+        result = _extract_tool_calls([ai_msg])  # no ToolMessage at all
+
+        assert result is not None, (
+            "A tool call with no ToolMessage must still be recorded (V6 W8: "
+            "crashed escalate was invisible to all 3 evidence tiers)"
+        )
+        entry = result[0]
+        assert entry["name"] == "escalate"
+        assert entry["status"] == "missing"
+        assert entry["result_summary"], "missing-result entries need a diagnostic summary"
 
 
 class TestRecordTurn:

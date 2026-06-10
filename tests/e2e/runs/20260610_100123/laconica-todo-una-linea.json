@@ -1,0 +1,174 @@
+{
+  "scenario_id": "laconica-todo-una-linea",
+  "conversation_id": "05626ce2-d166-4a50-9b98-a9243a8cee5e",
+  "outcome": "stuck",
+  "turns_taken": 8,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Corte dama mañana 17h Carmen.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Es para señora, caballero, niña, niño o bebé?",
+      "latency_ms": 12590,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [
+        {
+          "type": "redundant_question",
+          "description": "Persona explicitly said 'Corte dama' (dama = señora), bot still asked audience clarification. Should parse 'dama' as adult_female directly.",
+          "turn": 1
+        }
+      ],
+      "milestone": "disclosure_shown"
+    },
+    {
+      "turn": 2,
+      "user_message": "Señora.",
+      "agent_response": "Perdona, no puedo reservar mañana porque necesitamos al menos 3 días de antelación. La primera fecha válida es el sábado 13 de junio.\n\nTe dejo los huecos disponibles para ese servicio:\n1. sábado 13 de junio a las 09:00\n2. sábado 13 de junio a las 09:40\n3. sábado 13 de junio a las 10:20\n4. sábado 13 de junio a las 11:00\n\n¿Cuál te viene mejor?",
+      "latency_ms": 15783,
+      "timed_out": false,
+      "tool_calls_observed": ["check_availability"],
+      "bugs": [
+        {
+          "type": "ignored_preference",
+          "description": "Persona originally requested 17h but bot shows only morning slots (09:00-11:00) without explaining why 17h is not available or offering afternoon alternatives.",
+          "turn": 2
+        }
+      ],
+      "milestone": "availability_offered"
+    },
+    {
+      "turn": 3,
+      "user_message": "¿Con Carmen?",
+      "agent_response": "¿Te refieres a que quieres que la cita sea con una estilista llamada Carmen?",
+      "latency_ms": 9054,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "stylist_clarification_requested"
+    },
+    {
+      "turn": 4,
+      "user_message": "Sí.",
+      "agent_response": "No tengo una estilista Carmen. Para corte de mujer, las opciones son:\n\n0) La primera con disponibilidad (mín. 3 días de antelación)\n1) Harolyn\n2) Marta\n3) Pilar\n4) Victor\n\n¿Cuál prefieres?",
+      "latency_ms": 12879,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "stylist_list_offered"
+    },
+    {
+      "turn": 5,
+      "user_message": "La 1 del sábado.",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "latency_ms": 14256,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [
+        {
+          "type": "redundant_question",
+          "description": "Persona said 'La 1 del sábado' but it is ambiguous — could mean slot #1 (09:00) or stylist #1 (Harolyn). Bot interpreted as time slot selection and presented policy gate. Parsing of '1' was ambiguous in context (stylist was still being selected).",
+          "turn": 5
+        }
+      ],
+      "milestone": "policy_gate_presented"
+    },
+    {
+      "turn": 6,
+      "user_message": "Sí.",
+      "agent_response": "Perfecto, ¿me dices tu nombre y primer apellido?",
+      "latency_ms": 18293,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "policy_accepted"
+    },
+    {
+      "turn": 7,
+      "user_message": "Alejandra Pinto.",
+      "agent_response": "¿Quieres dejar alguna nota para Harolyn?",
+      "latency_ms": 18950,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "name_captured"
+    },
+    {
+      "turn": 8,
+      "user_message": "No.",
+      "agent_response": "Se me ha quedado atascada la reserva al final y no quiero inventarme nada. ¿Quieres que lo intente de nuevo con este mismo hueco?",
+      "latency_ms": 32467,
+      "timed_out": false,
+      "tool_calls_observed": ["book"],
+      "bugs": [
+        {
+          "type": "booking_tool_failure",
+          "description": "book tool call failed internally — bot reported 'se me ha quedado atascada la reserva'. No appointment created in DB. Max turns reached without recovery.",
+          "turn": 8
+        }
+      ],
+      "milestone": "booking_failed"
+    }
+  ],
+  "bugs": [
+    {
+      "type": "redundant_question",
+      "turn": 1,
+      "description": "Bot asked audience clarification despite persona explicitly using 'dama' (female) in initial message."
+    },
+    {
+      "type": "ignored_preference",
+      "turn": 2,
+      "description": "Persona requested 17h slot; bot offered only morning slots (09:00-11:00) without explaining 17h unavailability or offering afternoon alternatives."
+    },
+    {
+      "type": "booking_tool_failure",
+      "turn": 8,
+      "description": "book tool call failed — bot acknowledged the failure with 'se me ha quedado atascada la reserva'. No appointment row created in DB. No customer_consents row created despite policy acceptance."
+    }
+  ],
+  "milestones_reached": [
+    "disclosure_shown",
+    "availability_offered",
+    "stylist_list_offered",
+    "policy_gate_presented",
+    "policy_accepted",
+    "name_captured"
+  ],
+  "db_delta": {
+    "customer_count_delta": 0,
+    "appt_count_delta": 0
+  },
+  "snapshot_before": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "snapshot_after": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "final_state": {
+    "has_checkpoint": false
+  },
+  "langfuse_trace_path": null,
+  "policy_gate_check": {
+    "policy_presented": true,
+    "policy_presentation_turn": 5,
+    "policy_accepted": true,
+    "policy_acceptance_turn": 6,
+    "policy_reask_detected": false,
+    "policy_reask_turns": [],
+    "db_customer_consents_row": false,
+    "db_policy_accepted_at_set": false,
+    "note": "Policy accepted in conversation but booking tool failure prevented DB customer row creation, so policy consent was never persisted."
+  },
+  "expect": {
+    "outcome": "booked",
+    "db_appointment": {
+      "status": "confirmed"
+    },
+    "tool_calls_required": ["check_availability", "book"],
+    "tool_calls_forbidden": [],
+    "tags": ["behavioral", "terse", "one-shot-parsing"]
+  },
+  "passed": false
+}

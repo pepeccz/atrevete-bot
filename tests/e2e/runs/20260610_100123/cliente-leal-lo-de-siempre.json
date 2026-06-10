@@ -1,0 +1,177 @@
+{
+  "scenario_id": "cliente-leal-lo-de-siempre",
+  "conversation_id": "f8f55fa6-98c4-4912-988d-7c2a9999cd6b",
+  "outcome": "stuck",
+  "turns_taken": 8,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, quería pedir hora para lo de siempre con Carmen.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Me dices qué servicio quieres reservar?",
+      "latency_ms": 13196,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [
+        {
+          "type": "redundant_question",
+          "description": "Bot asked for service despite customer having 'typical_services: [Corte de Mujer]' in seeded memory (customer_memories). The agent_notes explicitly state 'Siempre pide Corte de Mujer'. R-41 (grounded preferences) requires resolving 'lo de siempre' from DB history rather than asking."
+        },
+        {
+          "type": "ignored_preference",
+          "description": "Bot did not use seeded memory (preferred_stylist_name='Marta', typical_services=['Corte de Mujer'], visit_count=8) to proactively resolve 'lo de siempre'. The customer's clear reference to their usual service was ignored."
+        }
+      ],
+      "milestone": null
+    },
+    {
+      "turn": 2,
+      "user_message": "Lo de siempre... el corte de mujer de siempre. Siempre pido lo mismo.",
+      "agent_response": "¿Para quién es el corte: señora, caballero, niña, niño o bebé?",
+      "latency_ms": 13650,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [
+        {
+          "type": "redundant_question",
+          "description": "Bot asked audience disambiguation despite: (1) customer is a returning female customer (Raquel Cordero), (2) seeded typical_services=['Corte de Mujer'] already specifies a female service, (3) customer explicitly stated 'corte de mujer'. The bot is ignoring existing customer context."
+        }
+      ],
+      "milestone": null
+    },
+    {
+      "turn": 3,
+      "user_message": "Para mí, señora. Corte de mujer, como siempre.",
+      "agent_response": "Entonces te anoto corte de mujer, ¿quieres añadir algún otro servicio o solo eso?",
+      "latency_ms": 12655,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "service_confirmed"
+    },
+    {
+      "turn": 4,
+      "user_message": "Solo eso. ¿Hay disponibilidad con Carmen el sábado por la mañana?",
+      "agent_response": "No veo a Carmen en el catálogo. Tengo estas estilistas de peluquería: Harolyn, Marta, Pilar y Victor, o la primera con disponibilidad. ¿Con cuál te quedas?",
+      "latency_ms": 14968,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [
+        {
+          "type": "ignored_preference",
+          "description": "Bot correctly flagged Carmen as not in catalog but did NOT proactively surface 'Marta' as the customer's preferred stylist from memory (preferred_stylist_name='Marta'). It listed all stylists generically instead of guiding the customer toward their known preference: 'No tenemos Carmen, pero tu estilista habitual es Marta, ¿te va bien?'"
+        }
+      ],
+      "milestone": null
+    },
+    {
+      "turn": 5,
+      "user_message": "Con Marta entonces, el sábado por la mañana.",
+      "agent_response": "Con Marta sí hay hueco el sábado por la mañana 😊\n\nTe puedo dejar, por ejemplo:\n1. Sábado 13 de junio a las 9:00\n2. Sábado 13 de junio a las 9:40\n3. Sábado 13 de junio a las 10:20\n\n¿Con cuál te quedas?",
+      "latency_ms": 12445,
+      "timed_out": false,
+      "tool_calls_observed": ["check_availability"],
+      "bugs": [],
+      "milestone": "availability_offered"
+    },
+    {
+      "turn": 6,
+      "user_message": "La primera, el sábado a las 9.",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "latency_ms": 73891,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [
+        {
+          "type": "context_loss",
+          "description": "Bot triggered policy gate for a returning customer who had already accepted policy v1.0 (policy_accepted_at seeded ~300 days ago, policy_version='1.0' matching POLICY_VERSION default). The <customer> block from CustomerResolveMiddleware should contain 'Política privacidad: aceptada v1.0 el ...' but the bot is re-requesting acceptance. This is a regression of R-41 grounded-preferences / policy gate not being respected for returning customers."
+        }
+      ],
+      "milestone": null
+    },
+    {
+      "turn": 7,
+      "user_message": "Sí, la acepto.",
+      "agent_response": "Perfecto. ¿Me dices tu nombre y primer apellido?",
+      "latency_ms": 17698,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [
+        {
+          "type": "redundant_question",
+          "description": "Bot asked for name/surname despite the customer existing in DB with first_name='Raquel', last_name='Cordero'. The <customer> block includes 'Nombre: Raquel Cordero' — the bot should use this known name rather than re-asking a returning customer for their identity."
+        }
+      ],
+      "milestone": null
+    },
+    {
+      "turn": 8,
+      "user_message": "Raquel Cordero.",
+      "agent_response": "¿Quieres dejar alguna nota para Marta?",
+      "latency_ms": 19373,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": null
+    }
+  ],
+  "bugs": [
+    {
+      "turn": 1,
+      "type": "redundant_question",
+      "description": "Bot asked 'qué servicio quieres reservar?' despite seeded memory having typical_services=['Corte de Mujer'] and agent_notes stating the usual service. R-41 violation: 'lo de siempre' must resolve from DB history, not be re-asked."
+    },
+    {
+      "turn": 1,
+      "type": "ignored_preference",
+      "description": "Bot did not leverage any of the seeded customer_memories (preferred_stylist_name, typical_services, visit_count=8) to proactively resolve 'lo de siempre'. This is the core R-41 failure."
+    },
+    {
+      "turn": 2,
+      "type": "redundant_question",
+      "description": "Bot asked audience disambiguation (señora/caballero/niña/niño/bebé) after customer said 'corte de mujer de siempre'. Context from memory and user statement was sufficient."
+    },
+    {
+      "turn": 4,
+      "type": "ignored_preference",
+      "description": "When Carmen was not found, bot listed all stylists generically instead of surfacing Marta as the known preferred_stylist_name from memory."
+    },
+    {
+      "turn": 6,
+      "type": "context_loss",
+      "description": "Bot triggered policy acceptance gate for a returning customer who already accepted policy v1.0 (policy_accepted_at set, policy_version='1.0' = current POLICY_VERSION). Policy re-gate is incorrect — CustomerResolveMiddleware should inject the accepted status and the booking flow should skip the gate."
+    },
+    {
+      "turn": 7,
+      "type": "redundant_question",
+      "description": "Bot asked for customer name/surname despite customer existing in DB as 'Raquel Cordero'. The <customer> block contains this information."
+    }
+  ],
+  "milestones_reached": ["service_confirmed", "availability_offered"],
+  "db_delta": {
+    "customer_count_delta": 0,
+    "appt_count_delta": 0
+  },
+  "snapshot_before": {
+    "customer_count": 1,
+    "appt_count": 3
+  },
+  "snapshot_after": {
+    "customer_count": 1,
+    "appt_count": 3
+  },
+  "final_state": {
+    "has_checkpoint": false
+  },
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "booked",
+    "db_appointment": {
+      "status": "confirmed"
+    },
+    "tool_calls_required": ["check_availability", "book"],
+    "tool_calls_forbidden": [],
+    "tags": ["behavioral", "returning", "memory-test"]
+  },
+  "passed": false,
+  "seed_notes": "Customer seeded with: 3 past completed appointments (Corte de Mujer with Marta), customer_memories.typical_services=['Corte de Mujer'], preferred_stylist_name='Marta', visit_count=8. No stylist named 'Carmen' exists in DB (persona references Carmen — bot correctly reported Carmen not in catalog at turn 4)."
+}

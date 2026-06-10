@@ -44,10 +44,19 @@ BUDGETS: dict[str, int] = {
     # critical_rules.md: +200 for R-28 (dia_semana from <today>) + R-29 (no-hallucinated-slots)
     # booking_flow.md: +350 for <availability> block primary source section
     # tools_contract.md: +400 for slot_time param description + pre-book gate mandate
-    "critical_rules.md": 2400,
+    # Budgets updated for SDD change v6-fixes-bundle (Change N):
+    # critical_rules.md: was already over budget at baseline (3359 > 2400 — budget
+    #   was stale, not bumped by previous changes). Re-baselined to actual (3359)
+    #   + ~150 for the R-37 negative scope (illness as cancellation reason, N4).
+    # tools_contract.md: also stale at baseline (1772 > 1750). Re-baselined to
+    #   actual + ~180 for the escalate failure contract (N2) and the
+    #   escalation_required routing row (N3).
+    # booking_flow.md: +250 for the Paso 2 qualifier→audience mapping (N5),
+    #   fits within the existing 3050 budget.
+    "critical_rules.md": 3600,
     "booking_flow.md": 3050,
     "examples.md": 2600,
-    "tools_contract.md": 1750,
+    "tools_contract.md": 2050,
 }
 
 

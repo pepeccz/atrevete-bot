@@ -119,3 +119,43 @@ class TestUpdateBookingDocstring:
             "update_booking.py docstring must reference "
             "'glossary.md § Mapeo longitud → variante' for length-to-variant translation"
         )
+
+
+class TestAudienceQualifierMapping:
+    """Change N (N5) — Paso 2 must map client audience qualifiers directly.
+
+    V6 audit W3: "Corte dama" / "corte de mujer" / "para mi marido" already
+    encode audience, yet the bot re-asked the 5-option enumeration.
+    """
+
+    def test_paso2_contains_qualifier_mapping(self):
+        content = _read("booking_flow.md")
+        lowered = content.lower()
+        for qualifier in ("dama", "mujer", "señora", "caballero", "marido"):
+            assert qualifier in lowered, (
+                f"booking_flow.md Paso 2 must map the qualifier '{qualifier}'"
+            )
+        for audience in ("adult_female", "adult_male"):
+            assert audience in content, (
+                f"booking_flow.md Paso 2 mapping must reference audience '{audience}'"
+            )
+
+    def test_paso2_maps_children_and_baby(self):
+        content = _read("booking_flow.md")
+        lowered = content.lower()
+        assert "niña" in lowered and "niño" in lowered and "bebé" in lowered
+        assert "child_female" in content and "child_male" in content and "baby" in content
+
+    def test_paso2_forbids_reasking_encoded_audience(self):
+        content = _read("booking_flow.md")
+        lowered = content.lower()
+        assert "nunca" in lowered and ("vuelvas a preguntar" in lowered or "re-pregunt" in lowered), (
+            "Paso 2 must forbid re-asking audience when the client's phrase already encodes it"
+        )
+
+    def test_paso2_requires_open_question_not_enumeration(self):
+        content = _read("booking_flow.md")
+        assert "¿Es para ti o para otra persona?" in content, (
+            "When asking IS needed, Paso 2 must use the open question "
+            "'¿Es para ti o para otra persona?' instead of the 5-option enumeration"
+        )

@@ -1,0 +1,176 @@
+{
+  "scenario_id": "impaciente-multiples-mensajes",
+  "conversation_id": "d101369d-9c01-480c-8112-3b2d5edb611e",
+  "outcome": "stuck",
+  "turns_taken": 10,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿En qué puedo ayudarte?",
+      "latency_ms": 17252,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "greeting_received"
+    },
+    {
+      "turn": 2,
+      "user_message": "Quiero un corte",
+      "agent_response": "¿Qué tipo de corte necesitas?",
+      "latency_ms": 11932,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "service_intent_registered"
+    },
+    {
+      "turn": 3,
+      "user_message": "Para mañana por la tarde si puede ser",
+      "agent_response": "¿Es para señora, caballero, niña, niño o bebé?",
+      "latency_ms": 11977,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "audience_question_asked"
+    },
+    {
+      "turn": 4,
+      "user_message": "Para señora",
+      "agent_response": "¿Quieres añadir algún otro servicio o solo el corte de mujer?",
+      "latency_ms": 11131,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "audience_resolved"
+    },
+    {
+      "turn": 5,
+      "user_message": "No, solo el corte",
+      "agent_response": "Tengo estas opciones, en este orden:\n\n0) La primera con disponibilidad (mín. 3 días de antelación)\n1) Harolyn\n2) Marta\n3) Pilar\n4) Victor\n\n¿Cuál prefieres?",
+      "latency_ms": 11413,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "stylist_question_asked"
+    },
+    {
+      "turn": 6,
+      "user_message": "La primera disponible",
+      "agent_response": "No he podido entender bien la fecha. ¿Me dices el día y el mes, por favor?",
+      "latency_ms": 19998,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [
+        {
+          "type": "redundant_question",
+          "detail": "Bot asked for day and month even though user provided 'mañana por la tarde' in turn 3. Date context was lost.",
+          "turns_involved": [3, 6]
+        }
+      ],
+      "milestone": null
+    },
+    {
+      "turn": 7,
+      "user_message": "Mañana, 11 de junio por la tarde",
+      "agent_response": "¿Me dices el día y el mes exactos, por favor?",
+      "latency_ms": 19183,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [
+        {
+          "type": "redundant_question",
+          "detail": "Bot again asked for day and month after user provided '11 de junio por la tarde' — bot failed to parse a clearly formatted date.",
+          "turns_involved": [7]
+        }
+      ],
+      "milestone": null
+    },
+    {
+      "turn": 8,
+      "user_message": "11 junio",
+      "agent_response": "Perdona, para este servicio la primera fecha válida es el sábado 13 de junio. Te dejo las próximas opciones disponibles:\n\n1. Sábado 13 de junio a las 9:00\n2. Sábado 13 de junio a las 9:40\n3. Sábado 13 de junio a las 10:20\n\n¿Cuál te viene mejor?",
+      "latency_ms": 17610,
+      "timed_out": false,
+      "tool_calls_observed": ["check_availability", "get_next_available_options"],
+      "bugs": [],
+      "milestone": "availability_checked"
+    },
+    {
+      "turn": 9,
+      "user_message": "El primero, el sábado a las 9",
+      "agent_response": "Perfecto, te lo dejo el sábado 13 de junio a las 9:00 con Marta para corte de mujer. ¿Te lo confirmo?",
+      "latency_ms": 14769,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "slot_selected"
+    },
+    {
+      "turn": 10,
+      "user_message": "Sí, confirma",
+      "agent_response": "Me falta tu nombre y apellido para registrar la cita. ¿Me lo pasas, por favor?",
+      "latency_ms": 16598,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [
+        {
+          "type": "policy_gate_skipped",
+          "detail": "Bot never presented the privacy policy acceptance gate during 10 turns. Policy acceptance is required before booking but was never triggered. The bot proceeded directly to name collection without policy gate.",
+          "turns_involved": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+        }
+      ],
+      "milestone": "max_turns_reached"
+    }
+  ],
+  "bugs": [
+    {
+      "type": "redundant_question",
+      "detail": "Bot asked for day and month (turn 6) despite user providing 'mañana por la tarde' in turn 3. Date context was not retained across stylist selection step.",
+      "turns_involved": [3, 6]
+    },
+    {
+      "type": "redundant_question",
+      "detail": "Bot repeated date request (turn 7) after user provided '11 de junio por la tarde' in an explicit day+month format. Bot failed to parse '11 de junio'.",
+      "turns_involved": [7]
+    },
+    {
+      "type": "policy_gate_skipped",
+      "detail": "Privacy policy acceptance gate never appeared in 10 turns. The bot went directly into the booking disambiguation flow (service type, audience, stylist, date, slot selection, name) without ever presenting the policy gate to the new customer (phone +34999000032, no prior record in DB).",
+      "turns_involved": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+    }
+  ],
+  "milestones_reached": [
+    "greeting_received",
+    "service_intent_registered",
+    "audience_resolved",
+    "availability_checked",
+    "slot_selected"
+  ],
+  "db_delta": {
+    "customer_count_delta": 0,
+    "appt_count_delta": 0
+  },
+  "snapshot_before": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "snapshot_after": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "final_state": {
+    "has_checkpoint": false
+  },
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "booked",
+    "db_appointment": {
+      "status": "confirmed"
+    },
+    "tool_calls_required": ["check_availability", "book"],
+    "tool_calls_forbidden": [],
+    "tags": ["behavioral", "batching", "impatient"]
+  },
+  "passed": false
+}

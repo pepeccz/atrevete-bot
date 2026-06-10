@@ -247,7 +247,7 @@ export function ConversationList({
 
         {/* Conversation avatars (compact) */}
         <div className="flex-1 overflow-y-auto w-full flex flex-col items-center gap-1 pt-2 mt-1 border-t border-line">
-          {filtered.map((conv) => {
+          {displayList.map((conv) => {
             const inbox = conv as unknown as ConversationHistoryInbox;
             const isPaused =
               inbox.paused_at != null || inbox.atencion_automatica === false;

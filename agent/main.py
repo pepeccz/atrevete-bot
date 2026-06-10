@@ -85,20 +85,26 @@ def _extract_tool_calls(messages: list[Any]) -> list[dict] | None:
     For each tool_call in the slice's AIMessages, locates the matching ToolMessage
     by tool_call_id and stores a summary truncated to _TOOL_RESULT_MAX_CHARS chars.
 
+    Tool calls that RAISED are still recorded (Change N / V6 W8):
+    - ToolMessage with status="error" → entry status "error", error text in summary.
+    - No ToolMessage at all (run aborted before the write) → entry status
+      "missing" with a diagnostic summary, so the evidence chain never has gaps.
+
     Returns None (not []) when no tool invocations are present.
 
     Args:
         messages: Slice of LangChain messages for the current turn.
 
     Returns:
-        List of {name, args, result_summary} dicts, or None.
+        List of {name, args, result_summary, status} dicts, or None.
     """
     # Index ToolMessages by tool_call_id for O(1) lookup
-    tool_results: dict[str, str] = {}
+    tool_results: dict[str, tuple[str, str]] = {}
     for msg in messages:
         if isinstance(msg, ToolMessage):
             content = msg.content if isinstance(msg.content, str) else str(msg.content)
-            tool_results[msg.tool_call_id] = content
+            status = getattr(msg, "status", None) or "success"
+            tool_results[msg.tool_call_id] = (content, status)
 
     entries: list[dict] = []
     for msg in messages:
@@ -106,12 +112,17 @@ def _extract_tool_calls(messages: list[Any]) -> list[dict] | None:
             continue
         for tc in getattr(msg, "tool_calls", []) or []:
             call_id = tc.get("id") or tc.get("tool_call_id", "")
-            raw_result = tool_results.get(call_id, "")
+            if call_id in tool_results:
+                raw_result, status = tool_results[call_id]
+            else:
+                raw_result = "<no ToolMessage recorded — tool raised or run aborted>"
+                status = "missing"
             entries.append(
                 {
                     "name": tc.get("name", ""),
                     "args": tc.get("args", {}),
                     "result_summary": raw_result[:_TOOL_RESULT_MAX_CHARS],
+                    "status": status,
                 }
             )
 

@@ -289,8 +289,9 @@ rg "tenés|hacé|podés|sabés|querés|estás" turn.agent_response
 Root-cause for voseo: `agent/prompts/shared/critical_rules.md` R-papercut-fixes
 rule. Check if rule is present; if absent, that's the root cause.
 
-No hallucinations check: stylists are Lucía, Carmen, Ana, Sofía, Elena. Flag
-any bot response mentioning a different stylist name as a hallucination.
+No hallucinations check: stylists are Harolyn, Marta, Pilar, Rosa, Victor
+(live `stylists` table — verify with a DB query if in doubt). Flag any bot
+response mentioning a different stylist name as a hallucination.
 
 ---
 
@@ -423,5 +424,6 @@ For L4 DB failures:
 6. **Write audit.md even if all scenarios fail** — partial evidence is better than none.
 7. **Do NOT reference deleted artifacts**: `agent/modes/`, `BaseModeNode`,
    `current_mode`, `mode_context`, `mode_history`, `booking_step`.
-8. **Hallucination check**: valid stylist names are Lucía, Carmen, Ana, Sofía, Elena.
+8. **Hallucination check**: valid stylist names are Harolyn, Marta, Pilar, Rosa,
+   Victor (current `stylists` table — re-verify with a DB query when possible).
    Any other name in bot response is a hallucination.
