@@ -277,9 +277,12 @@ class CustomerResolveMiddleware(AgentMiddleware):
         slot = "\n".join(slot_parts)
 
         # Inject state delta for model context (per-turn overlay)
+        # Coerce the DB-driver UUID (asyncpg.pgproto.UUID) to str so it survives
+        # LangGraph checkpoint serialization (orjson cannot dump the raw pgproto type).
+        resolved_customer_id = str(customer["id"])
         new_state = {**state, "_slot_customer": slot, "customer_memories": memories}
         if state.get("customer_id") is None:
-            new_state["customer_id"] = customer["id"]
+            new_state["customer_id"] = resolved_customer_id
         if state.get("customer_name") is None:
             new_state["customer_name"] = customer["name"]
         modified_request = request.override(state=new_state)
@@ -293,7 +296,7 @@ class CustomerResolveMiddleware(AgentMiddleware):
         # tools invoked after the model call see customer_id=None from the checkpoint.
         state_delta: dict = {}
         if state.get("customer_id") is None:
-            state_delta["customer_id"] = customer["id"]
+            state_delta["customer_id"] = resolved_customer_id
         if state.get("customer_name") is None:
             state_delta["customer_name"] = customer["name"]
         if state_delta:

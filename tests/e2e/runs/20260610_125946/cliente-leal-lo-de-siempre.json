@@ -1,0 +1,125 @@
+{
+  "scenario_id": "cliente-leal-lo-de-siempre",
+  "conversation_id": "e7796ee6-b194-4591-81d8-9af533d3c658",
+  "outcome": "stuck",
+  "turns_taken": 5,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, quería pedir hora para lo de siempre con Rosa.",
+      "agent_response": "Lo siento, tuve un problema técnico. ¿Puedes intentarlo de nuevo? 💕",
+      "latency_ms": 13346,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [
+        {
+          "type": "infra_crash",
+          "detail": "Graph invocation crashed at checkpoint serialization: 'Type is not JSON serializable: asyncpg.pgproto.pgproto.UUID'. Root cause: CustomerResolveMiddleware O2 fix (agent/middleware/customer_resolve.py:282,296-298) writes the raw asyncpg UUID (customer.id from SQLAlchemy/asyncpg row) into LangGraph graph state via Command(update={'customer_id': customer['id']}); the Redis JsonPlusRedisSerializer cannot serialize asyncpg.pgproto.UUID. Bot returned the generic fallback message. Same crash observed on an unrelated live conversation (287b979a) at the same time — affects ALL returning-customer turns."
+        }
+      ],
+      "milestone": "turn_1_infra_crash"
+    },
+    {
+      "turn": 2,
+      "user_message": "Sí, lo de siempre: corte con Rosa. ¿Qué hueco tienes?",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nCon Rosa tengo estos huecos para corte de mujer:\n\n1. martes 16 de junio a las 10:00\n2. martes 16 de junio a las 10:40\n3. martes 16 de junio a las 11:20\n\n¿Cuál te viene mejor?",
+      "latency_ms": 15211,
+      "timed_out": false,
+      "tool_calls_observed": ["get_next_available_options"],
+      "bugs": [],
+      "milestone": "lo_de_siempre_resolved_to_corte_mujer_with_rosa"
+    },
+    {
+      "turn": 3,
+      "user_message": "El primero, martes a las 10:00.",
+      "agent_response": "Perfecto, Raquel. Te lo dejo el martes 16 de junio a las 10:00 con Rosa para corte de mujer. ¿Alguna nota que quieras que le deje?",
+      "latency_ms": 12368,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "slot_accepted_customer_addressed_by_name"
+    },
+    {
+      "turn": 4,
+      "user_message": "No, ninguna nota. Confírmamelo, gracias.",
+      "agent_response": "Ahora mismo no he podido dejarla cerrada por un problema técnico con la confirmación final de la reserva. Sí tengo verificado el hueco del martes 16 de junio a las 10:00 con Rosa para corte de mujer.\n\nSi quieres, te ayudo a reintentarlo.",
+      "latency_ms": 19484,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "book"],
+      "bugs": [
+        {
+          "type": "spurious_reoffer_O1",
+          "detail": "book tool returned 'tool.response.rejected' with next_step='reoffer_slots' AFTER the customer accepted the slot the bot itself offered via get_next_available_options. This is the O1 P0 the Change O fix was supposed to eliminate — book must ACCEPT a slot it offered, not re-reject it. update_booking also returned next_step='reoffer_slots'. Booking did NOT complete; no appointment row created."
+        }
+      ],
+      "milestone": "book_rejected_accepted_slot_O1_failure"
+    },
+    {
+      "turn": 5,
+      "user_message": "Sí, reinténtalo por favor, ese mismo hueco.",
+      "agent_response": "Sigo teniendo el mismo bloqueo técnico al cerrar la reserva. No quiero hacerte perder más tiempo.\n\nSi quieres, puedo avisar al equipo para que lo revisen manualmente.",
+      "latency_ms": 15546,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "book"],
+      "bugs": [
+        {
+          "type": "spurious_reoffer_O1",
+          "detail": "Retry of book again returned reoffer_slots — deterministic, not a transient race. Booking remains blocked."
+        }
+      ],
+      "milestone": "book_retry_failed_again"
+    }
+  ],
+  "bugs": [
+    {
+      "type": "infra_crash",
+      "severity": "P0",
+      "detail": "asyncpg.pgproto.pgproto.UUID is not JSON serializable by the LangGraph Redis checkpointer. CustomerResolveMiddleware O2 fix writes the raw asyncpg UUID into graph state (agent/middleware/customer_resolve.py:282,296-298). Every checkpoint write fails; state.has_checkpoint stays false, so the conversation never persists durable state. Affects all returning customers resolved by phone."
+    },
+    {
+      "type": "spurious_reoffer_O1",
+      "severity": "P0",
+      "detail": "book rejects a slot the bot offered and the customer accepted (next_step=reoffer_slots). Change O1 fix is NOT effective end-to-end on this deploy (commit 7caff82). Likely related to/compounded by the checkpoint never persisting: the offered-slot token / draft state that book validates against is lost because no checkpoint is written between turns."
+    }
+  ],
+  "milestones_reached": [
+    "customer_resolved_by_name_no_reask",
+    "lo_de_siempre_resolved_to_corte_mujer_with_rosa_from_memory",
+    "no_policy_re_gate",
+    "slot_offered_via_get_next_available_options",
+    "slot_accepted_by_customer",
+    "book_rejected_accepted_slot"
+  ],
+  "db_delta": {
+    "customer_count_delta": 0,
+    "appt_count_delta": 0
+  },
+  "snapshot_before": {
+    "customer_count": 1,
+    "appt_count": 8
+  },
+  "snapshot_after": {
+    "customer_count": 1,
+    "appt_count": 8,
+    "confirmed_count": 0,
+    "consents": 1
+  },
+  "final_state": {
+    "has_checkpoint": false
+  },
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "booked",
+    "db_appointment": {"status": "confirmed"},
+    "tool_calls_required": ["check_availability", "book"],
+    "tool_calls_forbidden": [],
+    "tags": ["behavioral", "returning", "memory-test"]
+  },
+  "passed": false,
+  "verdicts": {
+    "N1_customer_resolved_by_name": "HELD — bot addressed 'Raquel' in turn 3, never re-asked the name.",
+    "R-41_lo_de_siempre_from_memory": "HELD — 'lo de siempre' resolved to Corte de Mujer with Rosa from customer_memories; no fabrication of service or stylist.",
+    "O3_no_policy_re_gate": "HELD — returning customer with v1.0 accepted ~300 days ago; bot never re-asked for policy acceptance; customer_consents count unchanged (1).",
+    "O1_book_accepts_offered_slot": "FAILED — book returned reoffer_slots after the customer accepted the offered slot; booking never completed; no appointment created."
+  }
+}

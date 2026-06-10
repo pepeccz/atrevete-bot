@@ -1,0 +1,94 @@
+{
+  "scenario_id": "cancel-con-razon",
+  "conversation_id": "287b979a-bad6-45b4-93cc-d5d092f4b045",
+  "outcome": "cancelled",
+  "turns_taken": 2,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, tengo una cita la semana que viene pero estoy con fiebre, prefiero cancelarla.",
+      "agent_response": "Lo siento, tuve un problema técnico. ¿Puedes intentarlo de nuevo? 💕",
+      "latency_ms": 20827,
+      "timed_out": false,
+      "tool_calls_observed": ["manage_appointments"],
+      "bugs": [
+        {
+          "type": "infra_checkpoint_serialization_crash",
+          "severity": "critical",
+          "detail": "manage_appointments EXECUTED the cancel successfully (cancellation_service logged 'Appointment e72251cb cancelled by customer', customer_id 69a15c4e was present — NO CUSTOMER_ID_REQUIRED), but the graph invocation then crashed in the Redis checkpointer with 'TypeError: Type is not JSON serializable: asyncpg.pgproto.pgproto.UUID' at langgraph/checkpoint/redis/base.py:_msgpack_to_redis_json (orjson.dumps). The resolved customer_id is persisted to graph state as a raw asyncpg.pgproto.pgproto.UUID (likely via the O2 ExtendedModelResponse + Command path) instead of a str / stdlib uuid.UUID, which orjson cannot serialize. The agent fell back to the generic error message and never persisted the checkpoint.",
+          "evidence": "agent logs 2026-06-10T11:02:29 (cancel ok) -> 2026-06-10T11:02:32 (TypeError checkpoint save failure) -> fallback message sent"
+        }
+      ],
+      "milestone": "cancel_executed_in_db_but_checkpoint_save_crashed"
+    },
+    {
+      "turn": 2,
+      "user_message": "¿Entonces queda cancelada?",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nNo veo ninguna cita programada ahora mismo, así que no hay nada que cancelar.\n\nSi quieres, puedo ayudarte a comprobar si era para otra fecha o con otro nombre.",
+      "latency_ms": 14839,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [
+        {
+          "type": "context_loss",
+          "severity": "critical",
+          "detail": "Because turn 1's checkpoint never persisted (has_checkpoint=false), turn 2 starts from an empty state: the disclosure replays the full 'Soy Maite...' first-contact greeting, and the bot has no memory of the just-executed cancellation. It correctly reports no active appointment (the DB row is already cancelled) but cannot confirm the cancellation it performed one turn earlier."
+        }
+      ],
+      "milestone": "checkpoint_loss_confirmed_fresh_conversation_state"
+    }
+  ],
+  "bugs": [
+    {
+      "type": "infra_checkpoint_serialization_crash",
+      "severity": "critical",
+      "detail": "Redis checkpointer cannot serialize the resolved customer_id stored as asyncpg.pgproto.pgproto.UUID. The cancel side-effect commits to the DB, but no checkpoint is saved and the user receives a generic technical-error message instead of a cancel confirmation. Regression introduced/exposed by the Change O2 customer_id persistence path. Fix: convert the resolved customer_id to str (or stdlib uuid.UUID) before writing it to AgentState / the Command update."
+    },
+    {
+      "type": "context_loss",
+      "severity": "critical",
+      "detail": "Downstream of the checkpoint crash: every turn restarts with no conversation history (has_checkpoint=false)."
+    }
+  ],
+  "milestones_reached": [
+    "n4_held_no_safety_escalation_on_fiebre",
+    "customer_id_present_at_mutation_no_CUSTOMER_ID_REQUIRED",
+    "manage_appointments_cancel_executed",
+    "db_appointment_status_cancelled",
+    "checkpoint_serialization_crash_asyncpg_uuid",
+    "fallback_error_message_to_user",
+    "checkpoint_not_persisted_context_lost"
+  ],
+  "db_delta": {
+    "customer_count_delta": 0,
+    "appt_count_delta": 0
+  },
+  "snapshot_before": {
+    "customer_count": 1,
+    "appt_count": 1
+  },
+  "snapshot_after": {
+    "customer_count": 1,
+    "appt_count": 1
+  },
+  "appointment_final_state": {
+    "id": "e72251cb-c08a-420b-855e-3c9aae9c90fe",
+    "status": "cancelled",
+    "cancelled_at": "2026-06-10 11:02:29.710446+00",
+    "cancellation_reason": null,
+    "gcal_sync_status": "not_applicable"
+  },
+  "final_state": {
+    "has_checkpoint": false
+  },
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "cancelled",
+    "db_appointment": {"status": "cancelled"},
+    "tool_calls_required": ["manage_appointments"],
+    "tool_calls_forbidden": ["book", "update_booking"],
+    "tags": ["cancel", "with-reason"]
+  },
+  "passed": true,
+  "passed_note": "DB-truth outcome matches expected (status=cancelled, manage_appointments fired, no forbidden tool calls, N4 held, O2 customer_id fix confirmed). HOWEVER a CRITICAL infra regression (asyncpg.UUID checkpoint serialization crash) broke the user-facing turn: the user got a technical-error message instead of a cancel confirmation and the checkpoint was lost. The transaction succeeded but the conversation UX failed."
+}

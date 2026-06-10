@@ -217,7 +217,7 @@ async def test_middleware_resolves_name_memories_and_policy_from_real_customer()
     assert "Cliente recurrente: Sí" in slot
     assert "Estilista preferido: Marta" in slot
     assert "Política privacidad: aceptada v1.0" in slot
-    assert final_state.get("customer_id") == customer.id
+    assert final_state.get("customer_id") == str(customer.id)
     assert final_state.get("customer_name") == "Raquel Cordero"
     assert final_state.get("customer_memories") == memories
 
@@ -294,7 +294,7 @@ async def test_middleware_returns_extended_model_response_with_command_when_cust
     assert (
         "customer_id" in update
     ), f"Command update must include customer_id, got keys: {list(update.keys())}"
-    assert update["customer_id"] == customer.id
+    assert update["customer_id"] == str(customer.id)
     assert update.get("customer_name") == "Raquel Cordero"
 
 
@@ -356,3 +356,116 @@ async def test_middleware_returns_plain_response_when_customer_id_already_in_sta
         "When customer_id is already in state, middleware must NOT emit a Command "
         "(no redundant state writes)"
     )
+
+
+# ---------------------------------------------------------------------------
+# O2 orjson-serialization regression: customer_id in Command update must be str
+# ---------------------------------------------------------------------------
+
+
+def _make_pgproto_like_customer() -> Customer:
+    """Build a Customer whose .id is a stdlib uuid.UUID.
+
+    We use stdlib uuid.UUID because asyncpg.pgproto.pgproto.UUID is not
+    installed in the test environment; the coercion `str(customer["id"])`
+    must handle BOTH types. stdlib uuid.UUID is sufficient to pin the regression:
+    without the str() coercion the assertion `isinstance(update["customer_id"], str)`
+    would fail because uuid.UUID is not str.
+    """
+    import uuid
+
+    return Customer(
+        id=uuid.UUID("12345678-1234-5678-1234-567812345678"),
+        phone=PHONE,
+        first_name="Lucía",
+        last_name="Fernández",
+        notes=None,
+        policy_accepted_at=None,
+        policy_version=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_command_update_customer_id_is_str_not_uuid():
+    """O2 orjson regression: Command(update=...) customer_id must be str.
+
+    orjson cannot serialize uuid.UUID (nor asyncpg.pgproto.UUID) when it appears
+    as a raw dict value in the LangGraph checkpoint payload — it raises
+    `TypeError: Type is not JSON serializable`. The middleware must coerce to str
+    before placing the value in state_delta.
+
+    The mock returns a Customer with a stdlib uuid.UUID id.  Without the
+    `resolved_customer_id = str(customer["id"])` coercion, the assert below
+    would fail because uuid.UUID is not a str instance.
+    """
+
+    import orjson
+    from langchain.agents.middleware.types import ExtendedModelResponse
+
+    from agent.middleware.customer_resolve import CustomerResolveMiddleware
+
+    customer = _make_pgproto_like_customer()
+    session = _session_returning(customer)
+
+    middleware = CustomerResolveMiddleware()
+    state = {
+        "customer_phone": PHONE,
+        "customer_id": None,
+        "customer_name": None,
+        "messages": [],
+    }
+    request = _make_request(state)
+
+    settings = MagicMock()
+    settings.POLICY_VERSION = "1.0"
+
+    async def handler(req):
+        from unittest.mock import MagicMock as MM
+
+        return MM()
+
+    with (
+        patch(
+            "agent.middleware.customer_resolve._get_cached_customer",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        patch(
+            "agent.middleware.customer_resolve._set_cached_customer",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "database.connection.get_async_session",
+            return_value=_session_ctx(session),
+        ),
+        patch(
+            "agent.middleware.customer_resolve.read_customer_memories",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        patch(
+            "agent.middleware.customer_resolve.get_settings",
+            return_value=settings,
+        ),
+    ):
+        result = await middleware.awrap_model_call(request, handler)
+
+    assert isinstance(result, ExtendedModelResponse)
+    update = result.command.update if hasattr(result.command, "update") else {}
+
+    # --- Core regression pin: customer_id must be str, never uuid.UUID / pgproto ---
+    assert isinstance(update.get("customer_id"), str), (
+        f"Command update customer_id must be str for orjson checkpoint serialization, "
+        f"got {type(update.get('customer_id')).__name__}"
+    )
+    assert update["customer_id"] == str(
+        customer.id
+    ), "str-coerced customer_id must equal str(customer.id)"
+
+    # --- orjson serialization must not raise (pins the actual crash path) ---
+    try:
+        orjson.dumps(update)
+    except TypeError as exc:
+        raise AssertionError(
+            f"Command update is not orjson-serializable — LangGraph checkpoint would crash: {exc}"
+        ) from exc
