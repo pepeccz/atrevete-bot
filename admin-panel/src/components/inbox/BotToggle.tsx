@@ -85,8 +85,12 @@ export function BotToggle({ conversationId, botEnabled, onToggled }: BotTogglePr
             ? "border-green-400 text-green-700 hover:bg-green-50"
             : "border-amber-400 text-amber-700 hover:bg-amber-50"
         )}
-        aria-label={botEnabled ? "Pausar bot" : "Reanudar bot"}
-        title={botEnabled ? "El bot está activo — hacer clic para pausar" : "El bot está pausado — hacer clic para reanudar"}
+        aria-label={botEnabled ? "Pausar bot y tomar control" : "Reanudar bot"}
+        title={
+          botEnabled
+            ? "El bot está activo — hacer clic para pausar y registrar una escalación manual"
+            : "El bot está pausado — hacer clic para reanudar"
+        }
       >
         {loading ? (
           <Loader2 className="h-3.5 w-3.5 animate-spin" />

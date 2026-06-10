@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ColumnDef } from "@tanstack/react-table";
-import { MoreHorizontal, Calendar, User, Scissors, Clock, Edit, RefreshCw } from "lucide-react";
+import { MoreHorizontal, Calendar, User, Scissors, Clock, Edit, RefreshCw, AlertCircle, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { DataTable, SortableHeader } from "@/components/ui/data-table";
@@ -25,6 +25,10 @@ interface AppointmentsTableProps {
   serviceMap: Record<string, string>;
   isLoading: boolean;
   onDeleteRequest: (id: string) => void;
+  /** R6: when true, only GCal-failed rows are shown. */
+  gcalFailedOnly?: boolean;
+  /** R6: callback to toggle the GCal-failed filter. */
+  onGcalFailedToggle?: () => void;
 }
 
 /** Inline badge + retry button for appointments whose GCal sync failed. */
@@ -76,8 +80,17 @@ export function AppointmentsTable({
   serviceMap,
   isLoading,
   onDeleteRequest,
+  gcalFailedOnly = false,
+  onGcalFailedToggle,
 }: AppointmentsTableProps) {
   const router = useRouter();
+
+  // R6: client-side filter for GCal failures
+  const displayedAppointments = gcalFailedOnly
+    ? appointments.filter((a) => a.gcal_sync_status === "failed")
+    : appointments;
+
+  const gcalFailedCount = appointments.filter((a) => a.gcal_sync_status === "failed").length;
 
   const columns: ColumnDef<Appointment>[] = useMemo(
     () => [
@@ -233,13 +246,44 @@ export function AppointmentsTable({
   );
 
   return (
-    <DataTable
-      columns={columns}
-      data={appointments}
-      isLoading={isLoading}
-      searchKey="first_name"
-      searchPlaceholder="Buscar por nombre..."
-      onRowClick={(appointment) => router.push(`/appointments/${appointment.id}`)}
-    />
+    <div className="space-y-3">
+      {/* R6: GCal-failed filter chip */}
+      {onGcalFailedToggle && gcalFailedCount > 0 && (
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={onGcalFailedToggle}
+            className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors ${
+              gcalFailedOnly
+                ? "border-destructive bg-destructive/10 text-destructive"
+                : "border-border bg-muted text-muted-foreground hover:border-destructive hover:text-destructive"
+            }`}
+          >
+            <AlertCircle className="h-3.5 w-3.5" />
+            Solo errores GCal
+            <Badge
+              variant="destructive"
+              className="ml-0.5 px-1.5 py-0 text-[10px] leading-none"
+            >
+              {gcalFailedCount}
+            </Badge>
+            {gcalFailedOnly && <X className="ml-0.5 h-3 w-3" />}
+          </button>
+          {gcalFailedOnly && (
+            <span className="text-xs text-muted-foreground">
+              Mostrando solo citas con error de sincronización GCal
+            </span>
+          )}
+        </div>
+      )}
+      <DataTable
+        columns={columns}
+        data={displayedAppointments}
+        isLoading={isLoading}
+        searchKey="first_name"
+        searchPlaceholder="Buscar por nombre..."
+        onRowClick={(appointment) => router.push(`/appointments/${appointment.id}`)}
+      />
+    </div>
   );
 }

@@ -274,14 +274,18 @@ async def perform_escalation(
     result = EscalationResult(success=True)
 
     # User-facing message differentiation
+    # R3b: set expectation — mention that the team will follow up, reference
+    # salon availability, but do NOT promise a specific response time.
     if is_technical_error:
         result.user_message = (
             "Hubo un problema técnico de mi parte. "
-            "Te estoy derivando con el equipo para que te ayuden. 🙏"
+            "Te paso con el equipo del salón para que te ayuden. "
+            "Te contactaremos en el horario de atención. 🙏"
         )
     else:
         result.user_message = (
-            "Con mucho gusto te paso con alguien del equipo. Un momento por favor. 🙏"
+            "Con mucho gusto te paso con alguien del equipo del salón. "
+            "Te atenderán en el próximo horario disponible. 🙏"
         )
 
     # Dedupe check — fail-open. Runs first so a duplicate never writes a second row.

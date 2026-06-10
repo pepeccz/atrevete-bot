@@ -171,3 +171,82 @@ class TestResolveConversationListItem:
         item = _resolve_conversation_list_item(row)
 
         assert item["source"] == "db"
+
+    # -----------------------------------------------------------------------
+    # C3: escalation signal — filter=escalated join-key correctness
+    # -----------------------------------------------------------------------
+
+    def test_is_escalated_false_when_no_map(self):
+        """is_escalated is False when escalated_conv_map is None."""
+        row = self._make_row(conversation_id="42")
+        item = _resolve_conversation_list_item(row, escalated_conv_map=None)
+
+        assert item["is_escalated"] is False
+
+    def test_is_escalated_false_when_chatwoot_id_not_in_map(self):
+        """is_escalated is False when conversation_id is absent from map — UUID PK never matches."""
+        row = self._make_row(conversation_id="42")
+        # Keying the map on str(row.id) (UUID PK) must NOT match — this would reproduce
+        # the old bug where the wrong key was used.
+        wrong_map = {
+            str(row.id): {
+                "escalation_id": "esc-1",
+                "escalation_reason": "test",
+                "escalation_source": "manual",
+                "escalation_triggered_at": None,
+            }
+        }
+        item = _resolve_conversation_list_item(row, escalated_conv_map=wrong_map)
+
+        # The old (broken) code keyed on str(row.id); after the fix this must be False.
+        assert item["is_escalated"] is False
+
+    def test_is_escalated_true_when_chatwoot_id_matches(self):
+        """is_escalated is True when escalated_conv_map is keyed by Chatwoot numeric ID string."""
+        row = self._make_row(conversation_id="42")
+        esc_map = {
+            "42": {
+                "escalation_id": "esc-uuid-1",
+                "escalation_reason": "Manual takeover",
+                "escalation_source": "manual",
+                "escalation_triggered_at": "2024-06-01T10:00:00+00:00",
+            }
+        }
+        item = _resolve_conversation_list_item(row, escalated_conv_map=esc_map)
+
+        assert item["is_escalated"] is True
+        assert item["escalation_source"] == "manual"
+        assert item["escalation_reason"] == "Manual takeover"
+        assert item["escalation_triggered_at"] == "2024-06-01T10:00:00+00:00"
+
+    def test_escalated_filter_counts_match_escalated_rows(self):
+        """Batch: counts['escalated'] equals the number of rows that have is_escalated=True."""
+        esc_map = {
+            "10": {
+                "escalation_id": "e1",
+                "escalation_reason": "r1",
+                "escalation_source": "fallback",
+                "escalation_triggered_at": None,
+            },
+            "20": {
+                "escalation_id": "e2",
+                "escalation_reason": "r2",
+                "escalation_source": "auto_error",
+                "escalation_triggered_at": None,
+            },
+        }
+
+        rows = [
+            self._make_row(conversation_id="10"),  # escalated
+            self._make_row(conversation_id="20"),  # escalated
+            self._make_row(conversation_id="99"),  # NOT escalated
+        ]
+
+        items = [_resolve_conversation_list_item(r, escalated_conv_map=esc_map) for r in rows]
+        escalated_items = [i for i in items if i["is_escalated"]]
+
+        assert len(escalated_items) == 2
+        assert all(i["is_escalated"] for i in escalated_items)
+        # Non-escalated row must not expose escalation fields
+        non_esc = next(i for i in items if not i["is_escalated"])
+        assert "escalation_id" not in non_esc

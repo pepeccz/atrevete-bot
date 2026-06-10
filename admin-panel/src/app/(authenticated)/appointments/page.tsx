@@ -34,6 +34,8 @@ export default function AppointmentsPage() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [appointmentToDelete, setAppointmentToDelete] = useState<string | null>(null);
   const [filters, setFilters] = useState({ stylist_id: "", status: "" });
+  // R6: client-side GCal-failed toggle (no server param needed — data already loaded)
+  const [gcalFailedOnly, setGcalFailedOnly] = useState(false);
 
   const stylistMap = Object.fromEntries(stylists.map((s) => [s.id, s.name]));
   const serviceMap = Object.fromEntries(services.map((s) => [s.id, s.name]));
@@ -145,6 +147,8 @@ export default function AppointmentsPage() {
                   setAppointmentToDelete(id);
                   setDeleteDialogOpen(true);
                 }}
+                gcalFailedOnly={gcalFailedOnly}
+                onGcalFailedToggle={() => setGcalFailedOnly((prev) => !prev)}
               />
             )}
           </CardContent>

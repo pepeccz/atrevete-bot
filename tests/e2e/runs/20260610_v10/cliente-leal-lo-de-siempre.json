@@ -1,0 +1,86 @@
+{
+  "scenario_id": "cliente-leal-lo-de-siempre",
+  "conversation_id": "305c6589-6539-47c5-9e1e-cd10f32a46cb",
+  "outcome": "booked",
+  "turns_taken": 3,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, quería pedir hora para lo de siempre con Rosa.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nCon Rosa, lo siguiente que tengo es el martes 16 de junio a las 10:00, 10:40 o 11:20 😊\n\n¿Cuál te viene mejor?",
+      "latency_ms": 19736,
+      "timed_out": false,
+      "tool_calls_observed": ["check_availability"],
+      "bugs": [],
+      "milestone": "resolved_lo_de_siempre_from_memory_and_offered_slots_with_rosa"
+    },
+    {
+      "turn": 2,
+      "user_message": "El martes a las 10:00 me viene perfecto.",
+      "agent_response": "Perfecto, Raquel. ¿Alguna nota para Rosa?",
+      "latency_ms": 17577,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "slot_accepted_no_reoffer"
+    },
+    {
+      "turn": 3,
+      "user_message": "No, ninguna nota. Confirma por favor.",
+      "agent_response": "¡Listo, Raquel! Te lo dejo confirmado para el martes 16 de junio a las 10:00 con Rosa para corte de mujer.\n\nTe paso el enlace del calendario por si te viene bien:\nhttps://calendar.google.com/calendar/render?action=TEMPLATE&text=Corte%20de%20Mujer%20en%20Atr%C3%A9vete&dates=20260616T080000Z/20260616T084000Z&details=Turno%20con%20Rosa&location=Atr%C3%A9vete%20Sal%C3%B3n%20de%20Belleza",
+      "latency_ms": 22968,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "book"],
+      "bugs": [],
+      "milestone": "booking_confirmed_corte_de_mujer_with_rosa"
+    }
+  ],
+  "bugs": [],
+  "milestones_reached": [
+    "resolved_lo_de_siempre_from_memory",
+    "recognized_by_name_no_service_question",
+    "no_policy_regate",
+    "slot_accepted_no_reoffer",
+    "audience_pinned_adult_female",
+    "booking_confirmed"
+  ],
+  "db_delta": {
+    "customer_count_delta": 0,
+    "appt_count_delta": 1
+  },
+  "snapshot_before": {
+    "customer_count": 1,
+    "appt_count": 8
+  },
+  "snapshot_after": {
+    "customer_count": 1,
+    "appt_count": 9
+  },
+  "final_state": {
+    "has_checkpoint": false
+  },
+  "new_appointment": {
+    "id": "7b689838-1a34-42ec-ab42-3fe5f57d367f",
+    "status": "confirmed",
+    "service": "Corte de Mujer",
+    "service_ids": ["cb7ae91c-97ff-e1d1-3b0b-696b11467add"],
+    "duration_minutes": 40,
+    "stylist": "Rosa",
+    "start_time": "2026-06-16 08:00:00+00",
+    "gcal_sync_status": "not_applicable"
+  },
+  "log_evidence": {
+    "invalid_service_ids_fired": false,
+    "reoffer_slots_fired": false,
+    "audience_pinning": "_resolve_service_ids_strict: inferred audience=adult_female from name='corte de mujer' (single id cb7ae91c... resolved, no ambiguity)"
+  },
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "booked",
+    "db_appointment": {"status": "confirmed"},
+    "tool_calls_required": ["check_availability", "book"],
+    "tool_calls_forbidden": [],
+    "tags": ["behavioral", "returning", "memory-test"]
+  },
+  "passed": true
+}

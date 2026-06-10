@@ -79,7 +79,10 @@ const baseConfigNav: NavItem[] = [
 ];
 
 interface BadgeCounts {
-  /** Sum of active (unended) conversations + triggered escalations. FR-MIGRATE-2. */
+  /**
+   * R2: actionable count = escalated (status='triggered') + unread messages.
+   * Replaces the meaningless "active convs + escalations" sum.
+   */
   conversations: number;
 }
 
@@ -87,10 +90,9 @@ interface BadgeCounts {
  * Polls for live counts that drive the sidebar badges. Refreshes on mount,
  * on route change, and every 60s.
  *
- * Conversations badge = active (no ended_at) conversations + escalations with
- * status='triggered'. These are merged into a single badge because the
- * "Escalaciones" nav entry has been removed in favour of the
- * /conversations?filter=escalated tab (FR-MIGRATE-2).
+ * R2: Conversations badge = escalated (triggered) + conversations with unread
+ * messages. This is the actionable number the staff needs to act on —
+ * not the total of all open conversations.
  */
 function useSidebarBadgeCounts(pathname: string): BadgeCounts {
   const [counts, setCounts] = useState<BadgeCounts>({ conversations: 0 });
@@ -99,15 +101,30 @@ function useSidebarBadgeCounts(pathname: string): BadgeCounts {
     let cancelled = false;
     async function load() {
       try {
-        const [convRes, escStats] = await Promise.all([
-          api.list<ConversationHistory>("conversations", { page_size: 100 }).catch(() => null),
-          api.getEscalationStats().catch(() => null),
-        ]);
+        const convRes = await api
+          .list<ConversationHistory>("conversations", { page_size: 100 })
+          .catch(() => null);
         if (cancelled) return;
-        const activeConversations = convRes?.items?.filter((c) => !c.ended_at).length ?? 0;
-        const triggeredEscalations = escStats?.pending ?? 0;
-        // Merge both counts into the single Conversaciones badge.
-        setCounts({ conversations: activeConversations + triggeredEscalations });
+        const items = convRes?.counts;
+        if (items) {
+          // Use server-computed counts when available (most efficient path)
+          const escalated = (items["escalated"] as number | undefined) ?? 0;
+          const unread = (items["unread"] as number | undefined) ?? 0;
+          // Avoid double-counting conversations that are both escalated and unread
+          // by using the max of both signals (they usually overlap).
+          setCounts({ conversations: Math.max(escalated, unread) });
+        } else {
+          // Fallback: compute client-side from items array
+          const convItems = convRes?.items ?? [];
+          type InboxItem = ConversationHistory & {
+            is_escalated?: boolean;
+            unread_message_count?: number | null;
+          };
+          const actionable = convItems.filter(
+            (c) => (c as InboxItem).is_escalated || ((c as InboxItem).unread_message_count ?? 0) > 0
+          ).length;
+          setCounts({ conversations: actionable });
+        }
       } catch {
         // Silent failure — sidebar badges are decorative, not load-bearing.
       }

@@ -885,6 +885,17 @@ export interface ConversationHistoryInbox extends ConversationHistory {
    * Optional — absent on older archived rows or when migration not yet applied.
    */
   unread_message_count?: number | null;
+  /**
+   * R1: True when an Escalation row with status='triggered' exists for this conversation.
+   * More accurate than the paused_at proxy (which also catches manual takeovers).
+   */
+  is_escalated?: boolean;
+  /** R3a: escalation reason from the triggered Escalation row. */
+  escalation_reason?: string | null;
+  /** R3a: escalation source (manual, safety, cancellation_window_exception, etc). */
+  escalation_source?: string | null;
+  /** R3a: ISO timestamp when the escalation was triggered. */
+  escalation_triggered_at?: string | null;
 }
 
 export type InboxFilter = "all" | "bot_on" | "bot_off" | "escalated" | "unread";
