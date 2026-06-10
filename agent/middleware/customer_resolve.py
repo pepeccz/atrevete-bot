@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Awaitable, Callable
+from datetime import datetime
 from typing import ClassVar
 
 from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
@@ -31,13 +32,26 @@ _STAFF_NOTES_MAX_CHARS = 300
 
 
 async def _get_cached_customer(phone: str) -> dict | None:
-    """Fail-open Redis GET. Returns parsed dict or None on miss/error."""
+    """Fail-open Redis GET. Returns parsed dict or None on miss/error.
+
+    The cache is written with json.dumps(default=str), which serializes
+    datetimes as strings. policy_accepted_at MUST be coerced back to datetime
+    on read — downstream rendering calls .strftime() on it (L2 latent crash:
+    cache hits for accepted customers raised AttributeError before this fix).
+    """
     try:
         client = get_redis_client()
         raw = await client.get(_CUSTOMER_CACHE_KEY_FMT.format(phone=phone))
         if raw is None:
             return None
-        return json.loads(raw)
+        data = json.loads(raw)
+        accepted_at = data.get("policy_accepted_at")
+        if isinstance(accepted_at, str):
+            try:
+                data["policy_accepted_at"] = datetime.fromisoformat(accepted_at)
+            except ValueError:
+                data["policy_accepted_at"] = None
+        return data
     except Exception as exc:
         logger.warning("customer cache GET failed phone=…: %s", exc)
         return None
@@ -95,7 +109,7 @@ async def _lookup_customer(phone: str) -> dict | None:
                 "is_returning": has_appointments,
                 "notes": customer.notes,  # D5: staff notes (allergies/restrictions)
                 "policy_accepted_at": customer.policy_accepted_at,  # GDPR consent date
-                "policy_version": customer.policy_version,          # version accepted
+                "policy_version": customer.policy_version,  # version accepted
             }
     except Exception as exc:
         logger.warning("Customer lookup failed for phone %s: %s", phone, exc)

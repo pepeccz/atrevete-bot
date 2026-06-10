@@ -146,7 +146,25 @@ Check:
 - [ ] No Python traceback leaked: `rg "Traceback|Internal server error|Exception:" agent_response`
 - [ ] No raw JSON or tool output leaked to user (agent_response doesn't start with `{` or contain `"tool_calls"`)
 - [ ] `outcome` field is present and is one of: `booked`, `cancelled`, `rescheduled`, `escalated`, `policy_accepted`, `rejected`, `timeout`, `error`, `stuck`, `info_provided`, `multi_completed`, `partial_completed`, `out_of_scope_handled` (v1 + v2 union — see Canonical Outcome Enum section)
-- [ ] **repeated_sentences check (WARN-level, Change I)**: if any turn's `repeated_sentences` field is non-empty, flag as WARN (not FAIL). `repeated_sentences` is populated by `detect_repeated_sentences()` in `qa_turn_helper.py` when it finds sentences > 5 words appearing >= 2× in a single bot reply. A non-empty list indicates a likely prompt-assembly duplicate or LLM generation artifact. Document in the WARN section; do not escalate to FAIL unless the repetition is severe (>= 3 occurrences of the same sentence).
+- [ ] **repeated_sentences check (WARN-level, Change I + L5)**: RUN the detector
+  yourself over every scenario run file — do NOT rely on a `repeated_sentences`
+  field being present in the run JSON (runners do not always populate it):
+
+  ```bash
+  PYTHONPATH=. python tests/e2e/harness/qa_turn_helper.py detect-repeats \
+    --run-file <run_dir>/<scenario_id>.json
+  ```
+
+  Note: must be run from the repo root (the `PYTHONPATH=.` is required for the
+  `tests.e2e.harness` imports to resolve).
+
+  Output: `{"scenario_id": ..., "turns_with_repeats": N, "findings": [{"turn": N, "repeated_sentences": [...]}]}`.
+  The detector (`detect_repeated_sentences()` in `qa_turn_helper.py`) flags
+  sentences > 5 words appearing >= 2× in a single bot reply — a likely
+  prompt-assembly duplicate or LLM generation artifact. For every scenario with
+  `turns_with_repeats > 0`, add a WARN item to audit.md naming the scenario,
+  the turn number(s), and the repeated sentence(s). Do not escalate to FAIL
+  unless the repetition is severe (>= 3 occurrences of the same sentence).
 
 **If any L1 check fails, mark this scenario `FAIL (L1)` and skip L2–L5.**
 **If only `repeated_sentences` is non-empty, mark as `WARN` and continue L2–L5.**

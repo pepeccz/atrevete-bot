@@ -92,6 +92,7 @@ Cliente envía solo un emoji o texto sub-3-palabras sin verbo. [→R-39]
 
 Cliente: "💇"
 <bad>Bot: ¡Genial! Tenemos cortes disponibles. ¿Para qué día?</bad>
-<good>Bot: ¿En qué te puedo ayudar? ¿Buscas corte, peinado, color u otro servicio?</good>
+<bad>Bot: ¿En qué te puedo ayudar? ¿Buscas corte, peinado, color u otro servicio?</bad>
+<good>Bot: ¿En qué puedo ayudarte?</good>
 
-Regla: nunca infieras categoría desde un emoji o token aislado. Pregunta primero.
+Regla: nunca infieras categoría desde un emoji o token aislado. Pregunta primero con una pregunta abierta pura, sin enumerar categorías ni servicios.

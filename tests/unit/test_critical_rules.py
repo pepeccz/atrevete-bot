@@ -123,6 +123,49 @@ def test_r41_has_example(rules_text: str) -> None:
     assert has_example, "R-41 must include a MAL:/BIEN: example pair"
 
 
+# ---------------------------------------------------------------------------
+# R-39 — Clarification gate must use a PURE open question (Change L / L1)
+# ---------------------------------------------------------------------------
+
+
+def _r39_block(rules_text: str) -> str:
+    start = rules_text.find("[R-39]")
+    assert start != -1, "R-39 entry missing from critical_rules.md"
+    next_rule = rules_text.find("[R-", start + 1)
+    return rules_text[start:next_rule] if next_rule != -1 else rules_text[start:]
+
+
+def test_r39_entry_exists(rules_text: str) -> None:
+    """R-39 must be present with its numbered identifier."""
+    assert "[R-39]" in rules_text, "R-39 entry missing from critical_rules.md"
+
+
+def test_r39_forbids_enumeration(rules_text: str) -> None:
+    """L1: R-39 must forbid enumerating categories/services in the clarification reply."""
+    block = _r39_block(rules_text).lower()
+    assert (
+        "enumerar" in block or "enumeres" in block
+    ), "R-39 must forbid category enumeration in the clarification reply"
+    assert (
+        "nunca" in block or "prohibido" in block
+    ), "R-39 must phrase the enumeration ban as a hard prohibition (NUNCA/PROHIBIDO)"
+
+
+def test_r39_does_not_contain_enumeration_example(rules_text: str) -> None:
+    """L1 (negative): the old category-enumeration example must be gone."""
+    block = _r39_block(rules_text).lower()
+    assert "corte, peinado, color" not in block, (
+        "R-39 still contains the old category-enumeration example "
+        "('corte, peinado, color...') — the clarification reply must be a pure open question"
+    )
+
+
+def test_r39_keeps_open_question_requirement(rules_text: str) -> None:
+    """L1: R-39 must still demand a short open question before any action."""
+    block = _r39_block(rules_text).lower()
+    assert "pregunta abierta" in block, "R-39 must require a 'pregunta abierta'"
+
+
 def test_r41_applies_when_both_slots_empty(rules_text: str) -> None:
     """R-41 must explicitly cover both memory slots being empty."""
     r41_start = rules_text.find("[R-41]")

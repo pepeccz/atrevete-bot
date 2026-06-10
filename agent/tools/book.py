@@ -21,7 +21,11 @@ from langgraph.prebuilt import InjectedState
 from agent.middleware.customer_resolve import _invalidate_cached_customer
 from agent.services.availability_service import check_slot_availability
 from agent.services.customer_memory_service import read_customer_memories, write_customer_memories
-from agent.services.policy_service import accept_policy
+from agent.services.policy_service import (
+    accept_policy,
+    clear_conversation_policy_acceptance,
+    get_conversation_policy_acceptance,
+)
 from agent.tools._booking_validators import (
     validate_service_ids_exist,
     validate_slot_in_offered,
@@ -191,6 +195,7 @@ async def book(
     """
     # --- Inject customer_phone from state (InjectedState — not LLM-controlled) ---
     customer_phone = (state or {}).get("customer_phone") or ""
+    conversation_id = (state or {}).get("conversation_id") or ""
     if not customer_phone:
         logger.error(
             "book.state.missing_customer_phone",
@@ -378,12 +383,24 @@ async def book(
             # ── Policy gate (B4) ─────────────────────────────────────────────
             # After customer lookup — need policy_accepted_at/version from DB row.
             # Before appointment INSERT — no orphaned rows if gate fires.
+            # L2 (Change L): when the LLM drops the policy_accepted round-trip
+            # flag between update_booking and book (QA V4 re-ask loop), the
+            # durable conversation marker recovers the acceptance.
             _settings_for_gate = get_settings()
             _needs_policy = (
                 customer.policy_accepted_at is None
                 or customer.policy_version != _settings_for_gate.POLICY_VERSION
             )
-            if _needs_policy and not policy_accepted:
+            _effective_policy_accepted = policy_accepted
+            if _needs_policy and not _effective_policy_accepted and conversation_id:
+                _marker_version = await get_conversation_policy_acceptance(conversation_id)
+                if _marker_version == _settings_for_gate.POLICY_VERSION:
+                    logger.info(
+                        "policy gate: acceptance recovered from conversation marker",
+                        extra={"tool_name": "book"},
+                    )
+                    _effective_policy_accepted = True
+            if _needs_policy and not _effective_policy_accepted:
                 return ToolResponse(
                     status="rejected",
                     next_step="policy_acceptance_required",
@@ -395,10 +412,11 @@ async def book(
                 ).model_dump_json()
 
             # ── Policy consent persistence (atomic with appointment) ─────────
-            # Fires only when update_booking's gate set policy_accepted=True upstream.
+            # Fires when update_booking's gate set policy_accepted=True upstream
+            # OR the conversation marker recovered the acceptance (L2).
             # Re-check customer's stored version: if already current, skip (idempotency).
             _consent_written = False
-            if policy_accepted:
+            if _effective_policy_accepted:
                 _settings = get_settings()
                 _fresh_customer = await session.get(Customer, customer.id)
                 _needs_write = (
@@ -437,6 +455,10 @@ async def book(
             # Post-commit: invalidate Redis cache so next <customer> block reflects policy state
             if _consent_written:
                 await _invalidate_cached_customer(customer.phone)
+            # L2: booking committed — the conversation marker is obsolete regardless of
+            # whether a consent row was written this turn (idempotent delete).
+            if conversation_id:
+                await clear_conversation_policy_acceptance(conversation_id)
 
     except Exception as exc:
         logger.error("book() transaction failed: %s", exc, exc_info=True)

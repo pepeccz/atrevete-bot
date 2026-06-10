@@ -16,11 +16,12 @@ from shared.redis_conversation_cleanup import cleanup_conversation_redis_keys
 
 
 @pytest.mark.asyncio
-async def test_cleanup_deletes_pending_injection_key():
+async def test_cleanup_deletes_pending_injection_and_policy_accepted_keys():
     """
-    GIVEN a Redis instance with a pending_injection:v2:{cid} key set
+    GIVEN a Redis instance with pending_injection:v2:{cid} AND policy_accepted:v2:{cid} keys set
     WHEN cleanup_conversation_redis_keys is called with that conversation_id
-    THEN the pending_injection:v2:{cid} key must be deleted.
+    THEN both keys must be deleted (GDPR-style erasure: a recreated customer in
+         the same conversation must not skip the policy gate).
     """
     redis = fakeredis_async.FakeRedis()
     cid = "conv-cleanup-test"
@@ -28,19 +29,25 @@ async def test_cleanup_deletes_pending_injection_key():
     # Set the pending_injection key (mimics /resume endpoint)
     pending_key = f"pending_injection:v2:{cid}"
     await redis.set(pending_key, "1", ex=600)
+    # Set the policy acceptance marker (mimics Change L policy gate clear)
+    policy_key = f"policy_accepted:v2:{cid}"
+    await redis.set(policy_key, "1.0", ex=86400)
 
     result = await cleanup_conversation_redis_keys(redis, cid, include_batcher=True)
 
-    # The key must be gone
-    remaining = await redis.keys("*")
-    assert pending_key not in [
-        k.decode() if isinstance(k, bytes) else k for k in remaining
-    ], f"pending_injection key was NOT deleted. Remaining: {remaining}"
+    # Both keys must be gone
+    remaining = [k.decode() if isinstance(k, bytes) else k for k in await redis.keys("*")]
+    assert (
+        pending_key not in remaining
+    ), f"pending_injection key was NOT deleted. Remaining: {remaining}"
+    assert (
+        policy_key not in remaining
+    ), f"policy_accepted key was NOT deleted. Remaining: {remaining}"
 
-    # Cleanup result must account for the deleted key
-    assert result.total_deleted >= 1, (
-        f"Expected at least 1 key deleted, got {result.total_deleted}"
-    )
+    # Cleanup result must account for both deleted keys
+    assert (
+        result.total_deleted >= 2
+    ), f"Expected at least 2 keys deleted, got {result.total_deleted}"
     assert not result.errors, f"Unexpected errors: {result.errors}"
 
 
@@ -75,12 +82,14 @@ async def test_cleanup_pending_injection_alongside_checkpoint_keys():
     await redis.set(f"checkpoint:v2:{cid}:__empty__:uuid1", "1")
     # Seed pending_injection
     await redis.set(f"pending_injection:v2:{cid}", "1", ex=600)
+    # Seed policy acceptance marker
+    await redis.set(f"policy_accepted:v2:{cid}", "1.0", ex=86400)
 
     result = await cleanup_conversation_redis_keys(redis, cid, include_batcher=True)
 
     remaining = await redis.keys("*")
     assert len(remaining) == 0, f"Keys still present after cleanup: {remaining}"
-    assert result.total_deleted >= 3
+    assert result.total_deleted >= 4
     assert not result.errors
 
 
@@ -136,9 +145,7 @@ async def test_delete_conversation_removes_orphan_notifications():
     ) as mock_cleanup:
         from shared.redis_conversation_cleanup import CleanupResult
 
-        mock_cleanup.return_value = CleanupResult(
-            total_deleted=0, errors=[], by_family={}
-        )
+        mock_cleanup.return_value = CleanupResult(total_deleted=0, errors=[], by_family={})
 
         result = await delete_conversation(record.id, session, fake_redis)
 
@@ -148,9 +155,9 @@ async def test_delete_conversation_removes_orphan_notifications():
         "session.execute() was never called — notification cleanup step is missing"
     )
     # And commit must have been called at least twice (DB delete + notification delete)
-    assert session.commit.call_count >= 2, (
-        f"Expected at least 2 commits (DB + notifications), got {session.commit.call_count}"
-    )
+    assert (
+        session.commit.call_count >= 2
+    ), f"Expected at least 2 commits (DB + notifications), got {session.commit.call_count}"
 
 
 async def _async_iter(items):
@@ -186,9 +193,7 @@ async def test_delete_conversation_does_not_remove_unrelated_notifications():
     ) as mock_cleanup:
         from shared.redis_conversation_cleanup import CleanupResult
 
-        mock_cleanup.return_value = CleanupResult(
-            total_deleted=0, errors=[], by_family={}
-        )
+        mock_cleanup.return_value = CleanupResult(total_deleted=0, errors=[], by_family={})
 
         result = await delete_conversation(record.id, session, fake_redis)
 
@@ -201,9 +206,7 @@ async def test_delete_conversation_does_not_remove_unrelated_notifications():
     # At least one of the calls should be a SQLAlchemy Delete construct
     from sqlalchemy.sql import Delete as SADelete
 
-    delete_calls = [
-        c for c in execute_calls if isinstance(c.args[0], SADelete)
-    ]
+    delete_calls = [c for c in execute_calls if isinstance(c.args[0], SADelete)]
     assert delete_calls, (
         "No SQLAlchemy DELETE statement was passed to session.execute(). "
         "Notification cleanup must use sa_delete(Notification).where(...)"

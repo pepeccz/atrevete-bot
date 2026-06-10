@@ -17,6 +17,16 @@ metadata:
     - "Driving multi-turn bot conversation autonomously"
 ---
 
+> ## ⛔ SERVER ONLY — ignore local containers
+>
+> **The deploy under test lives at `pepe@server:/home/pepe/Proyectos/atrevete-bot`.**
+> ALL health checks, `docker compose` commands, psql queries, log reads, and turn
+> helpers MUST target the SSH server deploy. If a docker stack happens to be
+> running on the local machine, **IGNORE IT** — diagnosing the local stack
+> produces BLOCKED/invalid runs. This drift has happened TWICE (V3 and V4:
+> `indecisa-cambia-criterio-tres-veces`, `faq-atienden-hombres`). Before Step 1,
+> confirm you are operating against the server deploy, not localhost.
+
 ## Purpose
 
 Execute a single QA scenario against the live Atrévete Bot pipeline (Redis
@@ -141,8 +151,11 @@ Execute these steps IN ORDER.
 ### Step 1: Health Check
 
 ```bash
-python tests/e2e/harness/qa_turn_helper.py health
+PYTHONPATH=. python tests/e2e/harness/qa_turn_helper.py health
 ```
+
+Note: all harness commands below must run from the repo root with `PYTHONPATH=.`
+(the scripts import `shared.*` and `tests.e2e.harness.*`).
 
 Expected: `{"ok": true, "redis": "connected", "stream": "exists"}`
 
@@ -151,12 +164,32 @@ Expected: `{"ok": true, "redis": "connected", "stream": "exists"}`
 ### Step 2: Reset State
 
 ```bash
-python tests/e2e/harness/state_reset.py reset \
+PYTHONPATH=. python tests/e2e/harness/state_reset.py reset \
   --conversation-id <conversation_id> \
   --phone <scenario.persona.phone>
 ```
 
 This clears any prior Redis checkpoint and DB rows for the phone prefix.
+
+### Step 2.5: Seed Appointment (only if `scenario.seed` is present)
+
+Some scenarios (e.g. `cancel-con-razon`, `cancel-fuera-48h`) declare a seed
+block describing an appointment that must exist BEFORE the conversation starts:
+
+```yaml
+seed:
+  appointment:
+    days_ahead: 5      # appointment date = today + days_ahead (Europe/Madrid)
+    time: "11:00"      # local salon time
+    status: confirmed
+```
+
+Create the customer (persona phone/name) and the appointment exactly as
+declared — `days_ahead` is load-bearing: the 48h cancellation policy depends on
+it (`days_ahead >= 3` → cancellable; `days_ahead <= 1` → policy blocks, bot
+must escalate). Use any active stylist and any active service. Set
+`gcal_sync_status='not_applicable'` (sandbox). Verify the row exists before
+Step 3 so it is included in `snapshot_before`.
 
 ### Step 3: DB Snapshot Before
 
@@ -186,13 +219,30 @@ next. Be natural — real customers don't front-load all info at once.
 **4b. Send the turn.**
 
 ```bash
-python tests/e2e/harness/qa_turn_helper.py turn \
+PYTHONPATH=. python tests/e2e/harness/qa_turn_helper.py turn \
   --conversation-id <conversation_id> \
   --user-message "<your_message>" \
-  --phone <scenario.persona.phone> \
-  --name "<scenario.persona.name>" \
+  --customer-phone <scenario.persona.phone> \
+  --persona-name "<scenario.persona.name>" \
   --timeout 90
 ```
+
+> Flag contract: the `turn` subcommand takes `--customer-phone` and
+> `--persona-name` (only the `reset` subcommand takes `--phone`). The
+> authoritative source is `_build_parser()` in
+> `tests/e2e/harness/qa_turn_helper.py`; a consistency test
+> (`tests/unit/test_qa_runner_skill_doc_cli_consistency.py`) keeps this doc in
+> sync.
+
+> Batching quirk: `qa_turn_helper.py` forces `MESSAGE_BATCH_WINDOW_SECONDS=0`
+> in its own process — runner mode disables inbound message batching so each
+> `turn` call maps to exactly one processed turn. The production default
+> (window > 0) merges multi-message turns inside the batch window and
+> mis-times the runner's response waits. Do NOT remove the `=0` override, and
+> when a scenario intentionally tests batching (e.g.
+> `impaciente-multiples-mensajes`), remember the agent container under test
+> applies ITS OWN batch window — rapid messages may legitimately produce a
+> single merged reply.
 
 Output JSON: `{"agent_response": "...", "timed_out": bool, "response_latency_ms": N, "tool_evidence": {...}}`
 
@@ -250,7 +300,7 @@ db_delta = {
 ### Step 6: State Capture
 
 ```bash
-python tests/e2e/harness/qa_turn_helper.py state \
+PYTHONPATH=. python tests/e2e/harness/qa_turn_helper.py state \
   --conversation-id <conversation_id>
 ```
 
@@ -259,7 +309,7 @@ Record the output JSON as `final_state`.
 ### Step 7: Pull Langfuse Traces
 
 ```bash
-python tests/e2e/harness/langfuse_pull.py \
+PYTHONPATH=. python tests/e2e/harness/langfuse_pull.py \
   --conv-id <conversation_id> \
   --out <traces_path> \
   --retries 4
@@ -270,7 +320,7 @@ If this fails (non-zero exit), set `langfuse_trace_path: null` and continue.
 ### Step 8: Cleanup
 
 ```bash
-python tests/e2e/harness/state_reset.py reset \
+PYTHONPATH=. python tests/e2e/harness/state_reset.py reset \
   --conversation-id <conversation_id> \
   --phone <scenario.persona.phone>
 ```

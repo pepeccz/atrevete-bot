@@ -47,6 +47,14 @@ logger = logging.getLogger(__name__)
 # was recorded within this many seconds, return the existing row without re-inserting.
 _IDEMPOTENCY_WINDOW_SECONDS = 10
 
+# Conversation-scoped acceptance marker (Change L / L2 — policy re-ask loop).
+# Written the moment the customer accepts the policy (update_booking gate clear),
+# BEFORE any customers row exists for brand-new customers. Both policy gates
+# (update_booking step 6c and book B4) consult it when the LLM drops the
+# policy_accepted round-trip flag between tool calls.
+_POLICY_MARKER_KEY_FMT = "policy_accepted:v2:{conversation_id}"
+_POLICY_MARKER_TTL_SECONDS = 86400  # 24h — outlives any single booking conversation
+
 
 class PolicyConsentError(Exception):
     """Raised when policy consent persistence fails. Propagates rollback.
@@ -162,3 +170,54 @@ async def accept_policy(
         await _invalidate_cached_customer(customer.phone)
 
     return consent
+
+
+# ---------------------------------------------------------------------------
+# Conversation acceptance marker (Change L / L2) — all helpers fail-open
+# ---------------------------------------------------------------------------
+
+
+async def set_conversation_policy_acceptance(conversation_id: str, policy_version: str) -> None:
+    """Persist a conversation-scoped acceptance marker in Redis (fail-open).
+
+    Durable fallback for the policy gates: once the customer says "sí" the
+    acceptance must survive a dropped LLM round-trip flag. The marker covers
+    brand-new customers that have no customers row until book() creates one.
+    """
+    try:
+        from shared.redis_client import get_redis_client
+
+        client = get_redis_client()
+        await client.setex(
+            _POLICY_MARKER_KEY_FMT.format(conversation_id=conversation_id),
+            _POLICY_MARKER_TTL_SECONDS,
+            policy_version,
+        )
+    except Exception as exc:
+        logger.warning("policy acceptance marker SETEX failed conv=%s: %s", conversation_id, exc)
+
+
+async def get_conversation_policy_acceptance(conversation_id: str) -> str | None:
+    """Return the policy version accepted in this conversation, or None (fail-open)."""
+    try:
+        from shared.redis_client import get_redis_client
+
+        client = get_redis_client()
+        raw = await client.get(_POLICY_MARKER_KEY_FMT.format(conversation_id=conversation_id))
+        if raw is None:
+            return None
+        return raw.decode() if isinstance(raw, bytes) else str(raw)
+    except Exception as exc:
+        logger.warning("policy acceptance marker GET failed conv=%s: %s", conversation_id, exc)
+        return None
+
+
+async def clear_conversation_policy_acceptance(conversation_id: str) -> None:
+    """Delete the conversation acceptance marker after the consent row is committed."""
+    try:
+        from shared.redis_client import get_redis_client
+
+        client = get_redis_client()
+        await client.delete(_POLICY_MARKER_KEY_FMT.format(conversation_id=conversation_id))
+    except Exception as exc:
+        logger.warning("policy acceptance marker DEL failed conv=%s: %s", conversation_id, exc)

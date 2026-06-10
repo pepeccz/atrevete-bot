@@ -27,6 +27,11 @@ from langchain_core.tools import tool
 from langgraph.prebuilt import InjectedState
 
 from agent.services.availability_service import _load_lead_time_min_days
+from agent.services.policy_service import (
+    accept_policy,
+    get_conversation_policy_acceptance,
+    set_conversation_policy_acceptance,
+)
 from agent.tools._booking_validators import (
     ERROR_ADVANCE_POLICY_VIOLATED,
     ERROR_CLOSED_DAY,
@@ -42,6 +47,44 @@ from shared.config import get_settings
 _MADRID_TZ = ZoneInfo("Europe/Madrid")
 
 logger = logging.getLogger(__name__)
+
+
+async def _persist_policy_acceptance(
+    session,
+    customer_id: str | None,
+    conversation_id: str | None,
+    policy_version: str,
+) -> None:
+    """Best-effort durable persistence of policy acceptance at gate-clear time (L2).
+
+    Two layers, both fail-open (durability must never block the booking flow —
+    the round-trip flag in `collected` remains the primary carrier):
+    1. DB truth — when the customers row already exists, write
+       Customer.policy_accepted_at + a CustomerConsent row immediately.
+    2. Conversation marker — Redis key covering brand-new customers that have
+       no customers row until book() creates one.
+    """
+    if customer_id:
+        try:
+            await accept_policy(
+                db=session,
+                customer_id=customer_id,
+                policy_version=policy_version,
+                accepted_via="whatsapp",
+                source_message_id=None,
+            )
+            await session.commit()
+        except Exception as exc:
+            logger.warning("policy acceptance DB persist failed at gate clear (fail-open): %s", exc)
+            try:
+                await session.rollback()
+            except Exception as rollback_exc:
+                # Never let a rollback failure mask the original persist error log.
+                logger.warning(
+                    "session rollback failed after policy persist failure: %s", rollback_exc
+                )
+    if conversation_id:
+        await set_conversation_policy_acceptance(conversation_id, policy_version)
 
 
 def _parse_iso_to_utc(s: str) -> datetime | None:
@@ -221,6 +264,7 @@ async def update_booking(
             policy_accepted=policy_accepted,
             policy_rejection_count=policy_rejection_count,
             customer_id=_state.get("customer_id"),
+            conversation_id=_state.get("conversation_id"),
             recently_offered_slots=_state.get("recently_offered_slots") or [],
         )
     except Exception as exc:
@@ -252,6 +296,7 @@ async def _update_booking_impl(
     policy_accepted: bool = False,
     policy_rejection_count: int = 0,
     customer_id: str | None = None,
+    conversation_id: str | None = None,
     recently_offered_slots: list[dict] | None = None,
 ) -> str:
     from agent.booking.resolvers.time_resolver import MIN_BOOKING_DAYS
@@ -726,6 +771,10 @@ async def _update_booking_impl(
         # current POLICY_VERSION. policy_accepted is the round-trip flag the LLM
         # sets after the customer's "sí". policy_rejection_count rolls forward from
         # the LLM with prior rejections; escalation triggers at >= 2.
+        #
+        # L2 (Change L): the LLM flag is hallucination-prone — it gets dropped
+        # between tool calls (QA V4 re-ask loop). The durable conversation marker
+        # written at gate-clear time recovers the acceptance when the flag is lost.
         if slot_iso is not None:
             _settings = get_settings()
             _customer_obj = None
@@ -740,7 +789,17 @@ async def _update_booking_impl(
                 or _customer_obj.policy_version != _settings.POLICY_VERSION
             )
 
-            if needs_policy and not policy_accepted:
+            effective_policy_accepted = policy_accepted
+            if needs_policy and not effective_policy_accepted and conversation_id:
+                _marker_version = await get_conversation_policy_acceptance(conversation_id)
+                if _marker_version == _settings.POLICY_VERSION:
+                    logger.info(
+                        "policy gate: acceptance recovered from conversation marker",
+                        extra={"tool_name": "update_booking"},
+                    )
+                    effective_policy_accepted = True
+
+            if needs_policy and not effective_policy_accepted:
                 if policy_rejection_count >= 2:
                     logger.info(
                         "tool.response.partial",
@@ -781,8 +840,17 @@ async def _update_booking_impl(
                     },
                 ).model_dump_json()
 
-            # Gate cleared — carry the flag forward in collected
-            if policy_accepted:
+            # Gate cleared — persist acceptance durably and carry the flag forward.
+            # Persistence happens ONLY when the gate was actually pending (needs_policy):
+            # repeated round-trip calls after acceptance skip the writes.
+            if effective_policy_accepted:
+                if needs_policy:
+                    await _persist_policy_acceptance(
+                        session=session,
+                        customer_id=customer_id,
+                        conversation_id=conversation_id,
+                        policy_version=_settings.POLICY_VERSION,
+                    )
                 collected["policy_accepted"] = True
                 collected["policy_version_accepted"] = _settings.POLICY_VERSION
 

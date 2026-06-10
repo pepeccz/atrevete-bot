@@ -84,3 +84,77 @@ def test_single_sentence_no_repeat() -> None:
     """Single sentence (no period or end) returns empty list."""
     result = _detect_repeated_sentences("Hola soy Maite y te ayudo con tu reserva")
     assert result == []
+
+
+# ---------------------------------------------------------------------------
+# Change L (L5) — run-level detector entry point for the qa-auditor
+# ---------------------------------------------------------------------------
+
+REPEATED = "Tenemos disponibilidad el martes a las diez de la mañana."
+
+
+def _detect_repeats_in_run(run: dict) -> dict:
+    from tests.e2e.harness.qa_turn_helper import detect_repeats_in_run
+
+    return detect_repeats_in_run(run)
+
+
+def test_run_with_repeated_turn_is_flagged() -> None:
+    """L5: a run JSON dict with one repeating turn yields one finding."""
+    run = {
+        "scenario_id": "impaciente-multiples-mensajes",
+        "turns": [
+            {"turn": 1, "agent_response": "Hola, ¿en qué puedo ayudarte hoy con tu cita?"},
+            {"turn": 2, "agent_response": f"{REPEATED} {REPEATED}"},
+        ],
+    }
+    result = _detect_repeats_in_run(run)
+    assert result["scenario_id"] == "impaciente-multiples-mensajes"
+    assert result["turns_with_repeats"] == 1
+    assert len(result["findings"]) == 1
+    finding = result["findings"][0]
+    assert finding["turn"] == 2
+    assert len(finding["repeated_sentences"]) == 1
+    assert REPEATED.rstrip(".") in finding["repeated_sentences"][0]
+
+
+def test_run_without_repeats_yields_no_findings() -> None:
+    """L5 (triangulation): a clean run produces zero findings."""
+    run = {
+        "scenario_id": "laconica-todo-una-linea",
+        "turns": [
+            {"turn": 1, "agent_response": "Hola, ¿en qué puedo ayudarte hoy con tu cita?"},
+            {"turn": 2, "agent_response": "Perfecto, te confirmo la cita para el martes."},
+        ],
+    }
+    result = _detect_repeats_in_run(run)
+    assert result["turns_with_repeats"] == 0
+    assert result["findings"] == []
+
+
+def test_run_with_missing_turns_key_is_safe() -> None:
+    """L5: malformed/partial run dicts (error outcomes) must not raise."""
+    result = _detect_repeats_in_run({"scenario_id": "broken-run"})
+    assert result["scenario_id"] == "broken-run"
+    assert result["turns_with_repeats"] == 0
+    assert result["findings"] == []
+
+
+def test_run_with_null_agent_response_is_safe() -> None:
+    """L5: turns with null agent_response (timeouts) are skipped, not crashed on."""
+    run = {
+        "scenario_id": "timeout-run",
+        "turns": [{"turn": 1, "agent_response": None}],
+    }
+    result = _detect_repeats_in_run(run)
+    assert result["findings"] == []
+
+
+def test_cli_declares_detect_repeats_subcommand() -> None:
+    """L5: the qa_turn_helper CLI must expose `detect-repeats --run-file`."""
+    from tests.e2e.harness.qa_turn_helper import _build_parser
+
+    parser = _build_parser()
+    args = parser.parse_args(["detect-repeats", "--run-file", "some-run.json"])
+    assert args.command == "detect-repeats"
+    assert args.run_file == "some-run.json"

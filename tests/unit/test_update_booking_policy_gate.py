@@ -109,11 +109,14 @@ def _standard_patches(
     session_ctx=None,
 ):
     """Context manager applying the standard set of patches needed for gate tests."""
+    from agent.tools._booking_validators import FKValidationResult
     from database.models import ServiceCategory
 
     sid = stylist_id or uuid4()
     ctx = session_ctx or _make_session_ctx()[0]
     settings = settings_mock or _make_settings_mock()
+    # Change I/J guards (FK existence + slot binding) are not under test here.
+    fk_ok = FKValidationResult(ok=True, error_code=None, error_message=None)
 
     # session.get() returns customer_state_in_db (for the policy gate DB lookup)
     inner_session = MagicMock()
@@ -157,6 +160,18 @@ def _standard_patches(
         patch("database.connection.get_async_session", return_value=inner_ctx),
         patch("agent.tools.update_booking.get_settings", return_value=settings),
         patch("agent.tools._booking_validators.is_date_closed", AsyncMock(return_value=False)),
+        patch(
+            "agent.tools.update_booking.validate_service_ids_exist",
+            AsyncMock(return_value=fk_ok),
+        ),
+        patch(
+            "agent.tools.update_booking.validate_stylist_id_exists",
+            AsyncMock(return_value=fk_ok),
+        ),
+        patch(
+            "agent.tools.update_booking.validate_slot_in_offered",
+            MagicMock(return_value=fk_ok),
+        ),
     ):
         yield inner_session
 
@@ -251,9 +266,9 @@ async def test_c1_services_none_no_crash():
     # Result must be a valid ToolResponse — not a crash
     assert "next_step" in result, f"Expected valid ToolResponse, got: {result}"
     # Must not have crashed with an internal error
-    assert "internal:" not in " ".join(result.get("errors", [])), (
-        f"Unexpected internal error: {result}"
-    )
+    assert "internal:" not in " ".join(
+        result.get("errors", [])
+    ), f"Unexpected internal error: {result}"
 
 
 # ---------------------------------------------------------------------------
@@ -304,15 +319,15 @@ async def test_policy_gate_new_customer():
         )
 
     result = parse_response(result_json)
-    assert result["next_step"] == "policy_acceptance_required", (
-        f"Expected policy_acceptance_required, got: {result}"
-    )
+    assert (
+        result["next_step"] == "policy_acceptance_required"
+    ), f"Expected policy_acceptance_required, got: {result}"
     payload = result.get("payload", {})
     assert "policy_url" in payload, f"Expected policy_url in payload: {payload}"
     assert "policy_version" in payload, f"Expected policy_version in payload: {payload}"
-    assert "policy_rejection_count" in payload, (
-        f"Expected policy_rejection_count in payload: {payload}"
-    )
+    assert (
+        "policy_rejection_count" in payload
+    ), f"Expected policy_rejection_count in payload: {payload}"
 
 
 # ---------------------------------------------------------------------------
@@ -366,9 +381,9 @@ async def test_policy_gate_stale_version():
         )
 
     result = parse_response(result_json)
-    assert result["next_step"] == "policy_acceptance_required", (
-        f"Expected policy_acceptance_required for stale version, got: {result}"
-    )
+    assert (
+        result["next_step"] == "policy_acceptance_required"
+    ), f"Expected policy_acceptance_required for stale version, got: {result}"
 
 
 # ---------------------------------------------------------------------------
@@ -419,14 +434,14 @@ async def test_policy_gate_cleared_on_acceptance():
         )
 
     result = parse_response(result_json)
-    assert result["next_step"] != "policy_acceptance_required", (
-        f"Gate should clear when policy_accepted=True, got: {result}"
-    )
+    assert (
+        result["next_step"] != "policy_acceptance_required"
+    ), f"Gate should clear when policy_accepted=True, got: {result}"
     # Gate cleared: collected should carry the flag forward
     collected = result.get("collected", {})
-    assert collected.get("policy_accepted") is True, (
-        f"Expected collected.policy_accepted=True, got collected: {collected}"
-    )
+    assert (
+        collected.get("policy_accepted") is True
+    ), f"Expected collected.policy_accepted=True, got collected: {collected}"
 
 
 # ---------------------------------------------------------------------------
@@ -476,13 +491,13 @@ async def test_policy_gate_escalation():
         )
 
     result = parse_response(result_json)
-    assert result["next_step"] == "policy_escalation_required", (
-        f"Expected policy_escalation_required at count=2, got: {result}"
-    )
+    assert (
+        result["next_step"] == "policy_escalation_required"
+    ), f"Expected policy_escalation_required at count=2, got: {result}"
     payload = result.get("payload", {})
-    assert payload.get("reason") == "policy_rejection", (
-        f"Expected reason='policy_rejection' in payload: {payload}"
-    )
+    assert (
+        payload.get("reason") == "policy_rejection"
+    ), f"Expected reason='policy_rejection' in payload: {payload}"
 
 
 # ---------------------------------------------------------------------------
@@ -541,6 +556,6 @@ async def test_policy_gate_skipped_current_version():
         "policy_escalation_required",
     ), f"Gate should be skipped for current-version customer, got: {result}"
     # All other gates pass → should reach booking_ready
-    assert result["next_step"] == "booking_ready", (
-        f"Expected booking_ready after gate skip, got: {result}"
-    )
+    assert (
+        result["next_step"] == "booking_ready"
+    ), f"Expected booking_ready after gate skip, got: {result}"
