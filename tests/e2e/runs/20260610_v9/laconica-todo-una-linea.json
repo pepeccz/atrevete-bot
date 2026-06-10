@@ -1,0 +1,93 @@
+{
+  "scenario_id": "laconica-todo-una-linea",
+  "conversation_id": "c1a9f0e2-3b4d-4e5f-8a6b-7c8d9e0f1a2b",
+  "outcome": "booked",
+  "turns_taken": 5,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Corte dama mañana 17h Marta.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nLo siento, con Marta no puedo reservar mañana porque no llega a la antelación mínima de 3 días. La primera fecha disponible es el sábado 13 de junio.\n\nCon Marta, los huecos que tengo son:\n1. Sábado 13 de junio a las 9:00\n2. Sábado 13 de junio a las 9:40\n3. Sábado 13 de junio a las 10:20\n4. Sábado 13 de junio a las 11:00\n\n¿Cuál te encaja?",
+      "latency_ms": 14727,
+      "timed_out": false,
+      "tool_calls_observed": ["check_availability", "get_next_available_options"],
+      "bugs": [],
+      "milestone": "availability_offered"
+    },
+    {
+      "turn": 2,
+      "user_message": "El 1.",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "latency_ms": 16222,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "slot_selected"
+    },
+    {
+      "turn": 3,
+      "user_message": "Sí.",
+      "agent_response": "Perfecto. Me falta tu nombre y primer apellido para dejarla cerrada.",
+      "latency_ms": 14821,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "policy_accepted"
+    },
+    {
+      "turn": 4,
+      "user_message": "Alejandra Pinto.",
+      "agent_response": "¿Alguna nota para Marta?",
+      "latency_ms": 13644,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "name_captured"
+    },
+    {
+      "turn": 5,
+      "user_message": "No.",
+      "agent_response": "¡Listo! Te queda confirmada la cita de **corte de mujer** con **Marta** para el **sábado 13 de junio a las 9:00** 🌸\n\nSi quieres, te puedo pasar también el enlace del calendario.",
+      "latency_ms": 29168,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "book"],
+      "bugs": [],
+      "milestone": "booked"
+    }
+  ],
+  "bugs": [],
+  "milestones_reached": ["availability_offered", "slot_selected", "policy_accepted", "name_captured", "booked"],
+  "db_delta": {
+    "customer_count_delta": 1,
+    "appt_count_delta": 1
+  },
+  "snapshot_before": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "snapshot_after": {
+    "customer_count": 1,
+    "appt_count": 1
+  },
+  "final_state": {"has_checkpoint": false},
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "booked",
+    "db_appointment": {"status": "confirmed"},
+    "tool_calls_required": ["check_availability", "book"],
+    "tool_calls_forbidden": [],
+    "tags": ["behavioral", "terse", "one-shot-parsing"]
+  },
+  "passed": true,
+  "notes": {
+    "reoffer_slots_fired": true,
+    "reoffer_slots_context": "update_booking returned next_step=reoffer_slots on turn 5 (no-notes reply), but the LLM correctly called book anyway after recovering offered slots from checkpoint. The appointment was created successfully.",
+    "p0_fix_confirmed": true,
+    "appointment_row": {
+      "id": "93078ab1-137b-40b4-a07c-d606f011d625",
+      "status": "confirmed",
+      "start_time": "2026-06-13 07:00:00+00 (09:00 Madrid)",
+      "gcal_sync_status": "not_applicable"
+    }
+  }
+}

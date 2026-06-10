@@ -23,6 +23,48 @@ logger = logging.getLogger(__name__)
 # ServiceCategory imported lazily inside functions to avoid circular imports at module load.
 
 # ---------------------------------------------------------------------------
+# Audience-from-name inference (Q1 — memory-service audience pinning)
+# ---------------------------------------------------------------------------
+
+# Mapping of normalized name tokens → audience value.
+# Mirrors the qualifier table in booking_flow.md Paso 2, applied to service NAMES
+# stored in customer memories (e.g. "Corte de Mujer" → adult_female).
+# Keys are lowercase, accent-stripped substrings. First match wins.
+_AUDIENCE_TOKEN_MAP: list[tuple[tuple[str, ...], str]] = [
+    # adult_female qualifiers
+    (("mujer", "dama", "senora", "señora", "chica", "femenino", "femenina"), "adult_female"),
+    # adult_male qualifiers
+    (("caballero", "hombre", "senor", "señor", "chico", "masculino"), "adult_male"),
+    # child qualifiers — order matters: check 'nina'/'nino' before 'bebe'
+    (("nina", "niña"), "child_female"),
+    (("nino", "niño"), "child_male"),
+    (("bebe", "bebé"), "baby"),
+]
+
+
+def _infer_audience_from_service_name(service_name: str) -> str | None:
+    """Infer audience from qualifier tokens embedded in a service name.
+
+    Used on the memory-resolution path (Q1) so that a service name like
+    "Corte de Mujer" stored in customer memories is resolved to the correct
+    adult_female audience variant without re-triggering the audience_required gate.
+
+    Returns the audience string ("adult_female" | "adult_male" | "child_female" |
+    "child_male" | "baby") when a qualifier token is found, or None when the name
+    contains no recognisable qualifier.
+
+    Pure function — no DB I/O.
+    """
+    normalized = _normalize_name(service_name)
+    tokens = normalized.split()
+    for qualifiers, audience_value in _AUDIENCE_TOKEN_MAP:
+        for token in tokens:
+            if token in qualifiers:
+                return audience_value
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Diminutive normalization helpers (ADR-10)
 # ---------------------------------------------------------------------------
 
@@ -385,10 +427,24 @@ async def _resolve_service_ids_strict(
             unknown.append(name)
             continue
 
+        # Q1 (memory-service audience pinning): when no caller audience is provided,
+        # attempt to infer audience from qualifier tokens in the service name itself.
+        # This covers memory-stored names like "Corte de Mujer" (adult_female) so that
+        # the audience_required gate does not fire for already-specific service names.
+        effective_audience = audience
+        if effective_audience is None:
+            effective_audience = _infer_audience_from_service_name(name)
+            if effective_audience is not None:
+                logger.debug(
+                    "_resolve_service_ids_strict: inferred audience=%s from name=%r",
+                    effective_audience,
+                    name,
+                )
+
         # Check for ambiguity before committing UUID.
         # Pass caller's audience so the gate does not fire when audience is already known.
         kind, family_label, candidates = await _resolve_audience_variants(
-            session, matched_internal, input_audience=audience
+            session, matched_internal, input_audience=effective_audience
         )
         if kind == "audience":
             logger.info(
