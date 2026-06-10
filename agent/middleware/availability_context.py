@@ -166,8 +166,12 @@ def _extract_offered_slots_from_messages(messages: list) -> list[dict]:
                 continue
             raw_slots = data.get("payload", {}).get("slots", [])
         else:
-            # get_next_available_options: {slots: [...]}
-            raw_slots = data.get("slots", [])
+            # get_next_available_options returns a ToolResponse:
+            # {status: ok, payload: {options: [...], ...}}
+            # Each option has start_iso/stylist_id field names.
+            if data.get("status") != "ok":
+                continue
+            raw_slots = data.get("payload", {}).get("options", [])
 
         for s in raw_slots:
             start_iso = s.get("start_iso") or s.get("start") or s.get("datetime")

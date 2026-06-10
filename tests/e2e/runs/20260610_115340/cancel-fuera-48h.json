@@ -1,0 +1,116 @@
+{
+  "scenario_id": "cancel-fuera-48h",
+  "conversation_id": "05b05fdb-8724-42b9-ae96-1b2ac6853a92",
+  "outcome": "escalated",
+  "turns_taken": 4,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, tengo cita mañana pero me ha surgido un imprevisto, quiero cancelarla.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nTienes una cita mañana, jueves 11 de junio a las 11:00 con Marta para Corte de Mujer. ¿Quieres que la cancele?",
+      "latency_ms": 17493,
+      "timed_out": false,
+      "tool_calls_observed": ["manage_appointments"],
+      "bugs": [],
+      "milestone": "N1 verified — seeded customer Nuria Castillo resolved; appointment (mañana 11:00, Marta, Corte de Mujer) looked up via manage_appointments. No CustomerResolveMiddleware crash."
+    },
+    {
+      "turn": 2,
+      "user_message": "Sí, por favor cancélala. Me ha surgido un imprevisto y no podré ir.",
+      "agent_response": "No he podido completar la cancelación por verificación de identidad. Lo intento de nuevo por aquí contigo.",
+      "latency_ms": 16673,
+      "timed_out": false,
+      "tool_calls_observed": ["manage_appointments"],
+      "bugs": [
+        {
+          "type": "policy_explanation_weak",
+          "detail": "Bot attempted the cancel (inside-48h, blocked) but framed the block as 'verificación de identidad' instead of empathetically explaining the 48h cancellation policy. Did not state the 48h rule."
+        }
+      ],
+      "milestone": "Inside-48h cancel attempted and blocked; bot offers to handle in-channel (did NOT refer to phoning the salon)."
+    },
+    {
+      "turn": 3,
+      "user_message": "Pero es que de verdad no puedo ir, necesito cancelarla sí o sí. ¿No hay manera?",
+      "agent_response": "Puedo ayudarte, pero ahora mismo no me ha dejado verificar la identidad para cancelar la cita. Si quieres, lo sigo intentando por aquí contigo.",
+      "latency_ms": 11411,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [
+        {
+          "type": "policy_explanation_weak",
+          "detail": "On persona insistence, bot repeated the 'verificación de identidad' framing rather than explaining the 48h policy and proactively offering escalation. It did NOT refer her to phone the salon (good), but missed the empathetic 48h-policy explanation."
+        }
+      ],
+      "milestone": "Bot stays in-channel; offers to keep trying with her."
+    },
+    {
+      "turn": 4,
+      "user_message": "Bueno, ¿puedo hablar con una persona para que me lo gestione?",
+      "agent_response": "Te paso con una persona del equipo ahora mismo.",
+      "latency_ms": 12662,
+      "timed_out": false,
+      "tool_calls_observed": ["escalate"],
+      "bugs": [],
+      "milestone": "N2 verified — escalate fired; real escalations DB row written (id 518b3b86-66ec-490d-9420-6201cd279e72, status=triggered). No phantom success, no UUID-cast crash."
+    }
+  ],
+  "bugs": [
+    {
+      "type": "policy_explanation_weak",
+      "severity": "warning",
+      "detail": "Across turns 2-3 the bot framed the inside-48h cancellation block as 'verificación de identidad' rather than empathetically explaining the 48h cancellation policy. It correctly stayed in-channel and never referred the customer to phone the salon, and ultimately escalated, but the policy was never articulated to the customer. Outcome (escalated, appointment stays confirmed) is still correct."
+    }
+  ],
+  "milestones_reached": [
+    "N1: seeded customer resolved (no CustomerResolveMiddleware crash)",
+    "manage_appointments looked up the seeded appointment",
+    "inside-48h cancel blocked (appointment NOT cancelled)",
+    "bot stayed in-channel — never referred customer to phone the salon",
+    "escalate tool fired",
+    "N2: real escalations DB row written (no phantom success, no UUID-cast crash)",
+    "appointment remained status=confirmed in DB"
+  ],
+  "db_delta": {
+    "customer_count_delta": 0,
+    "appt_count_delta": 0,
+    "escalation_count_delta": 1
+  },
+  "snapshot_before": {
+    "customer_count": 1,
+    "appt_count": 1,
+    "escalation_count": 0
+  },
+  "snapshot_after": {
+    "customer_count": 1,
+    "appt_count": 1,
+    "escalation_count": 1,
+    "appointment_status": "confirmed",
+    "appointment_cancelled_at": null
+  },
+  "final_state": {
+    "has_checkpoint": false
+  },
+  "langfuse_trace_path": null,
+  "langfuse_error": "401 UnauthorizedError — invalid Langfuse credentials on server (skipped per Rule 9)",
+  "n1_customer_resolved": true,
+  "n2_escalation_row_written": true,
+  "n2_phantom_success": false,
+  "escalation_row": {
+    "id": "518b3b86-66ec-490d-9420-6201cd279e72",
+    "customer_phone": "+34999000045",
+    "reason": "manual_request",
+    "source": "manual",
+    "status": "triggered",
+    "is_technical_error": false,
+    "triggered_at": "2026-06-10T09:58:18.483408+00:00"
+  },
+  "expect": {
+    "outcome": "escalated",
+    "db_appointment": {"status": "confirmed"},
+    "tool_calls_required": ["manage_appointments", "escalate"],
+    "tool_calls_forbidden": ["book"],
+    "tags": ["cancel", "inside-48h", "escalation"]
+  },
+  "passed": true
+}

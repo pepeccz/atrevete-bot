@@ -38,10 +38,37 @@ def _make_check_availability_tool_msg(slots: list[dict]) -> MagicMock:
 
 
 def _make_next_available_tool_msg(slots: list[dict]) -> MagicMock:
-    """Build a fake ToolMessage that looks like a get_next_available_options response."""
+    """Build a fake ToolMessage that looks like a get_next_available_options response (old buggy format).
+
+    Kept for backward-compatibility with existing tests. New tests should use
+    _make_next_available_tool_msg_v2 which reflects the real ToolResponse shape.
+    """
     msg = MagicMock()
     msg.name = "get_next_available_options"
     msg.content = json.dumps({"slots": slots})
+    return msg
+
+
+def _make_next_available_tool_msg_v2(options: list[dict]) -> MagicMock:
+    """Build a fake ToolMessage with the real ToolResponse shape for get_next_available_options.
+
+    The tool wraps its output in ToolResponse: {status: ok, payload: {options: [...]}}.
+    Each option has at least start_iso and stylist_id fields (plus stylist_name, service_label).
+    """
+    msg = MagicMock()
+    msg.name = "get_next_available_options"
+    msg.content = json.dumps(
+        {
+            "status": "ok",
+            "payload": {
+                "options": options,
+                "searched_until": "2026-06-17",
+                "requested_date_iso": "2026-06-11",
+                "total_duration_minutes": 60,
+                "strategy": "same_stylist_then_any",
+            },
+        }
+    )
     return msg
 
 
@@ -300,3 +327,192 @@ async def test_middleware_purges_stale_by_turn_index():
     assert (
         len(stale_found) == 0
     ), f"Slot with turn_index=5 should have been purged (current ~8), found: {stale_found}"
+
+
+# ---------------------------------------------------------------------------
+# O1: get_next_available_options ToolResponse shape (payload.options)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_middleware_materializes_offered_slots_from_get_next_available_options():
+    """O1: get_next_available_options uses ToolResponse shape {status, payload.options}.
+
+    Regression: the old code read data.get("slots", []) which was always empty because
+    the tool wraps output in ToolResponse → slots at payload.options, not top-level slots.
+    After the fix, recently_offered_slots must be populated from payload.options.
+    """
+    from agent.middleware.availability_context import AvailabilityContextMiddleware
+
+    slot_iso = "2026-06-12T10:00:00+00:00"
+    options = [
+        {
+            "start_iso": slot_iso,
+            "stylist_id": STYLIST_ID,
+            "stylist_name": "Harolyn",
+            "service_label": "Corte Dama",
+        }
+    ]
+    messages = [_make_next_available_tool_msg_v2(options)]
+
+    captured_state_ref = {}
+
+    def capture_override(state):
+        captured_state_ref.update(state)
+        return MagicMock(state=state)
+
+    with (
+        patch(
+            "agent.middleware.availability_context._extract_service_ids_from_messages",
+            return_value=[SERVICE_ID],
+        ),
+        patch(
+            "agent.middleware.availability_context.get_availability_window",
+            new=AsyncMock(return_value={}),
+        ),
+        patch(
+            "agent.middleware.availability_context._get_redis",
+            return_value=None,
+        ),
+    ):
+        middleware = AvailabilityContextMiddleware()
+        request = _build_request({"conversation_id": CONV_ID}, messages)
+        request.override = capture_override
+
+        await middleware.awrap_model_call(request, AsyncMock(return_value=MagicMock()))
+
+    assert (
+        "recently_offered_slots" in captured_state_ref
+    ), "recently_offered_slots must be populated from get_next_available_options payload.options"
+    offered = captured_state_ref["recently_offered_slots"]
+    assert len(offered) >= 1, "At least one slot must be extracted from get_next_available_options"
+    slot_isos = {s["start_iso"] for s in offered}
+    from datetime import datetime as _dt
+
+    assert any(
+        _dt.fromisoformat(s.replace("Z", "+00:00")).astimezone(UTC)
+        == _dt.fromisoformat(slot_iso.replace("Z", "+00:00")).astimezone(UTC)
+        for s in slot_isos
+    ), f"Expected slot {slot_iso} in offered slots, got: {slot_isos}"
+
+
+@pytest.mark.asyncio
+async def test_middleware_get_next_available_rejected_does_not_populate_slots():
+    """O1 robustness: rejected get_next_available_options must not add slots."""
+    from agent.middleware.availability_context import AvailabilityContextMiddleware
+
+    msg = MagicMock()
+    msg.name = "get_next_available_options"
+    msg.content = json.dumps({"status": "rejected", "errors": ["Fecha pasada"], "payload": None})
+    messages = [msg]
+
+    captured_state_ref = {}
+
+    def capture_override(state):
+        captured_state_ref.update(state)
+        return MagicMock(state=state)
+
+    with (
+        patch(
+            "agent.middleware.availability_context._extract_service_ids_from_messages",
+            return_value=[SERVICE_ID],
+        ),
+        patch(
+            "agent.middleware.availability_context.get_availability_window",
+            new=AsyncMock(return_value={}),
+        ),
+        patch(
+            "agent.middleware.availability_context._get_redis",
+            return_value=None,
+        ),
+    ):
+        middleware = AvailabilityContextMiddleware()
+        request = _build_request({"conversation_id": CONV_ID}, messages)
+        request.override = capture_override
+
+        await middleware.awrap_model_call(request, AsyncMock(return_value=MagicMock()))
+
+    offered = captured_state_ref.get("recently_offered_slots", [])
+    assert (
+        offered == []
+    ), "Rejected get_next_available_options must not contribute slots, got: " + str(offered)
+
+
+@pytest.mark.asyncio
+async def test_book_accepts_slot_offered_via_get_next_available_options():
+    """O1 end-to-end: book() must accept a slot that was offered via get_next_available_options.
+
+    Simulates the full path: ToolResponse-wrapped options → extractor → recently_offered_slots
+    → validate_slot_in_offered passes → book proceeds past J3 guard.
+    """
+
+    from datetime import UTC, datetime
+
+    from agent.middleware.availability_context import (
+        _extract_offered_slots_from_messages,
+        _materialize_offered_slots,
+    )
+
+    slot_iso = "2026-06-20T10:00:00+00:00"
+    options = [
+        {
+            "start_iso": slot_iso,
+            "stylist_id": STYLIST_ID,
+            "stylist_name": "Marta",
+            "service_label": "Corte Dama",
+        }
+    ]
+    messages = [_make_next_available_tool_msg_v2(options)]
+
+    # Verify extractor works with ToolResponse shape
+    raw_slots = _extract_offered_slots_from_messages(messages)
+    assert len(raw_slots) == 1, f"Extractor must return 1 slot, got: {raw_slots}"
+    assert raw_slots[0]["start_iso"] == slot_iso
+    assert raw_slots[0]["stylist_id"] == STYLIST_ID
+
+    # Verify materialize produces a valid offered slot
+    now = datetime.now(UTC)
+    offered = _materialize_offered_slots(raw_slots, [], current_turn_index=2, now=now)
+    assert len(offered) == 1
+    assert offered[0]["start_iso"] == slot_iso
+
+    # Verify validate_slot_in_offered accepts it
+    from agent.tools._booking_validators import validate_slot_in_offered
+
+    result = validate_slot_in_offered(slot_iso, STYLIST_ID, offered)
+    assert result.ok, (
+        f"validate_slot_in_offered must accept slot from get_next_available_options, "
+        f"got error: {result.error_message}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_slot_offered_4_turns_ago_still_in_offered_after_rescan():
+    """O1 secondary: slots offered > 2 turns ago survive because re-scan refreshes turn_index.
+
+    The extractor re-reads ALL ToolMessages every turn, so a slot from turn 2
+    gets turn_index = current_turn (10) on re-scan. Purge never fires.
+    """
+    from datetime import UTC, datetime
+
+    from agent.middleware.availability_context import (
+        _extract_offered_slots_from_messages,
+        _materialize_offered_slots,
+    )
+
+    slot_iso = "2026-06-25T14:00:00+00:00"
+    options = [{"start_iso": slot_iso, "stylist_id": STYLIST_ID, "stylist_name": "Rosa"}]
+
+    # Build a message list: the get_next_available_options call was at index 2,
+    # and we're now at turn index 10 (10 messages total)
+    messages = [MagicMock()] * 9 + [_make_next_available_tool_msg_v2(options)]
+    # Simulate: message at index 2 also has the original offer
+    messages[2] = _make_next_available_tool_msg_v2(options)
+
+    now = datetime.now(UTC)
+    raw_slots = _extract_offered_slots_from_messages(messages)
+    offered = _materialize_offered_slots(raw_slots, [], current_turn_index=10, now=now)
+
+    assert any(
+        s["start_iso"] == slot_iso for s in offered
+    ), "Slot offered in an early turn must still be present after re-scan refreshes turn_index"

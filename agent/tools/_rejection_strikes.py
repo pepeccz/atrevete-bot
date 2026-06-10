@@ -24,8 +24,25 @@ logger = logging.getLogger(__name__)
 REJECTION_ESCALATION_THRESHOLD = 2
 """Strike count (current rejection included) at which the directive fires."""
 
-_STRIKE_EXEMPT_NEXT_STEPS: frozenset[str] = frozenset({"policy_acceptance_required"})
-"""next_step values with their own deterministic escalation path (R36)."""
+_STRIKE_EXEMPT_NEXT_STEPS: frozenset[str] = frozenset(
+    {
+        # Recoverable normal-flow gates — these are expected in a healthy booking flow and
+        # resolve themselves when the LLM calls check_availability or gets confirmation.
+        # Counting them toward escalation threshold causes premature escalation (O4 V7 fix).
+        "reoffer_slots",
+        "confirmation_required",
+        "pre_book_validation_required",
+        # Policy gate has its own deterministic escalation path (R36) — exempt as before.
+        "policy_acceptance_required",
+    }
+)
+"""next_step values exempt from the forced-escalation strike counter.
+
+Normal-flow gates (reoffer_slots, confirmation_required, pre_book_validation_required)
+are recoverable and expected in multi-turn booking flows. Only true validator refusals
+(invalid_service_ids, invalid_stylist_id, slot_not_offered after a genuine re-offer,
+policy/ownership failures) should count toward the escalation threshold.
+"""
 
 
 def count_consecutive_rejections(messages: list, tool_name: str, next_step: str) -> int:

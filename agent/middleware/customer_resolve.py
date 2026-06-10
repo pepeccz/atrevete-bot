@@ -19,6 +19,8 @@ from datetime import datetime
 from typing import ClassVar
 
 from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
+from langchain.agents.middleware import ExtendedModelResponse
+from langgraph.types import Command
 
 from agent.services.customer_memory_service import read_customer_memories
 from shared.config import get_settings
@@ -274,7 +276,7 @@ class CustomerResolveMiddleware(AgentMiddleware):
 
         slot = "\n".join(slot_parts)
 
-        # Inject state delta only if not already set
+        # Inject state delta for model context (per-turn overlay)
         new_state = {**state, "_slot_customer": slot, "customer_memories": memories}
         if state.get("customer_id") is None:
             new_state["customer_id"] = customer["id"]
@@ -282,4 +284,21 @@ class CustomerResolveMiddleware(AgentMiddleware):
             new_state["customer_name"] = customer["name"]
         modified_request = request.override(state=new_state)
 
-        return await handler(modified_request)
+        response = await handler(modified_request)
+
+        # O2 fix: persist customer_id + customer_name to the LangGraph graph state via
+        # ExtendedModelResponse Command so InjectedState in tools (book, manage_appointments)
+        # receives the resolved customer_id even when the graph state was not yet updated.
+        # Without this, customer_id only lives in the per-turn request.state overlay and
+        # tools invoked after the model call see customer_id=None from the checkpoint.
+        state_delta: dict = {}
+        if state.get("customer_id") is None:
+            state_delta["customer_id"] = customer["id"]
+        if state.get("customer_name") is None:
+            state_delta["customer_name"] = customer["name"]
+        if state_delta:
+            return ExtendedModelResponse(
+                model_response=response,
+                command=Command(update=state_delta),
+            )
+        return response

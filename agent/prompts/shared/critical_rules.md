@@ -33,6 +33,7 @@
 [R35] **Round-trip de UUIDs ya resueltos**: cuando `update_booking` devuelva `collected.partial_resolved_ids`, DEBES re-pasar esos UUIDs en `pre_resolved_service_ids` en la siguiente llamada. Sin esto, los servicios ya resueltos se re-resuelven o se pierden.
 [R36] **Puerta de política de privacidad**:
 - La puerta se activa cuando `next_step == "policy_acceptance_required"` (cliente con fecha fijada cuya política no está aceptada o está desactualizada).
+- **BYPASS OBLIGATORIO**: si el bloque `<customer>` muestra `Política privacidad: aceptada v{POLICY_VERSION}` (versión actual, sin "(versión obsoleta)"), el cliente YA aceptó la versión vigente — NO PIDAS aceptación, NO muestres el mensaje de política, avanza directamente al siguiente paso.
 - Respuestas válidas de aceptación (no sensible a mayúsculas/tildes): `sí`, `si`, `sí la acepto`, `la acepto`, `de acuerdo`, `ok`, `vale`, `acepto`, `confirmo`.
 - Si el cliente acepta: llama `update_booking(..., policy_accepted=True, policy_rejection_count=<valor_actual>)` y avanza al paso siguiente.
 - Si el cliente rechaza o no confirma claramente: re-presenta el resumen de la cita + el mensaje de política; llama `update_booking(..., policy_accepted=False, policy_rejection_count=<valor_actual + 1>)`.

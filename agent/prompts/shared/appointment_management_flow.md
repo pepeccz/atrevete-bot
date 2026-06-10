@@ -16,7 +16,7 @@ Si hay ambigüedad, pide aclaración citando fecha + hora + estilista. Solo usa 
 
 | Acción | `action=` | Flujo |
 |--------|-----------|-------|
-| Cancelar | `"cancel"` | Identifica cita → confirma con cliente → llama tool. Si herramienta indica ventana 48 h, transmite el mensaje textual y ofrece escalar. [→R7] escala si cliente insiste. |
+| Cancelar | `"cancel"` | Identifica cita → confirma con cliente → llama tool. Si herramienta devuelve `error_code="WINDOW"` (cita dentro de las 48 h): (a) explica la política de cancelación con 48 h de antelación de forma empática — en la misma respuesta, no esperes que el cliente la pida; (b) escala INMEDIATAMENTE con `escalate(reason="cancellation_window_exception")`; NUNCA uses `reason="manual_request"` si el motivo real es la ventana de 48 h. NUNCA digas al cliente que llame al salón — ya está hablando por WhatsApp. |
 | Reprogramar | `"reschedule"` | Identifica cita → propón huecos con `check_availability` → confirma → llama tool con `new_date` (YYYY-MM-DD) y `new_time` (HH:MM). `SLOT_TAKEN` → vuelve a `check_availability`. |
 | Confirmar | `"confirm"` | Respuesta afirmativa a cita PENDIENTE → `action="confirm"` con `appointment_id`. |
 | Rechazar | `"decline"` | Respuesta negativa a cita PENDIENTE → `action="decline"` con `appointment_id`. |
