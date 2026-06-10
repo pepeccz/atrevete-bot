@@ -1,0 +1,184 @@
+{
+  "scenario_id": "confundida-pide-aclaracion",
+  "conversation_id": "76cdf30b-8bb8-4c7a-8c3f-064b6b9a8a98",
+  "outcome": "stuck",
+  "turns_taken": 14,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, quería pedir hora para arreglarme el pelo pero no entiendo qué es lo que ofrecéis exactamente.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nTe ayudo encantada. Para orientarte bien, ¿buscas un corte, un peinado, un tinte o algún tratamiento capilar?",
+      "latency_ms": 14845,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "ai_disclosure_done (R-39); offered simple service categories to confused customer"
+    },
+    {
+      "turn": 2,
+      "user_message": "Ay hija, es que no entiendo esas palabras. Yo solo quiero que me corten el pelo y me lo dejen arregladito, como siempre.",
+      "agent_response": "Perfecto, te anoto un corte de mujer 😊\n\n¿Quieres añadir algún otro servicio o solo el corte?",
+      "latency_ms": 16268,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "intent_resolved: corte de mujer (mapped plain-language request correctly)"
+    },
+    {
+      "turn": 3,
+      "user_message": "Solo el corte, hija. ¿Y para cuándo me puedes dar hora?",
+      "agent_response": "Te puedo ofrecer estas opciones para un corte de mujer con la estilista con disponibilidad más próxima:\n\n1. Martes 16 de junio a las 10:00 con Marta\n2. Martes 16 de junio a las 10:40 con Marta\n3. Martes 16 de junio a las 11:20 con Marta\n\n¿Cuál te viene mejor?",
+      "latency_ms": 16663,
+      "timed_out": false,
+      "tool_calls_observed": ["check_availability"],
+      "bugs": [],
+      "milestone": "slots_offered BEFORE asking name/notes — V6 flow-ordering smell RESOLVED"
+    },
+    {
+      "turn": 4,
+      "user_message": "El martes a las diez me viene bien, hija.",
+      "agent_response": "Perfecto, te lo dejo el martes 16 de junio a las 10:00 con Marta para corte de mujer.  \n\nAntes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "latency_ms": 14963,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "slot_selected; policy_gate_presented"
+    },
+    {
+      "turn": 5,
+      "user_message": "Sí hija, lo que tú digas, la acepto.",
+      "agent_response": "Perfecto. Me falta tu nombre y primer apellido para dejarla registrada.",
+      "latency_ms": 18490,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "policy_accepted; name requested"
+    },
+    {
+      "turn": 6,
+      "user_message": "Pilar Hernández, hija.",
+      "agent_response": "Gracias, Pilar. ¿Quieres dejarme alguna nota para Marta?",
+      "latency_ms": 18098,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "name_collected; notes prompt (optional)"
+    },
+    {
+      "turn": 7,
+      "user_message": "No hija, nada, solo el corte de siempre.",
+      "agent_response": "Se me ha quedado atascada la confirmación técnica de la cita, así que no quiero darte una reserva que no esté bien cerrada.\n\nPuedo reintentarlo en un momento, pero ahora mismo no me deja completar el guardado.",
+      "latency_ms": 25533,
+      "timed_out": false,
+      "tool_calls_observed": ["book"],
+      "bugs": [
+        {"type": "sandbox_artifact", "detail": "book tool returned tool.response.rejected next_step=reoffer_slots — selected slot (martes 16 10:00 Marta) taken by a competing parallel sandbox run before commit (slot-race). Bot recovery honest and correct: refuses to confirm an unsaved booking."}
+      ],
+      "milestone": "FIRST book attempt rejected (slot-race / sandbox_artifact)"
+    },
+    {
+      "turn": 8,
+      "user_message": "Inténtalo otra vez, hija, por favor.",
+      "agent_response": "Lo he vuelto a intentar y sigue bloqueándose por el sistema de huecos, Pilar. No quiero prometerte una reserva que luego no quede guardada.\n\nSi quieres, puedo seguir insistiendo un poco más o, si prefieres, buscamos otra hora.",
+      "latency_ms": 23840,
+      "timed_out": false,
+      "tool_calls_observed": ["book"],
+      "bugs": [
+        {"type": "sandbox_artifact", "detail": "Retry on same slot still reoffer_slots (slot still taken). Recovery offers retry OR alternative slot — correct."}
+      ],
+      "milestone": "retry rejected; bot offers alternative"
+    },
+    {
+      "turn": 9,
+      "user_message": "Bueno hija, pues dame otra hora que esté libre, la que sea.",
+      "agent_response": "Te doy las siguientes con Marta, que es la más cercana:\n\n1. Miércoles 17 de junio a las 10:00\n2. Miércoles 17 de junio a las 10:40\n3. Miércoles 17 de junio a las 11:20\n\n¿Cuál prefieres?",
+      "latency_ms": 22555,
+      "timed_out": false,
+      "tool_calls_observed": ["check_availability"],
+      "bugs": [],
+      "milestone": "fresh slots re-offered (Wed) — correct recovery"
+    },
+    {
+      "turn": 10,
+      "user_message": "El miércoles a las diez, hija.",
+      "agent_response": "Sigue dando el mismo bloqueo al guardar, Pilar. Ya tengo todo preparado, pero el sistema no me deja cerrar la cita todavía.\n\nSi quieres, puedo seguir probando o buscarte otra opción distinta.",
+      "latency_ms": 24697,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "book"],
+      "bugs": [
+        {"type": "sandbox_artifact", "detail": "New slot (Wed 10:00 Marta) also raced — book rejected reoffer_slots. Persistent slot contention from concurrent runner subagents."}
+      ],
+      "milestone": "second distinct slot also slot-raced"
+    },
+    {
+      "turn": 11,
+      "user_message": "¿No tienes con otra peluquera o un poco más adelante? Lo que sea con tal de tener mi cita, hija.",
+      "agent_response": "Sí, te puedo ofrecer otra hora:\n\n1. Jueves 18 de junio a las 10:00\n2. Jueves 18 de junio a las 10:40\n3. Jueves 18 de junio a las 11:20\n\n¿Te encaja alguna de estas?",
+      "latency_ms": 25503,
+      "timed_out": false,
+      "tool_calls_observed": ["check_availability"],
+      "bugs": [],
+      "milestone": "fresh slots re-offered (Thu) — continued correct recovery"
+    },
+    {
+      "turn": 12,
+      "user_message": "El jueves a las diez, hija, esa me va bien.",
+      "agent_response": "Me está pasando lo mismo con el guardado, Pilar: el sistema valida el hueco pero luego no me deja cerrar la cita.\n\nNo quiero engañarte diciéndote que está confirmado cuando no lo está. Si quieres, sigo intentando con otra hora o te busco otro día.",
+      "latency_ms": 26019,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "book"],
+      "bugs": [
+        {"type": "sandbox_artifact", "detail": "Third distinct slot (Thu 10:00) also raced. Bot stays honest: 'no quiero engañarte diciéndote que está confirmado cuando no lo está'."}
+      ],
+      "milestone": "third distinct slot also slot-raced"
+    },
+    {
+      "turn": 13,
+      "user_message": "Prueba una vez más, hija, a ver si ahora sí.",
+      "agent_response": "Lo siento, Pilar: lo he vuelto a intentar y sigue sin dejarme cerrarla desde aquí.\n\nNo es que no haya hueco; es que el sistema me está bloqueando el último paso. Si quieres, puedo seguir buscando otra hora disponible o dejarlo aquí para que no te haga perder más tiempo.",
+      "latency_ms": 29807,
+      "timed_out": false,
+      "tool_calls_observed": ["book"],
+      "bugs": [
+        {"type": "sandbox_artifact", "detail": "Final retry still rejected. Bot correctly distinguishes 'no es que no haya hueco' from the save block and offers a graceful exit."}
+      ],
+      "milestone": "final retry rejected"
+    },
+    {
+      "turn": 14,
+      "user_message": "Bueno hija, déjalo, ya volveré a llamar otro día. Gracias.",
+      "agent_response": "De nada, Pilar. Siento no haber podido dejarte la cita cerrada esta vez. Cuando quieras, lo volvemos a intentar y te ayudo con gusto.",
+      "latency_ms": 10390,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "graceful close; no booking committed (max_turns reached)"
+    }
+  ],
+  "bugs": [
+    {"type": "sandbox_artifact", "detail": "book repeatedly returned tool.response.rejected next_step=reoffer_slots across 3 distinct slots (Tue/Wed/Thu 10:00 with Marta). Root cause: slot-race — concurrent parallel runner subagents booked Marta's near-term slots before this run's book committed. Confirmed in agent logs (agent.tools.book tool.response.rejected; _rejection_strikes escalation_directive at strikes=2). NOT an app bug; bot recovery behavior was correct and honest throughout."}
+  ],
+  "milestones_reached": [
+    "ai_disclosure_R39",
+    "plain_language_intent_mapping",
+    "slots_offered_before_name_notes",
+    "policy_gate_accepted",
+    "name_collected",
+    "honest_book_failure_recovery",
+    "repeated_fresh_slot_reoffer"
+  ],
+  "db_delta": {"customer_count_delta": 0, "appt_count_delta": 0},
+  "snapshot_before": {"customer_count": 0, "appt_count": 0},
+  "snapshot_after": {"customer_count": 0, "appt_count": 0},
+  "final_state": {"has_checkpoint": false},
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "booked",
+    "db_appointment": {"status": "confirmed"},
+    "tool_calls_required": ["check_availability", "book"],
+    "tool_calls_forbidden": [],
+    "tags": ["behavioral", "confused", "re-explain"]
+  },
+  "passed": false,
+  "notes": "FAIL attributable to sandbox_artifact (slot-race), NOT to bot behavior. V7 flow-ordering check: PASSED — bot showed available slots at turn 3 BEFORE collecting name (turn 5-6) and notes (turn 6); the V6 efficiency smell (name/notes before slots) is resolved. Conversational quality remained GOOD throughout: R-39 disclosure, warm Castellano (no voseo), patient plain-language re-explanation for an elderly confused customer, and honest, non-hallucinated handling of the save failure (explicitly refused to claim a confirmation that wasn't saved). Recovery behavior on slot conflict was exemplary: re-offered fresh slots 3 times (Tue->Wed->Thu) and gave a graceful exit when the customer gave up. Langfuse trace pull failed with 401 Unauthorized (env credential issue, matches OTLP 401s in agent logs) -> langfuse_trace_path null per skill rule 9."
+}

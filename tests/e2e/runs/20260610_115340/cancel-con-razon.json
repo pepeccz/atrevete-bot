@@ -1,0 +1,114 @@
+{
+  "scenario_id": "cancel-con-razon",
+  "conversation_id": "783b52e5-c643-4471-a863-383958aa088c",
+  "outcome": "escalated",
+  "turns_taken": 4,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, tengo una cita la semana que viene pero estoy con fiebre, prefiero cancelarla.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nLo siento, espero que te mejores pronto. Tienes una cita el lunes 15 de junio a las 11:00 con Marta para Moldeado.\n\n¿Quieres que la cancele?",
+      "latency_ms": 14355,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "N4 verified: fever/illness reason did NOT trigger R-37 chemical-safety escalation; bot empathized and correctly looked up the appointment (lunes 15 junio 11:00, Marta, Moldeado) via AppointmentContextMiddleware, then asked for cancel confirmation."
+    },
+    {
+      "turn": 2,
+      "user_message": "Sí, cancélala por favor. Ya pediré otra cuando me recupere.",
+      "agent_response": "Lo siento, no he podido verificar tu identidad para hacer la cancelación.\n\nSi quieres, puedo seguir ayudándote a gestionar la cita por aquí.",
+      "latency_ms": 14296,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [
+        {
+          "type": "cancel_blocked_identity",
+          "severity": "critical",
+          "detail": "On explicit cancel confirmation the bot returned the CUSTOMER_ID_REQUIRED message ('No pude verificar tu identidad', manage_appointments_tool.py:148) instead of cancelling. No tool_evidence captured across any of the 3 collector tiers (checkpoint/stream/db_turns) and no manage_appointments.idor_rejected warning was logged, indicating manage_appointments was never successfully invoked with a resolved customer_id (customer_id=None at tool entry). Customer exists in DB and AppointmentContextMiddleware injected 1 appointment for the customer, so the appointment lookup worked but the cancel-path identity resolution did not."
+        }
+      ],
+      "milestone": "Cancel request blocked by identity verification — appointment NOT cancelled."
+    },
+    {
+      "turn": 3,
+      "user_message": "Soy Isabel Domínguez, la cita es la del lunes 15 a las 11:00 con Marta. Cancélala, por favor.",
+      "agent_response": "No he podido completar la cancelación porque el sistema no ha verificado la identidad.\n\nSi quieres, puedo seguir intentándolo por este canal.",
+      "latency_ms": 15116,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [
+        {
+          "type": "cancel_blocked_identity",
+          "severity": "critical",
+          "detail": "Re-asserting name + appointment details did not unblock the cancel. Same identity-verification failure repeated; no tool_evidence and no DB mutation."
+        }
+      ],
+      "milestone": "Cancel still blocked after identity reassertion."
+    },
+    {
+      "turn": 4,
+      "user_message": "¿Entonces no puedes cancelarla? Necesito que la canceles.",
+      "agent_response": "Te paso con una persona del equipo ahora mismo.",
+      "latency_ms": 11199,
+      "timed_out": false,
+      "tool_calls_observed": ["escalate"],
+      "bugs": [
+        {
+          "type": "wrong_terminal_outcome",
+          "severity": "critical",
+          "detail": "Bot escalated to a human instead of self-service cancelling a >48h appointment. escalation_service fired (steps_completed=['db_record','admin_notification']; Chatwoot steps failed only because the sandbox conv_id is not a numeric Chatwoot ID — sandbox artifact). Root cause is upstream: the cancel path could not resolve customer_id, so the >48h policy-allowed self-service cancellation never executed and the bot fell back to escalation. Expected outcome 'cancelled' was not reached."
+        }
+      ],
+      "milestone": "Bot escalated to human; appointment remains CONFIRMED in DB."
+    }
+  ],
+  "bugs": [
+    {
+      "type": "cancel_blocked_identity",
+      "severity": "critical",
+      "detail": "manage_appointments cancel path returned CUSTOMER_ID_REQUIRED ('No pude verificar tu identidad', manage_appointments_tool.py:148) on a >48h appointment owned by the resolved customer. No tool_evidence in any of the 3 collector tiers, no idor_rejected warning, and zero persisted conversation_turns.tool_calls — manage_appointments was never successfully invoked with a non-null customer_id. AppointmentContextMiddleware DID inject the appointment (lookup worked), so the failure is specific to customer_id resolution on the mutation/cancel path. Appointment stayed status='confirmed', cancelled_at=NULL."
+    },
+    {
+      "type": "wrong_terminal_outcome",
+      "severity": "critical",
+      "detail": "After repeated identity-verification failures the bot escalated to a human (outcome=escalated) instead of cancelling. Expected outcome 'cancelled'. This is a DIFFERENT failure mode than V6 (V6 failed via R-37 chemical-safety escalation on the fever reason). N4 fix HELD — the fever/illness reason no longer triggers safety escalation — but a separate identity/customer_id resolution defect on the cancel path now blocks the cancellation."
+    }
+  ],
+  "milestones_reached": [
+    "no_safety_escalation_on_illness_reason (N4 fix verified)",
+    "appointment_correctly_looked_up (Marta / Moldeado / lunes 15 junio 11:00)",
+    "cancel_intent_recognized_and_confirmation_requested",
+    "cancel_blocked_by_identity_verification",
+    "human_escalation_fired"
+  ],
+  "db_delta": {
+    "customer_count_delta": 0,
+    "appt_count_delta": 0
+  },
+  "snapshot_before": {
+    "customer_count": 1,
+    "appt_count": 1
+  },
+  "snapshot_after": {
+    "customer_count": 1,
+    "appt_count": 1
+  },
+  "final_state": {
+    "has_checkpoint": false
+  },
+  "db_final_appointment": {
+    "status": "confirmed",
+    "cancelled_at": null,
+    "cancellation_reason": null
+  },
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "cancelled",
+    "db_appointment": {"status": "cancelled"},
+    "tool_calls_required": ["manage_appointments"],
+    "tool_calls_forbidden": ["book", "update_booking"]
+  },
+  "passed": false,
+  "notes": "N4 fix held: fever/illness cancel reason did NOT trigger R-37 safety escalation (the V6 failure mode is GONE). However a SEPARATE critical defect surfaced: the manage_appointments cancel path could not resolve customer_id (returned CUSTOMER_ID_REQUIRED), so the >48h policy-allowed self-service cancellation never executed. The bot looped on identity-verification failures and ultimately escalated to a human. tool_calls_required ['manage_appointments'] NOT satisfied (no successful invocation captured). Appointment remains confirmed. Chatwoot 404s and Langfuse/OTLP 401s are sandbox/infra artifacts, not defects. NOT labeled sandbox_artifact because the cancel block is reproducible across 3 turns and is independent of the Chatwoot transport."
+}
