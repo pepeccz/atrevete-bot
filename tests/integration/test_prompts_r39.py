@@ -83,3 +83,68 @@ def test_ejemplo_7_references_r39() -> None:
     block = content[start:next_heading] if next_heading > 0 else content[start:]
 
     assert "R-39" in block, f"Ejemplo 7 block does not reference R-39: {block[:300]}"
+
+
+# ---------------------------------------------------------------------------
+# Change L (L1) — R-39 must demand a PURE open question (no category priming)
+# ---------------------------------------------------------------------------
+
+
+def _get_r39_block() -> str:
+    """Return the full R-39 block from critical_rules.md."""
+    content = CRITICAL_RULES_PATH.read_text(encoding="utf-8")
+    start = content.find("[R-39]")
+    assert start >= 0, "R-39 not found in critical_rules.md"
+    next_rule = content.find("[R-", start + 1)
+    return content[start:next_rule] if next_rule > 0 else content[start:]
+
+
+def test_r39_forbids_category_enumeration() -> None:
+    """L1: R-39 must explicitly forbid enumerating categories/services in the reply."""
+    block = _get_r39_block().lower()
+    assert "enumerar" in block or "enumeres" in block, (
+        "R-39 must explicitly forbid enumerating categories in the clarification "
+        f"reply (expected 'enumerar'/'enumeres' in block): {block[:400]}"
+    )
+
+
+def test_r39_no_longer_contains_category_enumeration_example() -> None:
+    """L1 (negative): the old category-enumeration example must be gone from R-39.
+
+    The pre-Change-L rule primed the customer with '¿Buscas corte, peinado,
+    color u otro servicio?'. The clarification reply must now be a pure open
+    question — no category list anywhere in the R-39 block.
+    """
+    block = _get_r39_block().lower()
+    for enumeration in ("corte, peinado, color", "corte, color, depilación"):
+        assert enumeration not in block, (
+            f"R-39 still contains the category-enumeration example {enumeration!r}. "
+            "Change L requires a pure open question with no category priming."
+        )
+
+
+def test_r39_contains_pure_open_question_example() -> None:
+    """L1: R-39 must show the pure open question as the correct reply."""
+    block = _get_r39_block()
+    assert "¿En qué puedo ayudarte?" in block, (
+        "R-39 must include the pure open question example '¿En qué puedo ayudarte?': "
+        f"{block[:400]}"
+    )
+
+
+def test_ejemplo_7_good_reply_does_not_enumerate_categories() -> None:
+    """L1: the <good> reply in examples.md Ejemplo 7 must be a pure open question."""
+    content = EXAMPLES_PATH.read_text(encoding="utf-8")
+    start = content.find("Ejemplo 7")
+    assert start >= 0, "Ejemplo 7 not found in examples.md"
+    next_heading = content.find("### Ejemplo", start + 1)
+    block = content[start:next_heading] if next_heading > 0 else content[start:]
+
+    good_lines = [line for line in block.splitlines() if "<good>" in line]
+    assert good_lines, f"Ejemplo 7 has no <good> line: {block[:300]}"
+    for line in good_lines:
+        lowered = line.lower()
+        for enumeration in ("corte, peinado, color", "corte, color, depilación"):
+            assert (
+                enumeration not in lowered
+            ), f"Ejemplo 7 <good> reply still enumerates categories: {line!r}"

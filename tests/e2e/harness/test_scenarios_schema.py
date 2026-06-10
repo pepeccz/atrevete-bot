@@ -157,3 +157,71 @@ class TestScenariosSchemaV2:
         """Sanity: scenarios-v2.yaml must exist and have entries."""
         assert SCENARIOS_V2.exists(), f"scenarios-v2.yaml not found at {SCENARIOS_V2}"
         assert len(self.v2_scenarios) > 0, "scenarios-v2.yaml is empty"
+
+    # ------------------------------------------------------------------
+    # Change L (L3) — cancel scenario calibration vs the 48h policy
+    # ------------------------------------------------------------------
+
+    def _get_scenario(self, scenario_id: str) -> dict:
+        match = [s for s in self.v2_scenarios if s.get("id") == scenario_id]
+        assert match, f"Scenario '{scenario_id}' not found in scenarios-v2.yaml"
+        return match[0]
+
+    def test_cancel_con_razon_seeds_appointment_outside_48h(self) -> None:
+        """L3: cancel-con-razon must seed > 48h ahead so cancellation is allowed.
+
+        QA V4 (run 20260609_183226): the seed sat inside the 48h window, the bot
+        correctly escalated per policy, and the scenario perma-FAILed against
+        expect.outcome=cancelled. The seed must move outside the window.
+        """
+        scenario = self._get_scenario("cancel-con-razon")
+        seed = (scenario.get("seed") or {}).get("appointment") or {}
+        days_ahead = seed.get("days_ahead")
+        assert days_ahead is not None, (
+            "cancel-con-razon must declare seed.appointment.days_ahead so the "
+            "runner seeds the appointment deterministically"
+        )
+        assert (
+            days_ahead >= 3
+        ), f"cancel-con-razon seed must be > 48h ahead (days_ahead >= 3), got {days_ahead}"
+        assert scenario["expect"]["outcome"] == "cancelled"
+
+    def test_cancel_fuera_48h_seeds_appointment_inside_48h(self) -> None:
+        """L3: sibling scenario cancel-fuera-48h seeds < 48h and expects escalation."""
+        scenario = self._get_scenario("cancel-fuera-48h")
+        seed = (scenario.get("seed") or {}).get("appointment") or {}
+        days_ahead = seed.get("days_ahead")
+        assert days_ahead is not None, "cancel-fuera-48h must declare seed.appointment.days_ahead"
+        assert (
+            days_ahead <= 1
+        ), f"cancel-fuera-48h seed must be < 48h ahead (days_ahead <= 1), got {days_ahead}"
+        assert (
+            scenario["expect"]["outcome"] == "escalated"
+        ), "cancel-fuera-48h must expect escalation (48h policy forbids self-service cancel)"
+        db_appt = scenario["expect"].get("db_appointment") or {}
+        assert db_appt.get("status") == "confirmed", (
+            "cancel-fuera-48h appointment must remain confirmed (NOT cancelled): " f"{db_appt}"
+        )
+
+    def test_cancel_fuera_48h_uses_sandbox_phone(self) -> None:
+        """L3: the new scenario uses a unique +34999 sandbox phone."""
+        scenario = self._get_scenario("cancel-fuera-48h")
+        phone = scenario["persona"]["phone"]
+        assert phone.startswith("+34999"), f"Sandbox prefix required, got {phone}"
+        all_phones = [
+            s.get("persona", {}).get("phone", "")
+            for s in self.all_scenarios
+            if s.get("id") != "cancel-fuera-48h"
+        ]
+        assert phone not in all_phones, f"Phone {phone} already used by another scenario"
+
+    def test_cancel_fuera_48h_requires_escalate_tool(self) -> None:
+        """L3: escalation flow must require manage_appointments AND escalate.
+
+        Mirrors the V4 evidence: manage_appointments found the appointment,
+        the 48h policy blocked the cancel, then escalate fired.
+        """
+        scenario = self._get_scenario("cancel-fuera-48h")
+        required = scenario["expect"].get("tool_calls_required") or []
+        assert "manage_appointments" in required, f"Got: {required}"
+        assert "escalate" in required, f"Got: {required}"

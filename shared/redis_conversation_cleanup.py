@@ -130,6 +130,19 @@ async def cleanup_conversation_redis_keys(
         logger.warning(msg)
         errors.append(msg)
 
+    # --- Delete policy_accepted:v2:{cid} (Change L policy gate marker, TTL 24h) ---
+    # GDPR-style erasure: a recreated customer reusing the same conversation
+    # within the marker TTL must NOT skip the policy acceptance gate.
+    policy_accepted_key = f"policy_accepted:v2:{conversation_id}"
+    try:
+        if await redis_client.exists(policy_accepted_key):
+            all_keys.append(policy_accepted_key)
+            by_family["policy_accepted"] = 1
+    except Exception as exc:
+        msg = f"exists check failed for policy_accepted key: {exc}"
+        logger.warning(msg)
+        errors.append(msg)
+
     if not all_keys:
         logger.debug(
             "redis_conversation_cleanup: no keys found",

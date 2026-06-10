@@ -184,17 +184,26 @@
 
 - id: cancel-con-razon
   description: >
-    Customer cancels with a reason (illness). Bot should record the cancellation
-    and respond with empathy. No re-booking pushed unless customer asks.
+    Customer cancels with a reason (illness) an appointment that is MORE than
+    48h away, so the 48h policy allows self-service cancellation. Bot should
+    record the cancellation and respond with empathy. No re-booking pushed
+    unless customer asks. Seed MUST be > 48h ahead (Change L3 calibration —
+    a < 48h seed makes the bot correctly escalate and the scenario perma-FAIL).
   tags: [v2, cancel, with-reason]
   persona:
     name: Isabel Domínguez
     phone: "+34999000023"
     style: >
-      Tiene una cita mañana pero se ha resfriado. Quiere cancelarla sin más.
-      No quiere agendar otra cita ahora — prefiere esperar a recuperarse.
-  intent: "Hola, tengo cita mañana pero estoy con fiebre, prefiero cancelarla."
+      Tiene una cita dentro de unos días (la semana que viene) pero se ha
+      resfriado. Quiere cancelarla sin más. No quiere agendar otra cita ahora —
+      prefiere esperar a recuperarse.
+  intent: "Hola, tengo una cita la semana que viene pero estoy con fiebre, prefiero cancelarla."
   max_turns: 6
+  seed:
+    appointment:
+      days_ahead: 5
+      time: "11:00"
+      status: confirmed
   expect:
     outcome: cancelled
     db_appointment:
@@ -202,6 +211,37 @@
     tool_calls_required: [manage_appointments]
     tool_calls_forbidden: [book, update_booking]
     tags: [cancel, with-reason]
+
+- id: cancel-fuera-48h
+  description: >
+    Customer tries to cancel an appointment that is LESS than 48h away
+    (tomorrow). The 48h policy forbids self-service cancellation: the bot must
+    NOT cancel, must explain the policy with empathy, and must escalate to a
+    human for exception review. Appointment stays confirmed in DB. Sibling of
+    cancel-con-razon — together they cover both sides of the 48h boundary
+    (Change L3).
+  tags: [v2, cancel, inside-48h, policy]
+  persona:
+    name: Nuria Castillo
+    phone: "+34999000045"
+    style: >
+      Tiene una cita mañana y quiere cancelarla porque le ha surgido un
+      imprevisto. Insiste un poco aunque el bot le explique la política de
+      48 horas. Acepta hablar con una persona si el bot se lo ofrece.
+  intent: "Hola, tengo cita mañana pero me ha surgido un imprevisto, quiero cancelarla."
+  max_turns: 8
+  seed:
+    appointment:
+      days_ahead: 1
+      time: "11:00"
+      status: confirmed
+  expect:
+    outcome: escalated
+    db_appointment:
+      status: confirmed
+    tool_calls_required: [manage_appointments, escalate]
+    tool_calls_forbidden: [book]
+    tags: [cancel, inside-48h, escalation]
 
 - id: cancel-sin-cita-previa-edge
   description: >

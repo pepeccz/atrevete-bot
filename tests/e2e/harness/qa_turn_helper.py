@@ -5,9 +5,10 @@ sub-agent can call via Bash to drive live conversational QA flows.
 
 Usage:
     python tests/e2e/harness/qa_turn_helper.py health
-    python tests/e2e/harness/qa_turn_helper.py turn --conversation-id <uuid> --message "Hola"
+    python tests/e2e/harness/qa_turn_helper.py turn --conversation-id <uuid> --user-message "Hola"
     python tests/e2e/harness/qa_turn_helper.py reset --conversation-id <uuid>
     python tests/e2e/harness/qa_turn_helper.py state --conversation-id <uuid>
+    python tests/e2e/harness/qa_turn_helper.py detect-repeats --run-file <run.json>
 """
 
 from __future__ import annotations
@@ -77,6 +78,53 @@ def detect_repeated_sentences(text: str) -> list[str]:
     ]
 
     return repeated
+
+
+def detect_repeats_in_run(run: dict) -> dict:
+    """Scan a full run JSON dict and report repeated sentences per turn (L5).
+
+    Auditor entry point (Change L wires the I5 detector into the audit
+    pipeline): the qa-auditor calls this over every scenario run file and
+    reports non-empty findings as WARN items in audit.md.
+
+    Tolerates partial/malformed run dicts (error outcomes, timeouts): missing
+    `turns` and null `agent_response` values are skipped, never raised on.
+
+    Returns:
+        {
+          "scenario_id": str | None,
+          "turns_with_repeats": int,
+          "findings": [{"turn": int | None, "repeated_sentences": [str, ...]}, ...]
+        }
+    """
+    findings: list[dict[str, Any]] = []
+    for turn in run.get("turns") or []:
+        if not isinstance(turn, dict):
+            continue
+        repeated = detect_repeated_sentences(turn.get("agent_response") or "")
+        if repeated:
+            findings.append({"turn": turn.get("turn"), "repeated_sentences": repeated})
+    return {
+        "scenario_id": run.get("scenario_id"),
+        "turns_with_repeats": len(findings),
+        "findings": findings,
+    }
+
+
+def _cmd_detect_repeats(run_file: str) -> None:
+    """Load a run JSON file and print the repeated-sentence report."""
+    from pathlib import Path
+
+    path = Path(run_file)
+    if not path.exists():
+        _json_err("run_file_not_found", run_file)
+        return
+    try:
+        run = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        _json_err("run_file_unreadable", str(exc))
+        return
+    _json_out(detect_repeats_in_run(run))
 
 
 def _json_out(data: dict[str, Any]) -> None:
@@ -308,6 +356,14 @@ def _build_parser() -> argparse.ArgumentParser:
         "--conversation-id", required=True, dest="conversation_id", help="Conversation UUID"
     )
 
+    # detect-repeats (L5 — auditor entry point for the repeated-sentence detector)
+    p_repeats = sub.add_parser(
+        "detect-repeats", help="Report repeated sentences in a scenario run JSON file"
+    )
+    p_repeats.add_argument(
+        "--run-file", required=True, dest="run_file", help="Path to {scenario_id}.json run file"
+    )
+
     return parser
 
 
@@ -331,6 +387,8 @@ def main() -> None:
         )
     elif args.command == "state":
         asyncio.run(_cmd_state(args))
+    elif args.command == "detect-repeats":
+        _cmd_detect_repeats(args.run_file)
 
 
 if __name__ == "__main__":
