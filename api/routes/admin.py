@@ -252,7 +252,10 @@ def _conversation_display_name(row: Any) -> str:
     return sender_name if sender_name else "Desconocido"
 
 
-def _resolve_conversation_list_item(row: Any) -> dict[str, Any]:
+def _resolve_conversation_list_item(
+    row: Any,
+    escalated_conv_map: dict[str, dict] | None = None,
+) -> dict[str, Any]:
     """
     Convert a ConversationHistory ORM row to a dict for the list response.
 
@@ -262,6 +265,10 @@ def _resolve_conversation_list_item(row: Any) -> dict[str, Any]:
     Includes inbox-state fields (atencion_automatica, paused_at) so that the
     frontend matchesFilter() function and tab counters work correctly on list items.
     These fields mirror the logic used in the detail endpoint (line ~5424).
+
+    escalated_conv_map: maps conversation UUID str → escalation metadata dict.
+    When provided, ``is_escalated`` is set to True and escalation fields are
+    included in the response (R1/R3a: real escalation signal + reason in banner).
 
     unread_message_count: NOT a DB column — defaults to 0. The frontend already
     renders this badge per-item (PR-1), but counting requires a message-level
@@ -277,7 +284,13 @@ def _resolve_conversation_list_item(row: Any) -> dict[str, Any]:
     resumed_at = resumed_at_raw if isinstance(resumed_at_raw, datetime) else None
     is_paused = paused_at is not None and (resumed_at is None or resumed_at < paused_at)
 
-    return {
+    # R1/R3a: real escalation signal — join result from escalated_conv_map.
+    # Escalations are keyed by Chatwoot numeric ID string (row.conversation_id),
+    # NOT by the ConversationHistory UUID PK (row.id).
+    esc_info = (escalated_conv_map or {}).get(str(row.conversation_id), None)
+    is_escalated = esc_info is not None
+
+    item: dict[str, Any] = {
         "id": str(row.id),
         "conversation_id": row.conversation_id,
         "customer_id": str(row.customer_id) if row.customer_id else None,
@@ -294,7 +307,17 @@ def _resolve_conversation_list_item(row: Any) -> dict[str, Any]:
         # unread_message_count: no DB column exists yet (TECH DEBT — needs a
         # per-message read-status feature). Always 0 to keep response shape stable.
         "unread_message_count": 0,
+        # R1: real escalation signal (True when an Escalation row with
+        # status='triggered' exists for this conversation)
+        "is_escalated": is_escalated,
     }
+    # R3a: include escalation reason / source for PausedBanner
+    if esc_info:
+        item["escalation_id"] = esc_info["escalation_id"]
+        item["escalation_reason"] = esc_info["escalation_reason"]
+        item["escalation_source"] = esc_info["escalation_source"]
+        item["escalation_triggered_at"] = esc_info["escalation_triggered_at"]
+    return item
 
 
 def _parse_thread_id_from_key(key_str: str) -> str | None:
@@ -3379,9 +3402,7 @@ async def retry_gcal_sync(
     )
 
     async with get_async_session() as session:
-        result = await session.execute(
-            select(Appointment).where(Appointment.id == appointment_id)
-        )
+        result = await session.execute(select(Appointment).where(Appointment.id == appointment_id))
         appointment = result.scalar_one_or_none()
 
         if not appointment:
@@ -3405,7 +3426,11 @@ async def retry_gcal_sync(
             service_names=service_names,
             start_time=appointment.start_time,
             duration_minutes=appointment.duration_minutes,
-            status=appointment.status.value if hasattr(appointment.status, "value") else str(appointment.status),
+            status=(
+                appointment.status.value
+                if hasattr(appointment.status, "value")
+                else str(appointment.status)
+            ),
             notes=appointment.notes,
         )
     elif operation == "reschedule":
@@ -3419,7 +3444,11 @@ async def retry_gcal_sync(
                 service_names="",
                 start_time=appointment.start_time,
                 duration_minutes=appointment.duration_minutes,
-                status=appointment.status.value if hasattr(appointment.status, "value") else str(appointment.status),
+                status=(
+                    appointment.status.value
+                    if hasattr(appointment.status, "value")
+                    else str(appointment.status)
+                ),
                 notes=appointment.notes,
             )
         else:
@@ -3431,7 +3460,11 @@ async def retry_gcal_sync(
                 service_names="",
                 start_time=appointment.start_time,
                 duration_minutes=appointment.duration_minutes,
-                status=appointment.status.value if hasattr(appointment.status, "value") else str(appointment.status),
+                status=(
+                    appointment.status.value
+                    if hasattr(appointment.status, "value")
+                    else str(appointment.status)
+                ),
                 notes=appointment.notes,
             )
     elif operation == "cancel":
@@ -3444,9 +3477,7 @@ async def retry_gcal_sync(
 
     # Re-read updated status (the push function wrote it)
     async with get_async_session() as session:
-        result = await session.execute(
-            select(Appointment).where(Appointment.id == appointment_id)
-        )
+        result = await session.execute(select(Appointment).where(Appointment.id == appointment_id))
         updated = result.scalar_one_or_none()
 
     if updated is None:
@@ -5174,7 +5205,12 @@ async def list_conversations(
     page: int = 1,
     page_size: int = 50,
     customer_id: UUID | None = None,
-    q: str | None = Query(default=None, description="Search term: customer name, phone, or message content."),
+    q: str | None = Query(
+        default=None, description="Search term: customer name, phone, or message content."
+    ),
+    filter: str | None = Query(
+        default=None, description="Server-side filter: all | bot_on | bot_off | escalated | unread"
+    ),
 ):
     """
     List conversation history (read-only).
@@ -5210,7 +5246,6 @@ async def list_conversations(
             "has_more": (offset + page_size) < total,
         }
 
-
     try:
         from shared.redis_client import get_redis_client
 
@@ -5233,7 +5268,35 @@ async def list_conversations(
             db_rows: list[ConversationHistory] = list(count_result.scalars().all())
             db_conv_ids = {row.conversation_id for row in db_rows}
 
-            db_items = [_resolve_conversation_list_item(row) for row in db_rows]
+            # --- Fetch triggered escalations for DB conversations in one query ---
+            # Maps conversation_id (UUID) → (escalation_id, reason, source, triggered_at)
+            esc_stmt = (
+                select(
+                    Escalation.conversation_id,
+                    Escalation.id.label("escalation_id"),
+                    Escalation.reason,
+                    Escalation.source,
+                    Escalation.triggered_at,
+                )
+                .where(Escalation.status == EscalationStatus.TRIGGERED)
+                .order_by(Escalation.triggered_at.desc())
+            )
+            esc_result = await session.execute(esc_stmt)
+            # Keep only the most-recent triggered escalation per conversation
+            escalated_conv_map: dict[str, dict] = {}
+            for row in esc_result:
+                cid = str(row.conversation_id)
+                if cid not in escalated_conv_map:
+                    escalated_conv_map[cid] = {
+                        "escalation_id": str(row.escalation_id),
+                        "escalation_reason": row.reason,
+                        "escalation_source": row.source.value if row.source else None,
+                        "escalation_triggered_at": (
+                            row.triggered_at.isoformat() if row.triggered_at else None
+                        ),
+                    }
+
+            db_items = [_resolve_conversation_list_item(row, escalated_conv_map) for row in db_rows]
 
             # --- Source 2: Active Redis conversations (not yet in DB) ---
             redis_items = []
@@ -5306,30 +5369,53 @@ async def list_conversations(
 
             # --- Merge: Redis-active first (most recent), then DB ---
             all_items = redis_items + db_items
-            total = len(all_items)
+            total_unfiltered = len(all_items)
 
-            # --- Tab counters (computed over ALL items BEFORE pagination) ---
+            # --- Tab counters (computed over ALL items BEFORE pagination and filter) ---
+            # "escalated" is now driven by a real Escalation row with status='triggered',
+            # not the paused_at proxy. This makes the counter match the filter exactly.
             counts = {
-                "all": total,
+                "all": total_unfiltered,
                 "bot_on": sum(
-                    1 for i in all_items
+                    1
+                    for i in all_items
                     if i.get("atencion_automatica", True) and not i.get("paused_at")
                 ),
                 "bot_off": sum(
-                    1 for i in all_items
+                    1
+                    for i in all_items
                     if not i.get("atencion_automatica", True) or i.get("paused_at")
                 ),
-                "escalated": sum(
-                    1 for i in all_items
-                    if not i.get("atencion_automatica", True) and i.get("paused_at")
-                ),
-                "unread": sum(
-                    1 for i in all_items if (i.get("unread_message_count") or 0) > 0
-                ),
+                "escalated": sum(1 for i in all_items if i.get("is_escalated", False)),
+                "unread": sum(1 for i in all_items if (i.get("unread_message_count") or 0) > 0),
             }
 
+            # --- Server-side filter (R1: replaces client-side matchesFilter for escalated) ---
+            filtered_items = all_items
+            if filter and filter != "all":
+                if filter == "bot_on":
+                    filtered_items = [
+                        i
+                        for i in all_items
+                        if i.get("atencion_automatica", True) and not i.get("paused_at")
+                    ]
+                elif filter == "bot_off":
+                    filtered_items = [
+                        i
+                        for i in all_items
+                        if not i.get("atencion_automatica", True) or i.get("paused_at")
+                    ]
+                elif filter == "escalated":
+                    # Real escalation signal: Escalation row with status='triggered'
+                    filtered_items = [i for i in all_items if i.get("is_escalated", False)]
+                elif filter == "unread":
+                    filtered_items = [
+                        i for i in all_items if (i.get("unread_message_count") or 0) > 0
+                    ]
+
+            total = len(filtered_items)
             offset = (page - 1) * page_size
-            items = all_items[offset : offset + page_size]
+            items = filtered_items[offset : offset + page_size]
             has_more = (offset + page_size) < total
 
             return {
@@ -5586,6 +5672,19 @@ async def get_conversation(
             conversation.resumed_at is None or conversation.resumed_at < conversation.paused_at
         )
 
+        # R3a: fetch the active triggered escalation for this conversation (if any)
+        # so the PausedBanner can show reason + source.
+        esc_result = await session.execute(
+            select(Escalation)
+            .where(
+                Escalation.conversation_id == str(conversation.conversation_id),
+                Escalation.status == EscalationStatus.TRIGGERED,
+            )
+            .order_by(Escalation.triggered_at.desc())
+            .limit(1)
+        )
+        active_escalation = esc_result.scalar_one_or_none()
+
         return {
             "id": str(conversation.id),
             "conversation_id": conversation.conversation_id,
@@ -5606,6 +5705,19 @@ async def get_conversation(
                 else None
             ),
             "atencion_automatica": not is_paused,
+            "is_escalated": active_escalation is not None,
+            # R3a: escalation context for PausedBanner
+            "escalation_reason": active_escalation.reason if active_escalation else None,
+            "escalation_source": (
+                active_escalation.source.value
+                if active_escalation and active_escalation.source
+                else None
+            ),
+            "escalation_triggered_at": (
+                active_escalation.triggered_at.isoformat()
+                if active_escalation and active_escalation.triggered_at
+                else None
+            ),
             "started_at": conversation.started_at.isoformat() if conversation.started_at else None,
             "ended_at": conversation.ended_at.isoformat() if conversation.ended_at else None,
             "message_count": conversation.message_count,
@@ -7202,7 +7314,9 @@ async def inbox_get_sidebar(
     try:
         conv_uuid = _UUID(conversation_id)
     except (ValueError, TypeError) as err:
-        raise HTTPException(status_code=400, detail="Formato de ID de conversación inválido.") from err
+        raise HTTPException(
+            status_code=400, detail="Formato de ID de conversación inválido."
+        ) from err
 
     async with get_async_session() as session:
         try:
@@ -7255,5 +7369,3 @@ async def get_policy_version():
     """
     settings = get_settings()
     return {"version": settings.POLICY_VERSION}
-
-

@@ -1,0 +1,58 @@
+{
+  "scenario_id": "cancel-con-razon",
+  "conversation_id": "a68503f6-3d00-4edb-bd64-25981e150c75",
+  "outcome": "cancelled",
+  "turns_taken": 1,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, tengo una cita la semana que viene pero estoy con fiebre, prefiero cancelarla.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nHecho, te la he cancelado. Espero que te mejores pronto.\n\nSi luego quieres, te ayudo a reservar otra cita para otra fecha.",
+      "latency_ms": 13078,
+      "timed_out": false,
+      "tool_calls_observed": ["manage_appointments"],
+      "bugs": [],
+      "milestone": "Appointment cancelled on first turn; empathetic normal cancel flow, no 48h misclassification, no escalation"
+    }
+  ],
+  "bugs": [],
+  "milestones_reached": [
+    "turn1_direct_cancel",
+    "q3_no_48h_misclassification",
+    "n4_empathetic_no_safety_escalation",
+    "o2_manage_appointments_executed_no_customer_id_required",
+    "hotfix_clean_confirmation_no_technical_error"
+  ],
+  "db_delta": {
+    "customer_count_delta": 0,
+    "appt_count_delta": 0
+  },
+  "snapshot_before": {
+    "customer_count": 1,
+    "appt_count": 1
+  },
+  "snapshot_after": {
+    "customer_count": 1,
+    "appt_count": 1
+  },
+  "final_state": {
+    "has_checkpoint": false
+  },
+  "db_appointment_final": {
+    "id": "36a51004-a228-4876-8ed6-10159533f8d9",
+    "status": "cancelled",
+    "cancelled_at": "2026-06-10 12:53:41.532064+00",
+    "cancellation_reason": null,
+    "start_time": "2026-06-15 11:00:00+00",
+    "gcal_sync_status": "not_applicable"
+  },
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "cancelled",
+    "db_appointment": {"status": "cancelled"},
+    "tool_calls_required": ["manage_appointments"],
+    "tool_calls_forbidden": ["book", "update_booking"],
+    "tags": ["cancel", "with-reason"]
+  },
+  "passed": true
+}

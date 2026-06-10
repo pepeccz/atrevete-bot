@@ -1,0 +1,102 @@
+{
+  "scenario_id": "reschedule-otro-dia",
+  "conversation_id": "9f2b5fa8-aa40-4996-99c5-6086c0439307",
+  "outcome": "rescheduled",
+  "turns_taken": 4,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, tengo cita el miércoles que viene pero me ha surgido un viaje, ¿la puedo pasar al viernes o sábado?",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nTe paso con alguien del equipo para que te ayude a mover esa cita. Un momento por favor. 🙏",
+      "latency_ms": 12277,
+      "timed_out": false,
+      "tool_calls_observed": ["escalate"],
+      "bugs": [
+        {
+          "type": "premature_escalation",
+          "detail": "On the opening turn (disclosure greeting), the bot escalated to a human instead of looking up the existing appointment and offering reschedule slots. It recovered fully on turn 2 when the customer insisted, so the reschedule still completed — but the first-turn handoff is a soft regression for the self-service reschedule path."
+        }
+      ],
+      "milestone": "disclosure_greeting_and_premature_escalation"
+    },
+    {
+      "turn": 2,
+      "user_message": "Prefiero hacerlo contigo si puedes, no hace falta molestar a nadie. ¿Me miras qué huecos hay el viernes o sábado?",
+      "agent_response": "Tienes una cita el miércoles 17 de junio a las 11:00 con Marta para Corte de Mujer.  \nSi quieres moverla, dime si prefieres que busque huecos el viernes o el sábado.",
+      "latency_ms": 11757,
+      "timed_out": false,
+      "tool_calls_observed": ["manage_appointments"],
+      "bugs": [],
+      "milestone": "existing_appointment_looked_up"
+    },
+    {
+      "turn": 3,
+      "user_message": "El viernes mejor, por la mañana si puede ser.",
+      "agent_response": "Sí, el viernes por la mañana con Marta sí tiene huecos. El primer hueco libre es el viernes 19 de junio a las 10:00.\n\nSi te va bien, te lo dejo a esa hora y luego te pido solo la confirmación final.",
+      "latency_ms": 12117,
+      "timed_out": false,
+      "tool_calls_observed": ["check_availability"],
+      "bugs": [],
+      "milestone": "new_slot_offered"
+    },
+    {
+      "turn": 4,
+      "user_message": "Perfecto, el viernes 19 a las 10:00 me viene genial. Confírmamelo.",
+      "agent_response": "Listo, te la he movido al viernes 19 de junio a las 10:00 con Marta.",
+      "latency_ms": 17265,
+      "timed_out": false,
+      "tool_calls_observed": ["manage_appointments"],
+      "bugs": [],
+      "milestone": "reschedule_completed"
+    }
+  ],
+  "bugs": [
+    {
+      "type": "premature_escalation",
+      "turn": 1,
+      "detail": "First-turn handoff to human on the reschedule intent (before any appointment lookup). Self-recovered on turn 2 once the customer declined the handoff; reschedule completed end-to-end."
+    }
+  ],
+  "milestones_reached": [
+    "disclosure_greeting_and_premature_escalation",
+    "existing_appointment_looked_up",
+    "new_slot_offered",
+    "reschedule_completed"
+  ],
+  "db_delta": {
+    "customer_count_delta": 0,
+    "appt_count_delta": 0
+  },
+  "snapshot_before": {
+    "customer_count": 1,
+    "appt_count": 1,
+    "seeded_appointment_id": "d18434ed-40c6-4919-96fd-18c0ba3997ac",
+    "seeded_start_time_utc": "2026-06-17T09:00:00+00:00",
+    "seeded_start_time_madrid": "2026-06-17 11:00 (Wed) Marta / Corte de Mujer"
+  },
+  "snapshot_after": {
+    "customer_count": 1,
+    "appt_count": 1,
+    "appointment_id": "d18434ed-40c6-4919-96fd-18c0ba3997ac",
+    "start_time_utc": "2026-06-19T08:00:00+00:00",
+    "start_time_madrid": "2026-06-19 10:00 (Fri) Marta / Corte de Mujer",
+    "status": "confirmed",
+    "row_unchanged_id_same": true,
+    "start_time_changed": true
+  },
+  "final_state": {
+    "has_checkpoint": false
+  },
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "rescheduled",
+    "db_appointment": {
+      "status": "confirmed"
+    },
+    "tool_calls_required": ["manage_appointments"],
+    "tool_calls_forbidden": [],
+    "tags": ["reschedule", "cross-day"]
+  },
+  "passed": true,
+  "notes": "V11 regression focus: reschedule is a MUTATION path (O2: customer_id on mutation) that also needs offered slots (Change P: offered-slots persistence). BOTH HELD. Reschedule service log: 'Appointment d18434ed rescheduled | old_start=2026-06-17T09:00:00+00:00 | new_start=2026-06-19T10:00:00+02:00 | stylist_changed=False'. No CUSTOMER_ID_REQUIRED, no reoffer_slots, no pgproto errors in agent logs. Same appointment row mutated in place (no new row, no orphan). Langfuse skipped (401 unauthorized). Scenario declares no seed block; appointment was manually seeded per task instruction (Wed 17 Jun 11:00, well outside 48h so reschedule allowed). The turn-1 premature escalation is the only soft finding — fully self-recovered."
+}

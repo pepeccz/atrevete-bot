@@ -49,12 +49,13 @@ function matchesFilter(conv: ConversationHistory, filter: InboxFilter): boolean 
     case "bot_off":
       return inbox.atencion_automatica === false || inbox.paused_at != null;
     case "escalated":
-      // Server-side filtering by status='triggered' — we do a best-effort
-      // client-side check using paused_at as a proxy until backend adds filter param.
-      return inbox.paused_at != null && inbox.atencion_automatica === false;
+      // R1: use the real server-side escalation signal (is_escalated=true means
+      // an Escalation row with status='triggered' exists). Avoids the paused_at
+      // proxy that also catches manual takeovers and mismatches server counts.
+      return inbox.is_escalated === true;
     case "unread":
-      // Unread: conversations with ended_at = null (active but not yet handled)
-      return !conv.ended_at;
+      // R2: unread = unread_message_count > 0 (consistent with per-item badge)
+      return (inbox.unread_message_count ?? 0) > 0;
     default:
       return true;
   }
@@ -192,7 +193,11 @@ export function ConversationList({
     }
   }, []);
 
-  const unreadCount = conversations.filter((c) => !c.ended_at).length;
+  // R2: unread = conversations with unread_message_count > 0 (same semantics as
+  // the per-item badge and the unread filter tab)
+  const unreadCount = conversations.filter(
+    (c) => ((c as unknown as ConversationHistoryInbox).unread_message_count ?? 0) > 0
+  ).length;
 
   useConversationPolling({
     fetchFn: fetchList,

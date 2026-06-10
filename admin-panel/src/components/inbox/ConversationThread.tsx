@@ -148,10 +148,12 @@ function MessageBubble({ msg, imageIndexMap, onImageClick }: MessageBubbleProps)
 
   const alignClass = onRight ? "items-end" : "items-start";
 
+  // R4: use "Equipo · {username}" for operator messages — avoids hardcoding
+  // "Estilista" when the author might be admin or reception staff.
   const roleLabel = isAgent
     ? msg.author_username
-      ? `Estilista · ${msg.author_username}`
-      : "Estilista"
+      ? `Equipo · ${msg.author_username}`
+      : "Equipo"
     : isAssistant
     ? "Bot"
     : null;
@@ -388,11 +390,13 @@ export function ConversationThread({ conversationId, onDeleted }: ConversationTh
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* Paused banner */}
+      {/* Paused banner — R3a: pass escalation reason/source for context */}
       {!botEnabled && !loading && conversation && (
         <PausedBanner
           conversationId={conversationId}
           pausedAt={pausedAt}
+          escalationReason={inbox?.escalation_reason ?? null}
+          escalationSource={inbox?.escalation_source ?? null}
           onResumed={handleResumed}
         />
       )}
