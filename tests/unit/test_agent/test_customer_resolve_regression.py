@@ -220,3 +220,139 @@ async def test_middleware_resolves_name_memories_and_policy_from_real_customer()
     assert final_state.get("customer_id") == customer.id
     assert final_state.get("customer_name") == "Raquel Cordero"
     assert final_state.get("customer_memories") == memories
+
+
+# ---------------------------------------------------------------------------
+# O2 regression: customer_id persisted to graph state via ExtendedModelResponse
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_middleware_returns_extended_model_response_with_command_when_customer_resolved():
+    """O2 fix: when customer_id is first resolved, middleware must return ExtendedModelResponse
+    with Command(update={customer_id, customer_name}) so LangGraph persists it to graph state.
+
+    Without this fix, InjectedState in tools (manage_appointments, book) sees customer_id=None
+    because _build_commands only saves messages, not the per-turn request.state overlay.
+    """
+    from langchain.agents.middleware.types import ExtendedModelResponse
+
+    from agent.middleware.customer_resolve import CustomerResolveMiddleware
+
+    customer = _real_customer()
+    session = _session_returning(customer)
+
+    middleware = CustomerResolveMiddleware()
+    state = {
+        "customer_phone": PHONE,
+        "customer_id": None,  # not yet set — first resolution
+        "customer_name": None,
+        "messages": [],
+    }
+    request = _make_request(state)
+
+    settings = MagicMock()
+    settings.POLICY_VERSION = "1.0"
+
+    async def handler(req):
+        from unittest.mock import MagicMock as MM
+
+        return MM()  # plain ModelResponse mock
+
+    with (
+        patch(
+            "agent.middleware.customer_resolve._get_cached_customer",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        patch(
+            "agent.middleware.customer_resolve._set_cached_customer",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "database.connection.get_async_session",
+            return_value=_session_ctx(session),
+        ),
+        patch(
+            "agent.middleware.customer_resolve.read_customer_memories",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        patch(
+            "agent.middleware.customer_resolve.get_settings",
+            return_value=settings,
+        ),
+    ):
+        result = await middleware.awrap_model_call(request, handler)
+
+    assert isinstance(result, ExtendedModelResponse), (
+        "When customer_id is first resolved, middleware must return ExtendedModelResponse "
+        "so Command(update={customer_id}) persists to LangGraph graph state (O2 fix)"
+    )
+    assert result.command is not None, "ExtendedModelResponse must carry a Command"
+    update = result.command.update if hasattr(result.command, "update") else {}
+    assert (
+        "customer_id" in update
+    ), f"Command update must include customer_id, got keys: {list(update.keys())}"
+    assert update["customer_id"] == customer.id
+    assert update.get("customer_name") == "Raquel Cordero"
+
+
+@pytest.mark.asyncio
+async def test_middleware_returns_plain_response_when_customer_id_already_in_state():
+    """O2 fix: when customer_id already in state (subsequent turns), no Command needed."""
+    from langchain.agents.middleware.types import ExtendedModelResponse
+
+    from agent.middleware.customer_resolve import CustomerResolveMiddleware
+
+    customer = _real_customer()
+    session = _session_returning(customer)
+
+    middleware = CustomerResolveMiddleware()
+    state = {
+        "customer_phone": PHONE,
+        "customer_id": customer.id,  # already set — idempotent path
+        "customer_name": "Raquel Cordero",
+        "messages": [],
+    }
+    request = _make_request(state)
+
+    settings = MagicMock()
+    settings.POLICY_VERSION = "1.0"
+
+    inner_response = MagicMock()
+
+    async def handler(req):
+        return inner_response
+
+    with (
+        patch(
+            "agent.middleware.customer_resolve._get_cached_customer",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        patch(
+            "agent.middleware.customer_resolve._set_cached_customer",
+            new_callable=AsyncMock,
+        ),
+        patch(
+            "database.connection.get_async_session",
+            return_value=_session_ctx(session),
+        ),
+        patch(
+            "agent.middleware.customer_resolve.read_customer_memories",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        patch(
+            "agent.middleware.customer_resolve.get_settings",
+            return_value=settings,
+        ),
+    ):
+        result = await middleware.awrap_model_call(request, handler)
+
+    # When customer_id already set, no Command needed — plain response is fine
+    assert not isinstance(result, ExtendedModelResponse), (
+        "When customer_id is already in state, middleware must NOT emit a Command "
+        "(no redundant state writes)"
+    )

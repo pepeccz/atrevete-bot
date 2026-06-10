@@ -178,6 +178,55 @@ def test_r41_applies_when_both_slots_empty(rules_text: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# O3 — R36 must include returning-customer policy bypass
+# ---------------------------------------------------------------------------
+
+
+def _r36_block(rules_text: str) -> str:
+    start = rules_text.find("[R36]")
+    assert start != -1, "R36 entry missing from critical_rules.md"
+    next_rule = rules_text.find("[R-37]", start)
+    return rules_text[start:next_rule] if next_rule != -1 else rules_text[start:]
+
+
+def test_r36_has_bypass_for_current_version_accepted(rules_text: str) -> None:
+    """O3: R36 must instruct the bot NOT to re-request policy if customer block
+    already shows the policy accepted at the current version (no '(versión obsoleta)')."""
+    block = _r36_block(rules_text)
+    lowered = block.lower()
+    # Must mention bypass / skip condition
+    assert (
+        "bypass" in lowered
+        or "no pidas" in lowered
+        or "no.*pedir" in lowered
+        or "ya aceptó" in lowered
+        or "ya acepto" in lowered
+    ), "R36 must include a bypass instruction for customers who already accepted current version"
+
+
+def test_r36_bypass_references_customer_block(rules_text: str) -> None:
+    """O3: R36 bypass must reference the <customer> block as the source of truth."""
+    block = _r36_block(rules_text)
+    assert (
+        "<customer>" in block
+    ), "R36 bypass must reference the <customer> block to check acceptance status"
+
+
+def test_r36_bypass_requires_current_version_check(rules_text: str) -> None:
+    """O3: R36 bypass must be conditional on the current version (not obsolete)."""
+    block = _r36_block(rules_text)
+    # Must distinguish between current and obsolete version
+    assert (
+        "obsoleta" in block.lower()
+        or "obsolete" in block.lower()
+        or "versión obsoleta" in block.lower()
+    ), (
+        "R36 bypass must be limited to current-version acceptance "
+        "(obsolete version must still trigger the gate)"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Change N (N4) — R-37 cancellation exemption with empathy (UX-05)
 # ---------------------------------------------------------------------------
 
@@ -189,12 +238,10 @@ def test_r37_cancellation_exemption_with_empathy(rules_text: str) -> None:
     next_rule = rules_text.find("[R-38]", r37_start)
     block = rules_text[r37_start:next_rule] if next_rule != -1 else rules_text[r37_start:]
     lowered = block.lower()
-    assert "manage_appointments" in block, (
-        "R-37 must route illness cancellations to manage_appointments"
-    )
-    assert "empat" in lowered or "mejores" in lowered, (
-        "R-37 must require an empathetic sentence on illness cancellations"
-    )
-    assert "48" in block, (
-        "R-37 must cover the 48h window case (in-channel escalation with empathy)"
-    )
+    assert (
+        "manage_appointments" in block
+    ), "R-37 must route illness cancellations to manage_appointments"
+    assert (
+        "empat" in lowered or "mejores" in lowered
+    ), "R-37 must require an empathetic sentence on illness cancellations"
+    assert "48" in block, "R-37 must cover the 48h window case (in-channel escalation with empathy)"

@@ -318,9 +318,11 @@ async def validate_service_ids_exist(session, service_ids: list) -> FKValidation
         ok=False,
         error_code=ERROR_INVALID_SERVICE_IDS,
         error_message=(
-            f"service_id inválido: {missing_str}. "
-            "Vuelve a leer el <catalog> y usa solo UUIDs que aparezcan tras id=."
-            f"{candidates_hint}"
+            f"service_id inválido (problema de resolución de servicio, NO de disponibilidad): "
+            f"{missing_str}. "
+            "Vuelve a leer el <catalog> y usa solo UUIDs que aparezcan tras id=. "
+            "NO digas al cliente que el hueco no está disponible — el problema es que "
+            f"el servicio no fue reconocido correctamente.{candidates_hint}"
         ),
         missing_ids=missing,
         payload=payload,
