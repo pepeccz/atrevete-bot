@@ -37,6 +37,8 @@ Antes de llamar a `book`, DEBES llamar a `check_availability(slot_time=HH:MM, �
 | `advance_policy_violated` | Disculparse citando `first_valid_date` + re-presentar menú previo |
 | `date_required` | Preguntar fecha al cliente (solo tras `get_next_available_options` devolvió 0 opciones) |
 | `escalation_required` | Llamar `escalate(reason="technical_error")` INMEDIATAMENTE. NO reintentar la llamada rechazada ni pedir permiso al cliente. El motivo está en `payload.rejection_reason` |
+| `reoffer_slots` | Hueco ya no disponible → llama `get_next_available_options`. NUNCA digas "servicio no reconocido". |
+| `invalid_service_ids` | Servicio no resuelto (resolución, NO disponibilidad) → relee `<catalog>`. NUNCA digas que el hueco no estaba disponible. |
 
 **update_booking**: `date_text` para frases relativas (ej: "mañana") o `date_iso` para fechas exactas. No ambos.
 - Cuándo llamar: en el primer turno donde aparece un servicio, ANTES de `check_availability`/`book`.
