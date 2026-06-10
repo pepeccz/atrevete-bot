@@ -1,0 +1,156 @@
+{
+  "scenario_id": "cliente-leal-lo-de-siempre",
+  "conversation_id": "5eb40717-c7ab-4b64-8bde-9fd98a6b0197",
+  "outcome": "stuck",
+  "turns_taken": 8,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, quería pedir hora para lo de siempre con Rosa.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nRaquel, no puedo reservarte para hoy porque necesitamos al menos 3 días de antelación. La primera fecha válida es el sábado 13 de junio.\n\n¿Quieres que te busque huecos para ese día con Rosa?",
+      "latency_ms": 12677,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "greeting + R-41 resolved 'lo de siempre' to corte (no 'qué servicio?' asked), Rosa recognized by name (N1), no policy re-gate (O3), 3-day antelación rule applied"
+    },
+    {
+      "turn": 2,
+      "user_message": "Sí, perfecto. Búscame huecos para el sábado con Rosa.",
+      "agent_response": "Con Rosa no veo huecos el sábado 13 de junio para tu corte.\n\nSi quieres, te puedo mirar otra fecha o abrirlo a otras estilistas.",
+      "latency_ms": 17531,
+      "timed_out": false,
+      "tool_calls_observed": ["check_availability"],
+      "tool_evidence_note": "availability checked for Rosa on Sat — no slots; 'tu corte' confirms service resolved from memory (R-41)",
+      "bugs": [],
+      "milestone": "availability check Rosa Saturday — empty"
+    },
+    {
+      "turn": 3,
+      "user_message": "Prefiero a Rosa. ¿Cuándo tiene el próximo hueco libre ella?",
+      "agent_response": "Con Rosa, el primer hueco que veo para tu corte es el martes 16 de junio a las 10:00.\n\nTambién tiene:\n1. martes 16 de junio a las 10:40\n2. martes 16 de junio a las 11:20\n\n¿Cuál te encaja mejor?",
+      "latency_ms": 13233,
+      "timed_out": false,
+      "tool_calls_observed": ["get_next_available_options"],
+      "bugs": [],
+      "milestone": "get_next_available_options offered concrete slots (Tue 16 Jun 10:00/10:40/11:20) with Rosa"
+    },
+    {
+      "turn": 4,
+      "user_message": "El martes a las 10:00 me viene perfecto.",
+      "agent_response": "Perfecto, Raquel. Te lo dejo el martes 16 de junio a las 10:00 con Rosa para corte de mujer.\n\n¿Alguna nota para Rosa?",
+      "latency_ms": 17229,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "tool_evidence_note": "update_booking next_step=notes_optional — slot accepted into draft (no reoffer at this stage)",
+      "bugs": [],
+      "milestone": "slot 10:00 accepted into draft, bot asks for optional note"
+    },
+    {
+      "turn": 5,
+      "user_message": "No, ninguna nota. Confírmamela por favor.",
+      "agent_response": "No he podido cerrar la reserva por un problema técnico al confirmar la cita.\n\nLa cita estaba validada para el martes 16 de junio a las 10:00 con Rosa. Si quieres, lo intento otra vez.",
+      "latency_ms": 20155,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "book"],
+      "tool_evidence_note": "update_booking next_step=reoffer_slots THEN book tool.response.rejected next_step=reoffer_slots at 11:17:44; availability_service confirmed 15 free slots incl 10:00 (0 busy periods) — slot did NOT vanish",
+      "bugs": [
+        {
+          "type": "book_rejects_offered_slot",
+          "severity": "critical",
+          "detail": "book rejected the slot it had just offered & that availability_service confirmed free (15 slots, 0 busy). Root cause surfaced turn 6-7 as service-id resolution failure (invalid_service_ids). O1 P0 NOT resolved by the hotfix."
+        }
+      ],
+      "milestone": "BOOK REJECTED — 'problema técnico' (next_step=reoffer_slots)"
+    },
+    {
+      "turn": 6,
+      "user_message": "Sí, por favor, inténtalo otra vez.",
+      "agent_response": "Perdona, Raquel: ha habido un problema con la identificación del servicio al cerrar la reserva, no con la disponibilidad.\n\nNo te quiero dar una información errónea. Si quieres, puedo rehacer la reserva desde el principio con el servicio correcto.",
+      "latency_ms": 26903,
+      "timed_out": false,
+      "tool_calls_observed": ["book"],
+      "tool_evidence_note": "book tool.response.rejected next_step=invalid_service_ids at 11:19:04 — confirms service-id resolution is the root cause",
+      "bugs": [
+        {
+          "type": "invalid_service_ids_on_book",
+          "severity": "critical",
+          "detail": "_resolve_audience_variants logs 'audience_required axis=cut options_count=6' on every book/update attempt — 'Corte de Mujer' resolved from memory is never pinned to a single bookable audience variant, so book returns invalid_service_ids."
+        }
+      ],
+      "milestone": "bot honestly attributes failure to service identification (no hallucinated confirmation)"
+    },
+    {
+      "turn": 7,
+      "user_message": "Sí, rehazla. Corte de Mujer con Rosa el martes a las 10:00.",
+      "agent_response": "He vuelto a intentarlo, pero ahora el sistema no está reconociendo correctamente el servicio al comprobar la hora, así que no puedo cerrarte la cita con seguridad.\n\nNo quiero inventarte una confirmación que no esté bien registrada. Si quieres, lo dejamos en pausa y lo revisamos con el equipo.",
+      "latency_ms": 23164,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "tool_evidence_note": "update_booking next_step=reoffer_slots again; service still not resolvable",
+      "bugs": [],
+      "milestone": "repeated service-resolution failure on explicit rebuild"
+    },
+    {
+      "turn": 8,
+      "user_message": "Vale, pues dejémoslo y que me llame alguien del equipo.",
+      "agent_response": "Te paso con alguien del equipo ahora mismo.",
+      "latency_ms": 22194,
+      "timed_out": false,
+      "tool_calls_observed": ["escalate"],
+      "tool_evidence_note": "escalation_service completed success=True steps_completed=['db_record','admin_notification']; Chatwoot steps skipped (sandbox conv_id not an int Chatwoot id — expected). Escalation was user-requested AFTER booking failure, not a spontaneous flow.",
+      "bugs": [],
+      "milestone": "user-requested human handoff after booking could not complete"
+    }
+  ],
+  "bugs": [
+    {
+      "type": "book_rejects_offered_slot",
+      "severity": "critical",
+      "detail": "O1 NOT resolved. book rejected an offered, confirmed-free slot. Underlying cause is service-id resolution: '_resolve_audience_variants audience_required axis=cut options_count=6' — 'Corte de Mujer' is never pinned to a single bookable audience variant, so book returns reoffer_slots / invalid_service_ids and never creates the appointment."
+    }
+  ],
+  "milestones_reached": [
+    "no_serialization_crash",
+    "checkpoint_persisted_every_turn",
+    "N1_resolved_by_name",
+    "R-41_lo_de_siempre_to_corte",
+    "O3_no_policy_re_gate",
+    "get_next_available_options_offered_slots",
+    "slot_accepted_into_draft",
+    "book_rejected_invalid_service_ids",
+    "user_requested_escalation"
+  ],
+  "db_delta": {
+    "customer_count_delta": 0,
+    "appt_count_delta": 0
+  },
+  "snapshot_before": {
+    "customer_count": 1,
+    "appt_count": 8
+  },
+  "snapshot_after": {
+    "customer_count": 1,
+    "appt_count": 8
+  },
+  "final_state": {
+    "has_checkpoint": false,
+    "note": "state helper returns has_checkpoint=false post-escalation; checkpoints DID persist on every turn during the run (agent logs 'Checkpoint persisted' x8) — hotfix held."
+  },
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "booked",
+    "db_appointment": {"status": "confirmed"},
+    "tool_calls_required": ["check_availability", "book"],
+    "tool_calls_forbidden": [],
+    "tags": ["behavioral", "returning", "memory-test"]
+  },
+  "passed": false,
+  "verdicts": {
+    "hotfix_no_crash": "PASS — no pgproto / 'not JSON serializable' crash; 'Checkpoint persisted' logged after every turn; state carried between turns.",
+    "O1_booked": "FAIL — slot offered by get_next_available_options was rejected by book (next_step=reoffer_slots then invalid_service_ids). No appointment created. Not a vanished slot (availability_service confirmed 15 free slots, 0 busy).",
+    "N1_resolved_by_name": "PASS — Rosa recognized by name from turn 1, never re-asked.",
+    "R-41_lo_de_siempre": "PASS — 'lo de siempre' resolved to corte de mujer from memory; bot never asked 'qué servicio?'.",
+    "O3_no_policy_regate": "PASS — returning v1.0-accepted customer was never re-gated for policy."
+  }
+}

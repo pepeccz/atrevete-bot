@@ -156,8 +156,14 @@ async def test_middleware_materializes_offered_slots_from_check_availability():
 
 
 @pytest.mark.asyncio
-async def test_middleware_sets_expires_at_15min_from_now():
-    """Each offered slot must have expires_at = now + 15 min (approx)."""
+async def test_middleware_sets_expires_at_30min_from_now():
+    """Each offered slot must have expires_at = now + 30 min (approx).
+
+    P1.2 update: TTL changed from 15 min to 30 min to cover the full offer→book
+    conversation gap (typically 4-5 turns, which in a real WhatsApp conversation
+    can easily span 10-15 minutes). 30 min is sufficient for any human booking flow
+    and short enough that stale offers from abandoned conversations don't resurrect.
+    """
     from agent.middleware.availability_context import AvailabilityContextMiddleware
 
     slot_iso = "2026-06-10T11:00:00+00:00"
@@ -202,11 +208,11 @@ async def test_middleware_sets_expires_at_15min_from_now():
     assert expires_str, "expires_at must be set"
 
     expires_dt = datetime.fromisoformat(expires_str.replace("Z", "+00:00")).astimezone(UTC)
-    expected_low = before + timedelta(minutes=14, seconds=55)
-    expected_high = after + timedelta(minutes=15, seconds=5)
+    expected_low = before + timedelta(minutes=29, seconds=55)
+    expected_high = after + timedelta(minutes=30, seconds=5)
     assert (
         expected_low <= expires_dt <= expected_high
-    ), f"expires_at {expires_dt} should be ~now+15min, got range [{expected_low}, {expected_high}]"
+    ), f"expires_at {expires_dt} should be ~now+30min, got range [{expected_low}, {expected_high}]"
 
 
 @pytest.mark.asyncio
@@ -272,61 +278,39 @@ async def test_middleware_purges_expired_entries():
 
 
 @pytest.mark.asyncio
-async def test_middleware_purges_stale_by_turn_index():
-    """Slots older than 2 turns (turn_index < current - 2) must be purged."""
-    from agent.middleware.availability_context import AvailabilityContextMiddleware
+async def test_slot_with_old_turn_index_survives_if_not_expired():
+    """P1.2: slots with old turn_index must NOT be purged if wall-clock TTL is still fresh.
+
+    Before P1.2: a slot with turn_index=5 at current_turn=8 would be purged by the
+    turn-index guard (5 < 8-2=6). This killed ALL slots in the offer→book gap.
+
+    After P1.2: only wall-clock TTL is used. A slot with turn_index=5 and
+    expires_at = now + 10 min must SURVIVE the purge pass.
+    """
+    from agent.middleware.availability_context import _materialize_offered_slots
 
     now = datetime.now(UTC)
-    # Slot offered 3 turns ago (current has 10 messages → turn_index=10)
-    stale_slot = {
+    slot = {
         "start_iso": "2026-06-10T09:00:00+00:00",
         "stylist_id": None,
         "expires_at": (now + timedelta(minutes=10)).isoformat(),  # Still fresh by wall-clock
-        "turn_index": 5,  # 3 turns old when current is 8+ messages
+        "turn_index": 5,  # Old turn_index — would have been purged by the old guard
     }
 
-    # Build messages list with 8 items so current turn_index = 8
-    messages = [MagicMock(name="human_msg")] * 8
-    # Add check_availability result as newest
-    messages[-1] = _make_check_availability_tool_msg([])
+    # current_turn_index=8; old guard: min_turn = 8-2 = 6, so turn_index=5 < 6 → purge
+    # new guard (P1.2): only TTL check → slot is still fresh → keep
+    merged = _materialize_offered_slots(
+        new_raw_slots=[],
+        existing_slots=[slot],
+        current_turn_index=8,
+        now=now,
+    )
 
-    captured_state_ref = {}
-
-    def capture_override(state):
-        captured_state_ref.update(state)
-        return MagicMock(state=state)
-
-    with (
-        patch(
-            "agent.middleware.availability_context._extract_service_ids_from_messages",
-            return_value=[SERVICE_ID],
-        ),
-        patch(
-            "agent.middleware.availability_context.get_availability_window",
-            new=AsyncMock(return_value={}),
-        ),
-        patch(
-            "agent.middleware.availability_context._get_redis",
-            return_value=None,
-        ),
-    ):
-        middleware = AvailabilityContextMiddleware()
-        request = _build_request(
-            {"conversation_id": CONV_ID, "recently_offered_slots": [stale_slot]},
-            messages,
-        )
-        request.override = capture_override
-
-        await middleware.awrap_model_call(request, AsyncMock(return_value=MagicMock()))
-
-    if "recently_offered_slots" not in captured_state_ref:
-        pytest.skip("recently_offered_slots not yet implemented")
-
-    offered = captured_state_ref["recently_offered_slots"]
-    stale_found = [s for s in offered if s.get("turn_index") == 5]
-    assert (
-        len(stale_found) == 0
-    ), f"Slot with turn_index=5 should have been purged (current ~8), found: {stale_found}"
+    assert len(merged) == 1, (
+        f"P1.2: slot with turn_index=5 at current_turn=8 must survive because "
+        f"its wall-clock TTL is still fresh. The turn-index purge was removed. Got: {merged}"
+    )
+    assert merged[0]["start_iso"] == "2026-06-10T09:00:00+00:00"
 
 
 # ---------------------------------------------------------------------------

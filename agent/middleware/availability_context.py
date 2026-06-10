@@ -7,6 +7,10 @@ slot data and writes the result as _slot_availability (XML block) into state.
 Cache: Redis key per (services_hash, audience, lead_window_start, days), TTL 60s.
 Best-effort invalidation via TTL — pre-book gate (T5) is the correctness backstop.
 
+P-fix: recently_offered_slots is now persisted to the LangGraph checkpoint via
+ExtendedModelResponse + Command(update=...) so InjectedState in book/update_booking
+sees it on the next turn. Without this, the in-memory state overlay evaporated.
+
 Must be registered AFTER DynamicPromptMiddleware and BEFORE PromptAssemblyMiddleware.
 Spec: R1.1–R1.5, R1.7. Design: ADR-1, ADR-3, ADR-4.
 """
@@ -21,7 +25,13 @@ from datetime import UTC, date, datetime, timedelta
 from typing import Any, ClassVar
 from uuid import UUID
 
-from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
+from langchain.agents.middleware import (
+    AgentMiddleware,
+    ExtendedModelResponse,
+    ModelRequest,
+    ModelResponse,
+)
+from langgraph.types import Command
 
 from agent.services.availability_service import get_availability_window
 
@@ -140,8 +150,10 @@ def _count_day_lines(window: dict) -> int:
 # J3: recently_offered_slots producer helpers
 # ---------------------------------------------------------------------------
 
-_OFFERED_SLOT_TTL_MINUTES = 15
-_OFFERED_SLOT_MAX_TURNS = 2  # purge entries older than current_turn - this
+_OFFERED_SLOT_TTL_MINUTES = 30  # P1.2: 30-min TTL — long enough for any real booking flow
+# _OFFERED_SLOT_MAX_TURNS removed: turn-index purge replaced by time-based TTL only (P1.2).
+# The turn-index purge (max_turns=2) was killing slots offered >2 turns ago — exactly the
+# offer→book gap (4-5 turns). Time TTL is robust to message compaction and conversation length.
 
 
 def _extract_offered_slots_from_messages(messages: list) -> list[dict]:
@@ -189,48 +201,58 @@ def _materialize_offered_slots(
     current_turn_index: int,
     now: datetime,
 ) -> list[dict]:
-    """Merge new raw slots with existing, applying TTL + turn-index purge.
+    """Merge new raw slots with existing, applying time-based TTL purge only.
 
-    Purge rules (hybrid D1):
-      - Wall-clock TTL: expires_at <= now → purge
-      - Turn staleness: turn_index < current_turn_index - _OFFERED_SLOT_MAX_TURNS → purge
+    P1.2 fix: turn-index purge removed. The old turn-index guard (max_turns=2) fired
+    exactly in the offer→book gap (4-5 turns), purging every legitimately offered slot.
+    Replaced with a 30-minute wall-clock TTL that survives message compaction and is
+    robust to conversation length.
+
+    Purge rule:
+      - Wall-clock TTL: expires_at <= now → purge (entry is stale, conversation probably stale)
 
     New slots get:
-      - expires_at = now + 15 min
-      - turn_index = current_turn_index
+      - expires_at = now + 30 min (isoformat str, UTC — JSON-serializable for orjson checkpointer)
+      - offered_at = now (isoformat str — audit/debug; not used for purge decisions)
+      - turn_index retained for backward-compat with existing readers / existing entries,
+        but NOT used for purge decisions.
+
+    All datetime/UUID values coerced to str so the dict survives orjson serialization
+    in the AsyncRedisSaver checkpoint.
     """
     expires_at = (now + timedelta(minutes=_OFFERED_SLOT_TTL_MINUTES)).isoformat()
-    min_turn = current_turn_index - _OFFERED_SLOT_MAX_TURNS
+    offered_at = now.isoformat()
 
-    # Purge stale existing entries
+    # Purge stale existing entries (wall-clock TTL only)
     kept_existing: list[dict] = []
     for entry in existing_slots:
-        # Wall-clock check
         expires_str = entry.get("expires_at", "")
         if expires_str:
             try:
                 exp_dt = datetime.fromisoformat(expires_str.replace("Z", "+00:00")).astimezone(UTC)
                 if exp_dt <= now:
-                    continue
+                    continue  # Expired — purge
             except ValueError:
-                continue
-        # Turn-index check
-        if entry.get("turn_index", 0) < min_turn:
-            continue
+                continue  # Unparseable expiry — purge (safe)
+        # No expiry field at all → retain (backward-compat with legacy entries)
         kept_existing.append(entry)
 
     # Build new entries (de-duplicate by start_iso + stylist_id)
     existing_keys = {(e["start_iso"], e.get("stylist_id")) for e in kept_existing}
 
     for raw in new_raw_slots:
-        key = (raw["start_iso"], raw.get("stylist_id"))
+        # Coerce to str to ensure orjson serialization safety (no raw UUID/datetime objects)
+        start_iso = str(raw["start_iso"]) if raw["start_iso"] is not None else None
+        stylist_id = str(raw["stylist_id"]) if raw.get("stylist_id") is not None else None
+        key = (start_iso, stylist_id)
         if key not in existing_keys:
             kept_existing.append(
                 {
-                    "start_iso": raw["start_iso"],
-                    "stylist_id": raw.get("stylist_id"),
+                    "start_iso": start_iso,
+                    "stylist_id": stylist_id,
                     "expires_at": expires_at,
-                    "turn_index": current_turn_index,
+                    "offered_at": offered_at,
+                    "turn_index": current_turn_index,  # kept for compat, not used in purge
                 }
             )
             existing_keys.add(key)
@@ -257,11 +279,43 @@ def _update_offered_slots_in_state(state: dict, messages: list) -> dict:
     return state
 
 
+def _wrap_with_checkpoint_persist(
+    response: ModelResponse,
+    new_slots: list[dict],
+    old_slots: list[dict],
+) -> ModelResponse:
+    """Wrap response in ExtendedModelResponse to persist recently_offered_slots to checkpoint.
+
+    P1.1 fix: the middleware previously wrote recently_offered_slots only into the
+    in-memory request.state overlay via request.override(state=...). That overlay
+    is local to the current model call and evaporates after the turn completes —
+    the LangGraph checkpoint (AsyncRedisSaver) never saw it.
+
+    book() and update_booking.py read recently_offered_slots from InjectedState,
+    which reflects the checkpoint snapshot from the START of the turn. Without
+    checkpoint persistence, InjectedState always sees [] → validate_slot_in_offered
+    returns ok=False → reoffer_slots on every real booking flow.
+
+    Copy pattern from CustomerResolveMiddleware (O2 fix for customer_id).
+    Only wraps when slots actually changed to avoid unnecessary checkpoint writes.
+    """
+    if new_slots == old_slots:
+        return response
+    return ExtendedModelResponse(
+        model_response=response,
+        command=Command(update={"recently_offered_slots": new_slots}),
+    )
+
+
 class AvailabilityContextMiddleware(AgentMiddleware):
     """Inject grounded <availability> XML block when booking context is active.
 
     Trigger: latest update_booking ToolMessage has non-empty service_ids in collected.
     No trigger: no update_booking ToolMessage, or service_ids is empty/absent.
+
+    P1.1: returns ExtendedModelResponse when recently_offered_slots changes so the
+    value reaches the LangGraph checkpoint and is visible to book/update_booking via
+    InjectedState on the next turn.
     """
 
     _allow_single_variant: ClassVar[bool] = True
@@ -273,13 +327,19 @@ class AvailabilityContextMiddleware(AgentMiddleware):
     ) -> ModelResponse:
         state = request.state or {}
         messages = state.get("messages", [])
+        original_slots: list[dict] = list(state.get("recently_offered_slots") or [])
 
         service_ids = _extract_service_ids_from_messages(messages)
         if not service_ids:
             # Early-turn lean: no service resolved yet — still update offered slots
             updated_state = _update_offered_slots_in_state(state, messages)
             if updated_state is not state:
-                return await handler(request.override(state=updated_state))
+                response = await handler(request.override(state=updated_state))
+                return _wrap_with_checkpoint_persist(
+                    response,
+                    updated_state.get("recently_offered_slots", []),
+                    original_slots,
+                )
             return await handler(request)
 
         audience: str | None = None  # audience not tracked in state post-rework
@@ -322,7 +382,12 @@ class AvailabilityContextMiddleware(AgentMiddleware):
                 )
                 updated = _update_offered_slots_in_state(state, messages)
                 req = request.override(state=updated) if updated is not state else request
-                return await handler(req)
+                response = await handler(req)
+                return _wrap_with_checkpoint_persist(
+                    response,
+                    updated.get("recently_offered_slots", original_slots),
+                    original_slots,
+                )
 
             try:
                 window = await get_availability_window(
@@ -337,7 +402,12 @@ class AvailabilityContextMiddleware(AgentMiddleware):
                 )
                 updated = _update_offered_slots_in_state(state, messages)
                 req = request.override(state=updated) if updated is not state else request
-                return await handler(req)
+                response = await handler(req)
+                return _wrap_with_checkpoint_persist(
+                    response,
+                    updated.get("recently_offered_slots", original_slots),
+                    original_slots,
+                )
 
             # Token-budget guard (ADR-3): too many day-lines → reduce window
             if _count_day_lines(window) > _MAX_DAY_LINES:
@@ -354,7 +424,12 @@ class AvailabilityContextMiddleware(AgentMiddleware):
             if not window:
                 updated = _update_offered_slots_in_state(state, messages)
                 req = request.override(state=updated) if updated is not state else request
-                return await handler(req)
+                response = await handler(req)
+                return _wrap_with_checkpoint_persist(
+                    response,
+                    updated.get("recently_offered_slots", original_slots),
+                    original_slots,
+                )
 
             slot_xml = _format_availability_xml(window)
 
@@ -370,4 +445,9 @@ class AvailabilityContextMiddleware(AgentMiddleware):
 
         # J3: also materialize recently_offered_slots from ToolMessages
         new_state = _update_offered_slots_in_state(new_state, messages)
-        return await handler(request.override(state=new_state))
+        response = await handler(request.override(state=new_state))
+        return _wrap_with_checkpoint_persist(
+            response,
+            new_state.get("recently_offered_slots", original_slots),
+            original_slots,
+        )

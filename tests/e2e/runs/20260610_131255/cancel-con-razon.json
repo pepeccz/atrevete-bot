@@ -1,0 +1,92 @@
+{
+  "scenario_id": "cancel-con-razon",
+  "conversation_id": "bd2c1ca2-a40b-496d-a226-27c58784cd0b",
+  "outcome": "cancelled",
+  "turns_taken": 3,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, tengo una cita la semana que viene pero estoy con fiebre, prefiero cancelarla.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nTe ayudo con eso. Veo que tienes una cita el lunes 15 de junio a las 11:00 con Marta para Moldeado.\n\nComo comentas que tienes fiebre y la cita está dentro de la ventana de 48 horas, no la puedo cancelar por chat directamente. Te paso con alguien del equipo para que lo gestione contigo y, si hace falta, también te dejamos una alternativa. Espero que te mejores pronto.",
+      "latency_ms": 11582,
+      "timed_out": false,
+      "tool_calls_observed": ["escalate"],
+      "bugs": [
+        {
+          "type": "wrong_48h_classification",
+          "detail": "Bot claims the appointment is 'dentro de la ventana de 48 horas' and escalates, but the seeded appointment is 2026-06-15 11:00 Madrid and today is 2026-06-10 (~4d21h away, well outside 48h). Incorrect first-turn classification triggered an unnecessary escalation. Self-corrected on turn 2 after the customer clarified."
+        }
+      ],
+      "milestone": "appointment_identified_but_misclassified_as_inside_48h"
+    },
+    {
+      "turn": 2,
+      "user_message": "Pero si la cita es el lunes que viene, falta casi una semana. No es mañana. ¿No la puedes cancelar tú directamente?",
+      "agent_response": "Sí, claro: ya está cancelada tu cita del lunes 15 de junio a las 11:00 con Marta.\n\nSi te apetece, te ayudo a buscar otra fecha para una nueva cita.",
+      "latency_ms": 12496,
+      "timed_out": false,
+      "tool_calls_observed": ["manage_appointments"],
+      "bugs": [],
+      "milestone": "cancellation_executed_and_confirmed_cleanly"
+    },
+    {
+      "turn": 3,
+      "user_message": "No, gracias. Prefiero esperar a recuperarme y ya pediré cita más adelante. ¡Gracias!",
+      "agent_response": "Perfecto, que te recuperes pronto. Cuando quieras, aquí estoy para ayudarte con la cita.",
+      "latency_ms": 8328,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "natural_close_no_rebook_pushed"
+    }
+  ],
+  "bugs": [
+    {
+      "turn": 1,
+      "type": "wrong_48h_classification",
+      "detail": "First-turn 48h-window misclassification caused an unnecessary escalation for an appointment that is >48h away. Bot self-corrected on turn 2 and cancelled cleanly. Does not affect final outcome but is a real behavioral defect (N4 empathy held throughout)."
+    }
+  ],
+  "milestones_reached": [
+    "appointment_identified",
+    "cancellation_executed",
+    "cancellation_confirmed_to_customer",
+    "no_pgproto_serialization_crash",
+    "no_problema_tecnico_message",
+    "checkpoint_persisted_v2",
+    "empathetic_close_no_rebook_pushed"
+  ],
+  "db_delta": {
+    "customer_count_delta": 0,
+    "appt_count_delta": 0
+  },
+  "snapshot_before": {
+    "customer_count": 1,
+    "appt_count": 1
+  },
+  "snapshot_after": {
+    "customer_count": 1,
+    "appt_count": 1
+  },
+  "final_state": {
+    "has_checkpoint": false,
+    "note": "qa_turn_helper state command queries thread_id=conversation_id (bare), but the production agent persists under thread_id='v2:{conversation_id}'. Direct Redis scan confirmed checkpoint:v2:bd2c1ca2-... and checkpoint_latest:v2:bd2c1ca2-... keys existed before cleanup. Checkpoint DID persist; has_checkpoint:false is a harness key-format limitation, not a hotfix failure.",
+    "checkpoint_keys_present_pre_cleanup": true,
+    "checkpoint_key_prefix": "v2:"
+  },
+  "appointment_final_state": {
+    "id": "2087a08e-3aa1-4c73-a352-698c89a6ea51",
+    "status": "cancelled",
+    "cancelled_at": "2026-06-10 11:16:02.33135+00",
+    "cancellation_reason": null
+  },
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "cancelled",
+    "db_appointment": {"status": "cancelled"},
+    "tool_calls_required": ["manage_appointments"],
+    "tool_calls_forbidden": ["book", "update_booking"],
+    "tags": ["cancel", "with-reason"]
+  },
+  "passed": true
+}
