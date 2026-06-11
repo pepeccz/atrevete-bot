@@ -62,7 +62,7 @@ def get_langfuse_handler(
     customer_phone: str,
     customer_name: str | None = None,
     additional_metadata: dict | None = None,
-) -> tuple[CallbackHandler, object]:
+) -> tuple[CallbackHandler | None, object | None]:
     """
     Create a Langfuse callback handler for tracing agent conversations.
 
@@ -71,6 +71,14 @@ def get_langfuse_handler(
     manager that injects OTEL span attributes without touching os.environ.
     Credentials are read from env vars configured once at deploy time.
 
+    When LANGFUSE_PUBLIC_KEY or LANGFUSE_SECRET_KEY is absent (or only one
+    is present), returns (None, None) immediately without constructing a
+    CallbackHandler or emitting any network call.  The caller at
+    agent/main.py already guards on both Nones independently:
+      - ``"callbacks": [handler] if handler else []``
+      - ``if langfuse_ctx is not None: with langfuse_ctx: ...``
+    so no caller changes are required.
+
     Args:
         conversation_id: Chatwoot conversation ID — used as session_id
         customer_phone: Customer's phone number — used as user_id
@@ -78,8 +86,9 @@ def get_langfuse_handler(
         additional_metadata: Optional dict with extra metadata to attach
 
     Returns:
-        Tuple of (CallbackHandler, propagate_attributes context manager).
-        The caller MUST enter the context manager (``async with ctx:``) around
+        Tuple of (CallbackHandler | None, propagate_attributes ctx | None).
+        Returns (None, None) when Langfuse keys are absent.
+        The caller MUST enter the context manager (``with ctx:``) around
         the graph invocation so that all child spans inherit session/user/tags.
 
     Example:
@@ -90,12 +99,22 @@ def get_langfuse_handler(
         ... )
         >>> config = {
         ...     "configurable": {"thread_id": conversation_id},
-        ...     "callbacks": [handler],
+        ...     "callbacks": [handler] if handler else [],
         ... }
-        >>> async with ctx:
+        >>> if ctx is not None:
+        ...     with ctx:
+        ...         result = await graph.ainvoke(state, config=config)
+        ... else:
         ...     result = await graph.ainvoke(state, config=config)
     """
     settings = get_settings()
+
+    # U1 — keyless guard: return (None, None) when either key is absent.
+    # Mirrors the predicate in get_langfuse_client() (line 44 above).
+    # No CallbackHandler is constructed; no HTTP call is made.
+    if not settings.LANGFUSE_PUBLIC_KEY or not settings.LANGFUSE_SECRET_KEY:
+        logger.debug("Langfuse keys absent — tracing disabled (no handler created)")
+        return None, None
 
     # Build per-call tags — no os.environ mutation
     tags = ["production", "whatsapp", "langgraph"]

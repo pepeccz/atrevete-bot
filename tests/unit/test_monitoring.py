@@ -1,5 +1,5 @@
 """
-Unit tests for agent/utils/monitoring.py — C3 race-condition fix.
+Unit tests for agent/utils/monitoring.py — C3 race-condition fix + keyless guard (U1).
 
 Bug C3: get_langfuse_handler() used to mutate 6 process-global env vars
 (LANGFUSE_SESSION_ID, LANGFUSE_USER_ID, LANGFUSE_TAGS, etc.) on every call.
@@ -11,6 +11,10 @@ Fix: session_id, user_id, tags are passed as kwargs to propagate_attributes()
 Credentials (public_key, secret_key, host) are configured once at module
 level via env vars — the Docker deploy sets them and they don't change
 per-call.
+
+U1 (keyless guard): get_langfuse_handler() returns (None, None) when either
+Langfuse key is absent, without constructing a CallbackHandler or making any
+network call. Keys-present path is byte-identical to pre-guard.
 """
 
 from __future__ import annotations
@@ -46,8 +50,6 @@ def test_get_langfuse_handler_does_not_mutate_global_environ(monkeypatch):
     per-call context is scoped to the propagate_attributes context manager.
     """
     # Arrange: seed credentials (static, set once at deploy)
-    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
-    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test")
     monkeypatch.delenv("LANGFUSE_SESSION_ID", raising=False)
     monkeypatch.delenv("LANGFUSE_USER_ID", raising=False)
     monkeypatch.delenv("LANGFUSE_TAGS", raising=False)
@@ -82,8 +84,14 @@ def test_get_langfuse_handler_does_not_mutate_global_environ(monkeypatch):
         propagate_calls.append(kwargs)
         return _FakePropagateCtx(**kwargs)
 
-    # Stub out both CallbackHandler and propagate_attributes so no real SDK call
+    # Stub out CallbackHandler, propagate_attributes, AND get_settings so the
+    # lru_cache on get_settings() does not return a keyless stub from a
+    # previously-run test in the same process.
     with (
+        patch(
+            "agent.utils.monitoring.get_settings",
+            return_value=_make_settings_stub(public_key="pk-test", secret_key="sk-test"),
+        ),
         patch("agent.utils.monitoring.CallbackHandler", _FakeHandler),
         patch("agent.utils.monitoring.propagate_attributes", _fake_propagate_attributes),
     ):
@@ -139,8 +147,6 @@ async def test_get_langfuse_handler_concurrent_calls_do_not_cross_contaminate(mo
 
     This proves no shared global-state contamination.
     """
-    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
-    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test")
     monkeypatch.delenv("LANGFUSE_SESSION_ID", raising=False)
     monkeypatch.delenv("LANGFUSE_USER_ID", raising=False)
     monkeypatch.delenv("LANGFUSE_TAGS", raising=False)
@@ -171,7 +177,13 @@ async def test_get_langfuse_handler_concurrent_calls_do_not_cross_contaminate(mo
         propagate_calls.append(dict(kwargs))
         return _FakePropagateCtx(**kwargs)
 
+    # Patch get_settings to return keys-present stub (bypasses lru_cache pollution
+    # from earlier tests in the suite that may have cached a keyless settings object).
     with (
+        patch(
+            "agent.utils.monitoring.get_settings",
+            return_value=_make_settings_stub(public_key="pk-test", secret_key="sk-test"),
+        ),
         patch("agent.utils.monitoring.CallbackHandler", _FakeHandler),
         patch("agent.utils.monitoring.propagate_attributes", _fake_propagate),
     ):
@@ -218,8 +230,6 @@ def test_get_langfuse_handler_raises_when_callback_handler_fails(monkeypatch):
     When CallbackHandler.__init__ raises, the exception must propagate
     (so the caller can catch it and continue without tracing).
     """
-    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
-    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test")
 
     class _BrokenHandler:
         def __init__(self, **kwargs: Any) -> None:
@@ -238,7 +248,12 @@ def test_get_langfuse_handler_raises_when_callback_handler_fails(monkeypatch):
     def _fake_propagate(**kwargs):
         return _FakePropagateCtx(**kwargs)
 
+    # Patch get_settings to return keys-present stub (bypasses lru_cache pollution).
     with (
+        patch(
+            "agent.utils.monitoring.get_settings",
+            return_value=_make_settings_stub(public_key="pk-test", secret_key="sk-test"),
+        ),
         patch("agent.utils.monitoring.CallbackHandler", _BrokenHandler),
         patch("agent.utils.monitoring.propagate_attributes", _fake_propagate),
     ):
@@ -267,22 +282,148 @@ def test_get_langfuse_handler_returns_sync_context_manager(monkeypatch):
     Guard: the returned ctx must implement __enter__/__exit__ (sync protocol)
     and must NOT implement __aenter__/__aexit__.
     """
-    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
-    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test")
+    # Patch get_settings to return keys-present stub (bypasses lru_cache pollution
+    # from earlier tests in the suite that may have cached a keyless settings object).
+    with patch(
+        "agent.utils.monitoring.get_settings",
+        return_value=_make_settings_stub(public_key="pk-test", secret_key="sk-test"),
+    ):
+        from agent.utils.monitoring import get_langfuse_handler
 
-    from agent.utils.monitoring import get_langfuse_handler
-
-    _, ctx = get_langfuse_handler(
-        conversation_id="conv-sync",
-        customer_phone="+34111111111",
-        customer_name=None,
-    )
+        _, ctx = get_langfuse_handler(
+            conversation_id="conv-sync",
+            customer_phone="+34111111111",
+            customer_name=None,
+        )
 
     assert hasattr(ctx, "__enter__"), "ctx must support sync `with` protocol"
     assert hasattr(ctx, "__exit__"), "ctx must support sync `with` protocol"
-    assert not hasattr(ctx, "__aenter__"), (
-        "ctx must NOT be an async context manager — agent/main.py uses sync `with`"
-    )
-    assert not hasattr(ctx, "__aexit__"), (
-        "ctx must NOT be an async context manager — agent/main.py uses sync `with`"
-    )
+    assert not hasattr(
+        ctx, "__aenter__"
+    ), "ctx must NOT be an async context manager — agent/main.py uses sync `with`"
+    assert not hasattr(
+        ctx, "__aexit__"
+    ), "ctx must NOT be an async context manager — agent/main.py uses sync `with`"
+
+
+# ---------------------------------------------------------------------------
+# Tests 6-8 — U1 keyless guard
+# ---------------------------------------------------------------------------
+
+
+def _make_settings_stub(public_key=None, secret_key=None):
+    """Return a minimal settings stub for monitoring tests."""
+    from unittest.mock import MagicMock
+
+    s = MagicMock()
+    s.LANGFUSE_PUBLIC_KEY = public_key
+    s.LANGFUSE_SECRET_KEY = secret_key
+    return s
+
+
+def test_get_langfuse_handler_returns_none_tuple_when_both_keys_absent():
+    """
+    U1: when both LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY are absent (None),
+    get_langfuse_handler() must return (None, None) without constructing a
+    CallbackHandler or making any network call.
+
+    Uses a patched get_settings so the test is environment-independent
+    (pydantic_settings reads from .env; delenv alone is insufficient).
+    """
+    handler_constructed = []
+
+    class _SpyHandler:
+        def __init__(self, **kwargs: Any) -> None:
+            handler_constructed.append(kwargs)
+
+    with (
+        patch(
+            "agent.utils.monitoring.get_settings",
+            return_value=_make_settings_stub(public_key=None, secret_key=None),
+        ),
+        patch("agent.utils.monitoring.CallbackHandler", _SpyHandler),
+    ):
+        from agent.utils.monitoring import get_langfuse_handler
+
+        result = get_langfuse_handler(
+            conversation_id="conv-keyless",
+            customer_phone="+34000000001",
+        )
+
+    assert result == (None, None), f"Expected (None, None) when keys absent, got {result!r}"
+    assert not handler_constructed, "CallbackHandler must NOT be constructed when keys absent"
+
+
+def test_get_langfuse_handler_returns_none_tuple_when_only_public_key_set():
+    """
+    U1 edge case: only PUBLIC_KEY present, SECRET_KEY absent → (None, None).
+    Partial credentials are treated as absent (guard is 'not A or not B').
+    """
+    handler_constructed = []
+
+    class _SpyHandler:
+        def __init__(self, **kwargs: Any) -> None:
+            handler_constructed.append(kwargs)
+
+    with (
+        patch(
+            "agent.utils.monitoring.get_settings",
+            return_value=_make_settings_stub(public_key="pk-only", secret_key=None),
+        ),
+        patch("agent.utils.monitoring.CallbackHandler", _SpyHandler),
+    ):
+        from agent.utils.monitoring import get_langfuse_handler
+
+        result = get_langfuse_handler(
+            conversation_id="conv-partial",
+            customer_phone="+34000000002",
+        )
+
+    assert result == (None, None), f"Expected (None, None) when only PUBLIC_KEY set, got {result!r}"
+    assert not handler_constructed, "CallbackHandler must NOT be constructed with partial keys"
+
+
+def test_get_langfuse_handler_builds_handler_when_both_keys_present():
+    """
+    U1 regression guard: when both keys are valid non-empty strings,
+    get_langfuse_handler() must return a (CallbackHandler, ctx) tuple — the
+    keys-present path must be byte-identical to pre-guard behavior.
+    """
+
+    class _FakeHandler:
+        def __init__(self, **kwargs: Any) -> None:
+            self.kwargs = kwargs
+
+    class _FakePropagateCtx:
+        def __init__(self, **kwargs: Any) -> None:
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+    def _fake_propagate(**kwargs):
+        return _FakePropagateCtx(**kwargs)
+
+    with (
+        patch(
+            "agent.utils.monitoring.get_settings",
+            return_value=_make_settings_stub(public_key="pk-valid", secret_key="sk-valid"),
+        ),
+        patch("agent.utils.monitoring.CallbackHandler", _FakeHandler),
+        patch("agent.utils.monitoring.propagate_attributes", _fake_propagate),
+    ):
+        from agent.utils.monitoring import get_langfuse_handler
+
+        handler, ctx = get_langfuse_handler(
+            conversation_id="conv-valid",
+            customer_phone="+34000000003",
+            customer_name="Test User",
+        )
+
+    assert isinstance(
+        handler, _FakeHandler
+    ), f"Expected CallbackHandler instance when both keys present, got {type(handler)!r}"
+    assert ctx is not None, "ctx must not be None when both keys present"

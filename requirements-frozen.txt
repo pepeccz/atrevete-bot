@@ -8,7 +8,7 @@ certifi==2025.10.5
 charset-normalizer==3.4.4
 click==8.3.0
 distro==1.9.0
-Django==5.2.7
+Django==5.2.8
 dnspython==2.8.0
 docstring_parser==0.17.0
 email-validator==2.3.0
@@ -32,9 +32,9 @@ Jinja2==3.1.6
 jiter==0.11.1
 jsonpatch==1.33
 jsonpointer==3.0.0
-langchain==1.0.2
+langchain==1.2.15
 langchain-anthropic==1.0.0
-langchain-core==1.0.1
+langchain-core==1.2.5
 langgraph==1.0.1
 langgraph-checkpoint==3.0.0
 langgraph-prebuilt==1.0.1

@@ -38,6 +38,12 @@ def _build_llm(model: str, temperature: float = 0.0) -> ChatOpenAI:
     order = [p.strip() for p in s.LLM_PROVIDER_ORDER.split(",") if p.strip()]
     extra_body = {"provider": {"order": order, "allow_fallbacks": True}} if order else None
 
+    # U2 (Change U): explicit retry and timeout policy.
+    # openai SDK retries: 408/409/429/>=500/connection errors (exponential backoff + jitter).
+    # Non-transient 4xx (400/401/403/422) are NOT retried — fail fast.
+    # Previous implicit SDK defaults: max_retries=2, timeout=600s.
+    # Verified against openai SDK source (_base_client.py DEFAULT_MAX_RETRIES=2,
+    # DEFAULT_TIMEOUT=httpx.Timeout(600.0, connect=5.0)) installed in this project.
     kwargs: dict = dict(
         model=model,
         temperature=temperature,
@@ -48,6 +54,8 @@ def _build_llm(model: str, temperature: float = 0.0) -> ChatOpenAI:
             "X-Title": s.SITE_NAME,
         },
         http_async_client=traced_client,
+        max_retries=s.LLM_MAX_RETRIES,
+        timeout=s.LLM_REQUEST_TIMEOUT,
     )
     if extra_body is not None:
         kwargs["extra_body"] = extra_body
@@ -61,7 +69,9 @@ def get_llm(
 ) -> ChatOpenAI:
     """Return ChatOpenAI wired to OpenRouter with project settings."""
     s = get_settings()
-    return _build_llm(model=model or s.LLM_MODEL, temperature=temperature if temperature is not None else 0.0)
+    return _build_llm(
+        model=model or s.LLM_MODEL, temperature=temperature if temperature is not None else 0.0
+    )
 
 
 def get_summarizer_llm() -> ChatOpenAI:

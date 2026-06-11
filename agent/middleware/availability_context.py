@@ -325,7 +325,7 @@ class AvailabilityContextMiddleware(AgentMiddleware):
     ) -> ModelResponse:
         state = request.state or {}
         messages = state.get("messages", [])
-        original_slots: list[dict] = list(state.get("recently_offered_slots") or [])
+        original_slots: list[dict] = list(state.get("recently_offered_slots") or [])  # type: ignore[call-overload]
 
         service_ids = _extract_service_ids_from_messages(messages)
         if not service_ids:

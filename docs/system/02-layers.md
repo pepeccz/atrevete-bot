@@ -133,7 +133,7 @@ Algunos concerns NO encajan en una sola capa:
 - **Configuración** (`shared/config.py` con Pydantic Settings): infra, accesible desde todas las capas que la necesiten. Es la única excepción legal a "infra no toca módulos".
 - **Logging estructurado**: infra (`observability`), accesible desde todas las capas.
 - **Encryption** (`shared/encryption.py`): infra utility. Cualquier capa que persista secretos lo usa.
-- **Circuit breaker** (`shared/circuit_breaker.py`): infra. Lo usan los adaptadores externos (LLM, GCal, Chatwoot).
+- **Degradación por adaptador**: `shared/circuit_breaker.py` fue removido intencionalmente. Estrategia de degradación documentada en `docs/system/07-resilience.md`. Deletion guard: `tests/unit/test_dead_code_cleanup_assertions.py:52`.
 
 ## Cómo validar que la separación se respeta
 
