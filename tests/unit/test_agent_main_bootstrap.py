@@ -51,9 +51,15 @@ def test_agent_main_uses_authoritative_graph_factory():
 @pytest.mark.asyncio
 async def test_subscribe_to_incoming_messages_uses_authoritative_runtime_graph():
     fake_graph = MagicMock()
+    # The state seed already contains 1 HumanMessage (messages_before=1).
+    # The freshness guard requires messages_after > messages_before AND last_role == "assistant".
+    # Return 2 messages: original human + new AI reply so the guard passes.
     fake_graph.ainvoke = AsyncMock(
         return_value={
-            "messages": [{"role": "assistant", "content": "Hola, soy Maite"}],
+            "messages": [
+                {"role": "human", "content": "Hola"},
+                {"role": "assistant", "content": "Hola, soy Maite"},
+            ],
             "current_mode": "GREETING",
             "last_node": "summarize",
         }
