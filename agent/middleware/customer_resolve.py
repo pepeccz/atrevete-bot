@@ -18,10 +18,13 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import ClassVar
 
-from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
-from langchain.agents.middleware import ExtendedModelResponse
-from langgraph.types import Command
+from langchain.agents.middleware import (
+    AgentMiddleware,
+    ModelRequest,
+    ModelResponse,
+)
 
+from agent.middleware._persistence import persist_to_checkpoint
 from agent.services.customer_memory_service import read_customer_memories
 from shared.config import get_settings
 from shared.redis_client import get_redis_client
@@ -55,7 +58,7 @@ async def _get_cached_customer(phone: str) -> dict | None:
                 data["policy_accepted_at"] = None
         return data
     except Exception as exc:
-        logger.warning("customer cache GET failed phone=…: %s", exc)
+        logger.error("customer cache GET failed phone=…: %s", exc, exc_info=True)
         return None
 
 
@@ -72,7 +75,7 @@ async def _set_cached_customer(phone: str, data: dict) -> None:
             json.dumps(data, default=str),
         )
     except Exception as exc:
-        logger.warning("customer cache SETEX failed phone=…: %s", exc)
+        logger.error("customer cache SETEX failed phone=…: %s", exc, exc_info=True)
 
 
 async def _invalidate_cached_customer(phone: str) -> None:
@@ -81,7 +84,7 @@ async def _invalidate_cached_customer(phone: str) -> None:
         client = get_redis_client()
         await client.delete(_CUSTOMER_CACHE_KEY_FMT.format(phone=phone))
     except Exception as exc:
-        logger.warning("customer cache DEL failed phone=…: %s", exc)
+        logger.error("customer cache DEL failed phone=…: %s", exc, exc_info=True)
 
 
 async def _lookup_customer(phone: str, conversation_id: str | None = None) -> dict | None:
@@ -234,7 +237,7 @@ class CustomerResolveMiddleware(AgentMiddleware):
         try:
             memories = await read_customer_memories(phone)
         except Exception as exc:
-            logger.warning("read_customer_memories failed for %s: %s", phone, exc)
+            logger.error("read_customer_memories failed for %s: %s", phone, exc, exc_info=True)
             memories = None
 
         # Build <customer> block for known customers
@@ -294,14 +297,17 @@ class CustomerResolveMiddleware(AgentMiddleware):
         # receives the resolved customer_id even when the graph state was not yet updated.
         # Without this, customer_id only lives in the per-turn request.state overlay and
         # tools invoked after the model call see customer_id=None from the checkpoint.
+        #
+        # REQ-S1-8: also persist customer_memories when present, so Change T memory work
+        # and future tools can read memories from InjectedState (not only per-turn overlay).
+        # persist_to_checkpoint handles UUID→str coercion (ADR-1).
         state_delta: dict = {}
         if state.get("customer_id") is None:
             state_delta["customer_id"] = resolved_customer_id
         if state.get("customer_name") is None:
             state_delta["customer_name"] = customer["name"]
+        if memories is not None and state.get("customer_memories") != memories:
+            state_delta["customer_memories"] = memories
         if state_delta:
-            return ExtendedModelResponse(
-                model_response=response,
-                command=Command(update=state_delta),
-            )
+            return persist_to_checkpoint(response, state_delta)
         return response

@@ -27,11 +27,9 @@ from uuid import UUID
 
 from langchain.agents.middleware import (
     AgentMiddleware,
-    ExtendedModelResponse,
     ModelRequest,
     ModelResponse,
 )
-from langgraph.types import Command
 
 from agent.services.availability_service import get_availability_window
 
@@ -284,7 +282,7 @@ def _wrap_with_checkpoint_persist(
     new_slots: list[dict],
     old_slots: list[dict],
 ) -> ModelResponse:
-    """Wrap response in ExtendedModelResponse to persist recently_offered_slots to checkpoint.
+    """Persist recently_offered_slots to checkpoint when slots have changed.
 
     P1.1 fix: the middleware previously wrote recently_offered_slots only into the
     in-memory request.state overlay via request.override(state=...). That overlay
@@ -296,15 +294,15 @@ def _wrap_with_checkpoint_persist(
     checkpoint persistence, InjectedState always sees [] → validate_slot_in_offered
     returns ok=False → reoffer_slots on every real booking flow.
 
-    Copy pattern from CustomerResolveMiddleware (O2 fix for customer_id).
-    Only wraps when slots actually changed to avoid unnecessary checkpoint writes.
+    Change S ADR-1: delegates to persist_to_checkpoint helper for consistent
+    coercion and Command construction. 4 call sites above are untouched.
+    Only persists when slots actually changed to avoid unnecessary checkpoint writes.
     """
     if new_slots == old_slots:
         return response
-    return ExtendedModelResponse(
-        model_response=response,
-        command=Command(update={"recently_offered_slots": new_slots}),
-    )
+    from agent.middleware._persistence import persist_to_checkpoint
+
+    return persist_to_checkpoint(response, {"recently_offered_slots": new_slots})
 
 
 class AvailabilityContextMiddleware(AgentMiddleware):
@@ -353,6 +351,13 @@ class AvailabilityContextMiddleware(AgentMiddleware):
 
             min_days = await _load_lead_time_min_days()
         except Exception:
+            conversation_id = state.get("conversation_id", "unknown")
+            logger.error(
+                "fail-open: availability_context.lead_time_min_days failed "
+                "(conversation_id=%s) — using fallback min_days=3",
+                conversation_id,
+                exc_info=True,
+            )
             min_days = 3
 
         lead_window_start = (date.today() + timedelta(days=min_days)).isoformat()
@@ -397,8 +402,10 @@ class AvailabilityContextMiddleware(AgentMiddleware):
                     max_slots_per_day=max_slots_per_day,
                 )
             except Exception as exc:
-                logger.warning(
-                    "AvailabilityContextMiddleware: get_availability_window failed: %s", exc
+                logger.error(
+                    "AvailabilityContextMiddleware: get_availability_window failed: %s",
+                    exc,
+                    exc_info=True,
                 )
                 updated = _update_offered_slots_in_state(state, messages)
                 req = request.override(state=updated) if updated is not state else request
@@ -419,7 +426,9 @@ class AvailabilityContextMiddleware(AgentMiddleware):
                         max_slots_per_day=2,
                     )
                 except Exception:
-                    pass  # Use original window if reduced call fails
+                    # fail-open: reduced window fetch failed; original window already succeeded
+                    # and is a valid fallback — token-budget guard is best-effort only
+                    pass
 
             if not window:
                 updated = _update_offered_slots_in_state(state, messages)

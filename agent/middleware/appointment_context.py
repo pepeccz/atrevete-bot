@@ -35,7 +35,9 @@ MADRID_TZ = ZoneInfo("Europe/Madrid")
 # Module-level constant: appointment management flow block, read once at import time.
 # Wrapped in <appointment_management> tags; injected as _slot_appointment_management
 # only when the customer has upcoming appointments.
-_MGMT_FLOW_PATH = Path(__file__).parent.parent / "prompts" / "shared" / "appointment_management_flow.md"
+_MGMT_FLOW_PATH = (
+    Path(__file__).parent.parent / "prompts" / "shared" / "appointment_management_flow.md"
+)
 try:
     _MGMT_FLOW_BLOCK = (
         "<appointment_management>\n"
@@ -43,7 +45,9 @@ try:
         + "\n</appointment_management>"
     )
 except FileNotFoundError:
-    logger.warning("appointment_management_flow.md not found; _slot_appointment_management will be empty")
+    logger.error(
+        "appointment_management_flow.md not found; _slot_appointment_management will be empty"
+    )
     _MGMT_FLOW_BLOCK = ""
 
 
@@ -91,7 +95,9 @@ def _format_lifecycle_line(appt, now: datetime) -> str:
     return f"Estado: {status_label} · {confirmation_part} · {reminder_part}"
 
 
-async def _get_service_names_for_middleware(service_ids: list[UUID]) -> str:
+async def _get_service_names_for_middleware(
+    service_ids: list[UUID], conversation_id: str = "unknown"
+) -> str:
     """Fetch service names joined with ' + '. Returns 'servicios' on error."""
     if not service_ids:
         return "servicios"
@@ -108,6 +114,12 @@ async def _get_service_names_for_middleware(service_ids: list[UUID]) -> str:
                 return " + ".join(s.name for s in services)
             return "servicios"
     except Exception:
+        logger.error(
+            "fail-open: appointment_context.get_service_names failed "
+            "(conversation_id=%s) — using fallback 'servicios'",
+            conversation_id,
+            exc_info=True,
+        )
         return "servicios"
 
 
@@ -196,20 +208,23 @@ class AppointmentContextMiddleware(AgentMiddleware):
         try:
             appointments = await _fetch_upcoming_appointments(customer_id, limit=5)
         except Exception as exc:
-            logger.warning(
+            logger.error(
                 "AppointmentContextMiddleware: DB fetch failed for customer_id=%s: %s",
                 customer_id,
                 exc,
+                exc_info=True,
             )
             return await handler(request)
 
         if not appointments:
             return await handler(request)
 
+        conversation_id = state.get("conversation_id", "unknown")
         # Pre-fetch service names for each appointment (async, before _format_block)
         for appt in appointments:
             service_names = await _get_service_names_for_middleware(
-                getattr(appt, "service_ids", [])
+                getattr(appt, "service_ids", []),
+                conversation_id=conversation_id,
             )
             appt._injected_service_names = service_names
 

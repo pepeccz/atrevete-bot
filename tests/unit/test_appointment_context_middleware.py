@@ -133,7 +133,7 @@ class TestAppointmentContextMiddlewareWithAppointments:
         async def _fake_fetch(cid, limit=5):
             return [appt1, appt2]
 
-        async def _fake_service_names(service_ids):
+        async def _fake_service_names(service_ids, conversation_id="unknown"):
             return "Corte de Mujer"
 
         with (
@@ -166,7 +166,13 @@ class TestAppointmentContextMiddlewareWithAppointments:
 
         # Spanish date keywords (day-of-week)
         spanish_weekdays = [
-            "lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo",
+            "lunes",
+            "martes",
+            "miércoles",
+            "jueves",
+            "viernes",
+            "sábado",
+            "domingo",
         ]
         assert any(day in slot for day in spanish_weekdays)
 
@@ -258,7 +264,7 @@ class TestAppointmentContextLifecycleFields:
         async def _fake_fetch(cid, limit=5):
             return [appt]
 
-        async def _fake_service_names(service_ids):
+        async def _fake_service_names(service_ids, conversation_id="unknown"):
             return "Corte de Mujer"
 
         with (
@@ -299,7 +305,7 @@ class TestAppointmentContextLifecycleFields:
         async def _fake_fetch(cid, limit=5):
             return [appt]
 
-        async def _fake_service_names(service_ids):
+        async def _fake_service_names(service_ids, conversation_id="unknown"):
             return "Manicura"
 
         with (
@@ -339,7 +345,7 @@ class TestAppointmentContextLifecycleFields:
         async def _fake_fetch(cid, limit=5):
             return [appt]
 
-        async def _fake_service_names(service_ids):
+        async def _fake_service_names(service_ids, conversation_id="unknown"):
             return "Corte de Mujer"
 
         with (

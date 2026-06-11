@@ -544,7 +544,7 @@ async def _book_impl(
             if sty is not None:
                 stylist_display_name = sty.name
     except Exception as exc:
-        logger.warning("Could not fetch stylist name: %s", exc)
+        logger.error("Could not fetch stylist name: %s", exc, exc_info=True)
 
     # --- Customer memory persistence (fire-and-forget, AFTER commit) ---
     async def _persist_memories_safe() -> None:
@@ -563,7 +563,7 @@ async def _book_impl(
                 existing_prefs=existing,
             )
         except Exception as exc:
-            logger.warning(
+            logger.error(
                 "customer_memory persistence failed (booking already committed): %s",
                 exc,
                 exc_info=True,

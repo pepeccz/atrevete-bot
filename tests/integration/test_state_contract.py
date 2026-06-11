@@ -620,18 +620,6 @@ async def test_injected_state_contract(monkeypatch: Any) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "REQ-S3-6 / S3-T1.4: CustomerResolveMiddleware writes customer_memories only into "
-        "the per-turn request.state overlay (request.override(state=...)) — NOT into a "
-        "Command(update=...) delta. The overlay evaporates after the turn; the LangGraph "
-        "checkpoint never receives customer_memories in PR-1. "
-        "This test flips to green when S1-T2.6 (Change S PR-2) extends state_delta with "
-        "customer_memories and routes the persist through persist_to_checkpoint(). "
-        "strict=True ensures CI fails if this passes unexpectedly before the fix lands."
-    ),
-)
 async def test_customer_memories_persisted(monkeypatch: Any) -> None:
     """S3-T1.4: customer_memories is non-null in checkpoint after CustomerResolveMiddleware runs.
 
@@ -692,19 +680,6 @@ async def test_customer_memories_persisted(monkeypatch: Any) -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Bug #4: SummarizeMiddleware cursor is NOT persisted to checkpoint in current code "
-        "(PR-1 / current slice). Gate 2 cannot read the cursor back, so the summarizer LLM "
-        "is called on EVERY turn once len(messages) > window, not just when new messages "
-        "exceed SUMMARIZE_NEW_MSG_THRESHOLD. "
-        "This test flips to green when S1 ADR-2 cursor lands (Change S PR-2, S1-T2.4). "
-        "The xfail is strict=True so CI fails if this test unexpectedly PASSES before "
-        "the fix is in place — that would indicate either the test is wrong or the bug "
-        "was silently fixed without the intended refactor."
-    ),
-)
 async def test_gate2_skips_summarizer_llm_on_second_turn(monkeypatch: Any) -> None:
     """S3-T1.5: Gate 2 must skip the summarizer LLM when cursor is persisted (bug #4 guard).
 
@@ -798,10 +773,14 @@ async def test_gate2_skips_summarizer_llm_on_second_turn(monkeypatch: Any) -> No
     checkpoint_state = await graph.aget_state(config)
     cursor_in_checkpoint = checkpoint_state.values.get("last_summarized_msg_count")
 
-    # Turn 2: add fewer messages than threshold → Gate 2 should block compaction
-    # (This requires cursor to have been persisted from turn 1)
+    # Turn 2: add well-fewer messages than threshold → Gate 2 should block compaction.
+    # (This requires cursor to have been persisted from turn 1.)
+    # Use threshold // 2 to leave a safety margin for LangGraph-appended messages
+    # (AIMessage, ToolMessages) that the add_messages reducer also accumulates in the
+    # checkpoint. threshold - 2 is too close to the boundary: if the graph adds 2+
+    # messages in this turn, new_since reaches threshold and Gate 3 fires legitimately.
     new_messages = [
-        HumanMessage(content=f"Nuevo mensaje {i}") for i in range(max(1, threshold - 2))
+        HumanMessage(content=f"Nuevo mensaje {i}") for i in range(max(1, threshold // 2))
     ]
 
     await graph.ainvoke(
