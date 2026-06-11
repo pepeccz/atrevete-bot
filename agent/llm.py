@@ -69,7 +69,9 @@ def get_llm(
 ) -> ChatOpenAI:
     """Return ChatOpenAI wired to OpenRouter with project settings."""
     s = get_settings()
-    return _build_llm(model=model or s.LLM_MODEL, temperature=temperature if temperature is not None else 0.0)
+    return _build_llm(
+        model=model or s.LLM_MODEL, temperature=temperature if temperature is not None else 0.0
+    )
 
 
 def get_summarizer_llm() -> ChatOpenAI:

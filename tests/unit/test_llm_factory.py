@@ -108,12 +108,12 @@ def test_build_llm_passes_max_retries_and_timeout_defaults(
     _build_llm("openai/gpt-4.1-mini")
 
     call_kwargs = mock_chat_openai.call_args.kwargs
-    assert call_kwargs.get("max_retries") == 3, (
-        f"_build_llm must pass max_retries=3; got {call_kwargs.get('max_retries')!r}"
-    )
-    assert call_kwargs.get("timeout") == 60.0, (
-        f"_build_llm must pass timeout=60.0; got {call_kwargs.get('timeout')!r}"
-    )
+    assert (
+        call_kwargs.get("max_retries") == 3
+    ), f"_build_llm must pass max_retries=3; got {call_kwargs.get('max_retries')!r}"
+    assert (
+        call_kwargs.get("timeout") == 60.0
+    ), f"_build_llm must pass timeout=60.0; got {call_kwargs.get('timeout')!r}"
 
 
 @patch("agent.llm._traced_client_singleton", return_value=None)
@@ -134,9 +134,9 @@ def test_build_llm_respects_settings_override_for_retry_and_timeout(
     _build_llm("openai/gpt-4.1-mini")
 
     call_kwargs = mock_chat_openai.call_args.kwargs
-    assert call_kwargs.get("max_retries") == 1, (
-        f"Expected max_retries=1 from overridden settings, got {call_kwargs.get('max_retries')!r}"
-    )
-    assert call_kwargs.get("timeout") == 30.0, (
-        f"Expected timeout=30.0 from overridden settings, got {call_kwargs.get('timeout')!r}"
-    )
+    assert (
+        call_kwargs.get("max_retries") == 1
+    ), f"Expected max_retries=1 from overridden settings, got {call_kwargs.get('max_retries')!r}"
+    assert (
+        call_kwargs.get("timeout") == 30.0
+    ), f"Expected timeout=30.0 from overridden settings, got {call_kwargs.get('timeout')!r}"

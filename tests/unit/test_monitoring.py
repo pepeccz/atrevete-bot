@@ -284,12 +284,12 @@ def test_get_langfuse_handler_returns_sync_context_manager(monkeypatch):
 
     assert hasattr(ctx, "__enter__"), "ctx must support sync `with` protocol"
     assert hasattr(ctx, "__exit__"), "ctx must support sync `with` protocol"
-    assert not hasattr(ctx, "__aenter__"), (
-        "ctx must NOT be an async context manager — agent/main.py uses sync `with`"
-    )
-    assert not hasattr(ctx, "__aexit__"), (
-        "ctx must NOT be an async context manager — agent/main.py uses sync `with`"
-    )
+    assert not hasattr(
+        ctx, "__aenter__"
+    ), "ctx must NOT be an async context manager — agent/main.py uses sync `with`"
+    assert not hasattr(
+        ctx, "__aexit__"
+    ), "ctx must NOT be an async context manager — agent/main.py uses sync `with`"
 
 
 # ---------------------------------------------------------------------------
@@ -365,9 +365,7 @@ def test_get_langfuse_handler_returns_none_tuple_when_only_public_key_set():
             customer_phone="+34000000002",
         )
 
-    assert result == (None, None), (
-        f"Expected (None, None) when only PUBLIC_KEY set, got {result!r}"
-    )
+    assert result == (None, None), f"Expected (None, None) when only PUBLIC_KEY set, got {result!r}"
     assert not handler_constructed, "CallbackHandler must NOT be constructed with partial keys"
 
 
@@ -411,7 +409,7 @@ def test_get_langfuse_handler_builds_handler_when_both_keys_present():
             customer_name="Test User",
         )
 
-    assert isinstance(handler, _FakeHandler), (
-        f"Expected CallbackHandler instance when both keys present, got {type(handler)!r}"
-    )
+    assert isinstance(
+        handler, _FakeHandler
+    ), f"Expected CallbackHandler instance when both keys present, got {type(handler)!r}"
     assert ctx is not None, "ctx must not be None when both keys present"
