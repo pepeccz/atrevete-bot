@@ -111,7 +111,8 @@ async def test_subscribe_to_incoming_messages_uses_authoritative_runtime_graph()
     assert invoked_state["user_message"] == "Hola"
     assert invoked_state["pending_whatsapp_name"] == "Pepe Garcia"
     assert "customer_name" not in invoked_state
-    assert invoked_config["configurable"]["thread_id"] == "conv-bootstrap-001"
+    # thread_id is prefixed with "v2:" in production (create_agent rewrite namespacing)
+    assert invoked_config["configurable"]["thread_id"] == "v2:conv-bootstrap-001"
 
     mock_publish.assert_awaited_once_with(
         "outgoing_messages",
