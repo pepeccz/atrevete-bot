@@ -34,7 +34,7 @@ def test_get_checkpointer_uses_settings_when_no_url():
     fake_settings.REDIS_URL = "redis://redis:6379/0"
     fake_settings.REDIS_PASSWORD = ""
 
-    with patch("agent.checkpointer.get_settings", return_value=fake_settings):
+    with patch("shared.checkpointer.get_settings", return_value=fake_settings):
         cm = get_checkpointer()
 
     # Should have returned a context manager
@@ -47,7 +47,7 @@ def test_get_checkpointer_passes_url_to_from_conn_string():
     fake_settings = MagicMock()
     fake_settings.REDIS_PASSWORD = ""
     with (
-        patch("agent.checkpointer.get_settings", return_value=fake_settings),
+        patch("shared.checkpointer.get_settings", return_value=fake_settings),
         patch.object(AsyncRedisSaver, "from_conn_string") as mock_fcs,
     ):
         mock_fcs.return_value = MagicMock(__aenter__=AsyncMock(), __aexit__=AsyncMock())
@@ -60,7 +60,7 @@ def test_get_checkpointer_injects_password_into_url():
     fake_settings = MagicMock()
     fake_settings.REDIS_PASSWORD = "s3cret"
     with (
-        patch("agent.checkpointer.get_settings", return_value=fake_settings),
+        patch("shared.checkpointer.get_settings", return_value=fake_settings),
         patch.object(AsyncRedisSaver, "from_conn_string") as mock_fcs,
     ):
         mock_fcs.return_value = MagicMock(__aenter__=AsyncMock(), __aexit__=AsyncMock())
@@ -75,7 +75,7 @@ def test_get_checkpointer_passes_settings_url_to_from_conn_string():
     fake_settings.REDIS_PASSWORD = ""
 
     with (
-        patch("agent.checkpointer.get_settings", return_value=fake_settings),
+        patch("shared.checkpointer.get_settings", return_value=fake_settings),
         patch.object(AsyncRedisSaver, "from_conn_string") as mock_fcs,
     ):
         mock_fcs.return_value = MagicMock(__aenter__=AsyncMock(), __aexit__=AsyncMock())
