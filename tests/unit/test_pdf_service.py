@@ -6,6 +6,17 @@ from decimal import Decimal
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
+# Guard: weasyprint requires OS-level deps (cairo, pango, fontconfig).
+# Skip the whole module on environments where weasyprint is not importable.
+try:
+    import weasyprint as _weasyprint_check  # noqa: F401
+
+    _WEASYPRINT_AVAILABLE = True
+except (ImportError, OSError):
+    _WEASYPRINT_AVAILABLE = False
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -327,6 +338,9 @@ class TestRenderHtml:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.skipif(
+    not _WEASYPRINT_AVAILABLE, reason="weasyprint not available (missing OS deps: cairo/pango)"
+)
 class TestWritePdf:
     """_write_pdf calls weasyprint.HTML correctly."""
 

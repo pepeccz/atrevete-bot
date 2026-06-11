@@ -37,10 +37,15 @@ class _FakeBatcher:
 
 
 def test_agent_main_uses_authoritative_graph_factory():
-    source = Path("agent/main.py").read_text(encoding="utf-8")
+    """agent/main.py must import create_graph from agent.graph (create_agent rewrite).
 
-    assert "from agent.graphs.conversation_flow import create_graph" in source
-    assert "graph = create_graph(checkpointer=checkpointer, store=store)" in source
+    NOTE: old path was agent.graphs.conversation_flow (pre-create_agent architecture).
+    Current path is agent.graph (commit 8bf72b4 — create_agent rewrite).
+    """
+    repo_root = Path(__file__).parent.parent.parent
+    source = (repo_root / "agent" / "main.py").read_text(encoding="utf-8")
+
+    assert "from agent.graph import create_graph" in source
 
 
 @pytest.mark.asyncio

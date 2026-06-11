@@ -23,8 +23,9 @@ from api.routes.chatwoot import upsert_conversation_history
 # ============================================================================
 
 
-def _make_payload(conversation_id: int = 101, sender_name: str = "Ana García",
-                  phone: str = "+34600000001") -> ChatwootWebhookPayload:
+def _make_payload(
+    conversation_id: int = 101, sender_name: str = "Ana García", phone: str = "+34600000001"
+) -> ChatwootWebhookPayload:
     """Build a minimal ChatwootWebhookPayload for testing."""
     msg = ChatwootMessage(
         id=1,
@@ -64,7 +65,9 @@ class TestUpsertConversationHistoryInsert:
         """upsert stores conversation_id = str(payload.conversation.id)."""
         session = _make_db_session()
         # Simulate no existing row (SELECT returns None)
-        session.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
+        session.execute = AsyncMock(
+            return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None))
+        )
         payload = _make_payload(conversation_id=42)
 
         await upsert_conversation_history(session, payload)
@@ -76,7 +79,9 @@ class TestUpsertConversationHistoryInsert:
     async def test_insert_stores_sender_name_in_metadata(self):
         """On new conversation, metadata includes sender_name."""
         session = _make_db_session()
-        session.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
+        session.execute = AsyncMock(
+            return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None))
+        )
 
         added_objects = []
         session.add = MagicMock(side_effect=lambda obj: added_objects.append(obj))
@@ -97,9 +102,11 @@ class TestUpsertConversationHistoryInsert:
         customer_uuid = uuid4()
         customer_result = MagicMock(scalar_one_or_none=MagicMock(return_value=customer_uuid))
         conv_result = MagicMock(scalar_one_or_none=MagicMock(return_value=None))
+        # 3rd call: message_count recompute (SELECT COUNT from ConversationMessage)
+        count_result = MagicMock(scalar=MagicMock(return_value=0))
 
         session = _make_db_session()
-        session.execute = AsyncMock(side_effect=[customer_result, conv_result])
+        session.execute = AsyncMock(side_effect=[customer_result, conv_result, count_result])
 
         added_objects = []
         session.add = MagicMock(side_effect=lambda obj: added_objects.append(obj))
@@ -115,9 +122,11 @@ class TestUpsertConversationHistoryInsert:
         """If sender phone doesn't match any Customer, customer_id stays None."""
         customer_result = MagicMock(scalar_one_or_none=MagicMock(return_value=None))
         conv_result = MagicMock(scalar_one_or_none=MagicMock(return_value=None))
+        # 3rd call: message_count recompute (SELECT COUNT from ConversationMessage)
+        count_result = MagicMock(scalar=MagicMock(return_value=0))
 
         session = _make_db_session()
-        session.execute = AsyncMock(side_effect=[customer_result, conv_result])
+        session.execute = AsyncMock(side_effect=[customer_result, conv_result, count_result])
 
         added_objects = []
         session.add = MagicMock(side_effect=lambda obj: added_objects.append(obj))
@@ -131,7 +140,9 @@ class TestUpsertConversationHistoryInsert:
     async def test_insert_sets_started_at_and_ended_at(self):
         """On INSERT both started_at and ended_at are set to now (parent has a child message)."""
         session = _make_db_session()
-        session.execute = AsyncMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None)))
+        session.execute = AsyncMock(
+            return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None))
+        )
 
         added_objects = []
         session.add = MagicMock(side_effect=lambda obj: added_objects.append(obj))
@@ -212,9 +223,11 @@ class TestUpsertConversationHistoryUpdate:
         customer_uuid = uuid4()
         customer_result = MagicMock(scalar_one_or_none=MagicMock(return_value=customer_uuid))
         conv_result = MagicMock(scalar_one_or_none=MagicMock(return_value=existing))
+        # 3rd call: message_count recompute (SELECT COUNT from ConversationMessage)
+        count_result = MagicMock(scalar=MagicMock(return_value=1))
 
         session = _make_db_session()
-        session.execute = AsyncMock(side_effect=[customer_result, conv_result])
+        session.execute = AsyncMock(side_effect=[customer_result, conv_result, count_result])
 
         payload = _make_payload(conversation_id=42)
         await upsert_conversation_history(session, payload)
