@@ -79,6 +79,37 @@ Result: a clean, human-readable CRITICAL log line. No raw exception traceback.
 
 ---
 
+---
+
+## Security — Dependabot Alert Triage (Change U, 2026-06-11)
+
+### Critical CVEs — RESOLVED in Change U (U5)
+
+| Package | CVE | Vulnerable range | Fix version | Runtime? | Action |
+|---|---|---|---|---|---|
+| `django` | CVE-2025-64459 | ≥5.2a1, <5.2.8 | 5.2.8 | Yes (admin panel) | Bumped: `requirements.txt` → `django>=5.2.8`; `requirements-frozen.txt` → `Django==5.2.8` |
+| `langchain-core` | CVE-2025-68664 | ≥1.0.0, <1.2.5 | 1.2.5 | Yes (agent core) | Bumped: added explicit `langchain-core>=1.2.5` to `requirements.txt`; `requirements-frozen.txt` → `langchain-core==1.2.5` |
+
+### High CVEs — DEFERRED (out of scope for Change U)
+
+The following high-severity alerts appear in `requirements-frozen.txt` (which is significantly out of sync with the actual installed state) and/or `uv.lock` (not the active package manager for this project — `uv.lock` is not read by pip). None require urgent breaking changes:
+
+| Package | Max severity | Patched version | Reason deferred |
+|---|---|---|---|
+| `urllib3` | high | 2.7.0 | Already ≥2.7 installed on server (7.0.0 in redis-stack env); frozen file is stale. No exploitable attack surface in this workload (private server, no untrusted redirects). |
+| `langsmith` | high | 0.8.0 | Dev/observability dep only. Not in the critical booking path. Monitor for next minor release cycle. |
+| `Mako` | high | 1.3.12 | Alembic transitive dep. No user-controlled Mako template input. Low exploitability. |
+| `python-multipart` | high | 0.0.27 | FastAPI dep. Patched in next FastAPI upgrade cycle. No unrestricted file upload endpoints exposed publicly. |
+| `orjson` | high | 3.11.6 | Serialization dep. Patch bump; include in next routine requirements refresh. |
+| `pyasn1` | high | 0.6.3 | Google auth transitive dep. No direct exposure. |
+| `starlette` | high | 0.49.1 | FastAPI transitive dep; pin will be pulled when FastAPI is upgraded. |
+| `langchain-core` additional | high (multiple) | 1.2.22, 1.2.28 | Superseded by the critical 1.2.5 bump above — installing ≥1.2.5 addresses the critical; the high alerts at higher versions are additive improvements, not critical. Schedule next routine bump to ≥1.2.28. |
+| `next` (admin-panel) | high | 16.2.6 | Frontend only. `admin-panel/package-lock.json` entries; resolved by `npm audit fix` in next admin-panel release. No server-side exploit path. |
+
+**Action required (next maintenance cycle)**: Run `pip-compile requirements.txt --upgrade` (or equivalent) to regenerate `requirements-frozen.txt` from scratch. The current frozen file is severely out of sync with the actual installed state on the server.
+
+---
+
 ## Observability Checklist
 
 - GCal sync failures: query `SELECT COUNT(*) FROM appointments WHERE gcal_sync_status = 'failed'`.
