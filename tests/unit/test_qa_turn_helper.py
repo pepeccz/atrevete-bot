@@ -9,15 +9,19 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-# Patches target the *source* modules because qa_turn_helper uses local imports
-# inside each async function (from shared.config import get_settings, etc.)
+# Patch targets:
+# - get_settings: imported locally inside each function → patch source module
+# - redis.asyncio.from_url: imported locally inside each function → patch source module
+# - RedisTestHarness: imported at TOP of qa_turn_helper (not locally) → patch usage site
+# - StateResetHarness: imported locally inside _cmd_reset → patch source module
 SETTINGS_PATCH = "shared.config.get_settings"
 REDIS_FROM_URL_PATCH = "redis.asyncio.from_url"
-REDIS_HARNESS_PATCH = "tests.e2e.harness.redis_harness.RedisTestHarness"
+REDIS_HARNESS_PATCH = "tests.e2e.harness.qa_turn_helper.RedisTestHarness"
 STATE_RESET_PATCH = "tests.e2e.harness.state_reset.StateResetHarness"
 HELPER_SCRIPT = "tests/e2e/harness/qa_turn_helper.py"
 
@@ -127,18 +131,16 @@ async def test_health_stream_missing() -> None:
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_turn_success() -> None:
-    """execute_turn returns valid dict -> stdout JSON with turn data."""
+    """execute_turn returns valid dict -> stdout JSON with agent_response and timed_out."""
     mock_client = AsyncMock()
     mock_client.aclose = AsyncMock()
 
+    # Match the dict _cmd_turn actually reads from harness.execute_turn
     fake_result = {
-        "turn_number": 1,
-        "user_message": "Hola",
         "agent_response": "Bienvenida! En que puedo ayudarte?",
-        "timestamp_sent": "2025-01-01T10:00:00+00:00",
-        "timestamp_received": "2025-01-01T10:00:02+00:00",
+        "timed_out": False,
         "response_latency_ms": 2000,
-        "raw_response": {},
+        "tool_evidence": [],
     }
 
     mock_harness = AsyncMock()
@@ -147,6 +149,15 @@ async def test_turn_success() -> None:
 
     captured, mock_print = _capture_print()
 
+    # _cmd_turn takes an argparse-style namespace object (args: Any)
+    args = SimpleNamespace(
+        conversation_id="test-conv-123",
+        user_message="Hola",
+        customer_phone="+34600000000",
+        persona_name="QA Test Client",
+        timeout=30.0,
+    )
+
     with (
         patch(SETTINGS_PATCH, return_value=_fake_settings()),
         patch(REDIS_FROM_URL_PATCH, return_value=mock_client),
@@ -155,56 +166,59 @@ async def test_turn_success() -> None:
     ):
         from tests.e2e.harness.qa_turn_helper import _cmd_turn
 
-        await _cmd_turn(
-            conversation_id="test-conv-123",
-            message="Hola",
-            phone="+34600000000",
-            name="QA Test Client",
-            timeout=30.0,
-        )
+        exit_code = await _cmd_turn(args)
 
+    assert exit_code == 0
     result = json.loads(captured[0])
-    assert result["turn_number"] == 1
     assert result["agent_response"] == "Bienvenida! En que puedo ayudarte?"
-    assert result["latency_ms"] == 2000
+    assert result["timed_out"] is False
+    assert result["response_latency_ms"] == 2000
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_turn_timeout() -> None:
-    """execute_turn raises TimeoutError -> stderr error JSON, exit 1."""
+    """execute_turn returns timed_out=True -> stdout JSON with timed_out flag, exit 2."""
     mock_client = AsyncMock()
     mock_client.aclose = AsyncMock()
 
+    # _cmd_turn calls harness.execute_turn(raise_on_timeout=False) so timeout
+    # is signaled via timed_out=True in the result dict, not by raising.
+    timed_out_result = {
+        "agent_response": None,
+        "timed_out": True,
+        "response_latency_ms": 0,
+        "tool_evidence": [],
+    }
+
     mock_harness = AsyncMock()
-    mock_harness.execute_turn = AsyncMock(
-        side_effect=TimeoutError("No response within 30.0s")
-    )
+    mock_harness.execute_turn = AsyncMock(return_value=timed_out_result)
     mock_harness.close = AsyncMock()
 
     captured, mock_print = _capture_print()
+
+    args = SimpleNamespace(
+        conversation_id="test-conv-123",
+        user_message="Hola",
+        customer_phone="+34600000000",
+        persona_name="QA Test Client",
+        timeout=30.0,
+    )
 
     with (
         patch(SETTINGS_PATCH, return_value=_fake_settings()),
         patch(REDIS_FROM_URL_PATCH, return_value=mock_client),
         patch(REDIS_HARNESS_PATCH, return_value=mock_harness),
         patch("builtins.print", mock_print),
-        pytest.raises(SystemExit) as exc_info,
     ):
         from tests.e2e.harness.qa_turn_helper import _cmd_turn
 
-        await _cmd_turn(
-            conversation_id="test-conv-123",
-            message="Hola",
-            phone="+34600000000",
-            name="QA Test Client",
-            timeout=30.0,
-        )
+        exit_code = await _cmd_turn(args)
 
-    assert exc_info.value.code == 1
+    assert exit_code == 2
     result = json.loads(captured[0])
-    assert result["ok"] is False
-    assert result["error"] == "timeout"
+    assert result["timed_out"] is True
+    assert result["agent_response"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -254,64 +268,79 @@ async def test_reset_success() -> None:
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_state_success() -> None:
-    """capture_final_state returns checkpoint data -> stdout JSON with fields."""
-    mock_client = AsyncMock()
-    mock_client.aclose = AsyncMock()
+    """capture_final_state returns checkpoint data -> stdout JSON with current AgentState fields."""
+    # _cmd_state calls redis.from_url TWICE (text client + binary client).
+    # Use side_effect to return a fresh AsyncMock for each call.
+    mock_client_txt = AsyncMock()
+    mock_client_txt.aclose = AsyncMock()
+    mock_client_bin = AsyncMock()
+    mock_client_bin.aclose = AsyncMock()
 
+    # fake_state must use the post-create_agent AgentState field names.
+    # current_mode / mode_history / is_first_interaction / error_count are gone.
     fake_state = {
-        "current_mode": "BOOKING",
-        "mode_context": {"step": "slot_selection"},
+        "conversation_id": "test-conv-123",
+        "customer_phone": "+34999000001",
+        "customer_id": "uuid-placeholder",
         "customer_name": "Maria",
-        "is_first_interaction": False,
-        "error_count": 0,
-        "mode_history": ["GREETING", "BOOKING"],
+        "messages": [],  # empty → messages_count=0, no ToolMessage scan needed
+        "customer_consents": [],
+        "conversation_summary": "Resumen de la conversacion.",
+        "policy_accepted_at": None,
     }
 
-    mock_harness = AsyncMock()
+    mock_harness = MagicMock()
     mock_harness.capture_final_state = AsyncMock(return_value=fake_state)
     mock_harness.close = AsyncMock()
 
     captured, mock_print = _capture_print()
 
+    # _cmd_state takes an argparse-style namespace: args.conversation_id
+    args = SimpleNamespace(conversation_id="test-conv-123")
+
     with (
         patch(SETTINGS_PATCH, return_value=_fake_settings()),
-        patch(REDIS_FROM_URL_PATCH, return_value=mock_client),
+        patch(REDIS_FROM_URL_PATCH, side_effect=[mock_client_txt, mock_client_bin]),
         patch(REDIS_HARNESS_PATCH, return_value=mock_harness),
         patch("builtins.print", mock_print),
     ):
         from tests.e2e.harness.qa_turn_helper import _cmd_state
 
-        await _cmd_state(conversation_id="test-conv-123")
+        await _cmd_state(args)
 
     result = json.loads(captured[0])
     assert result["has_checkpoint"] is True
-    assert result["current_mode"] == "BOOKING"
     assert result["customer_name"] == "Maria"
-    assert result["mode_history"] == ["GREETING", "BOOKING"]
+    assert result["messages_count"] == 0
+    assert result["summary_present"] is True
 
 
 @pytest.mark.unit
 @pytest.mark.asyncio
 async def test_state_no_checkpoint() -> None:
     """capture_final_state returns None -> has_checkpoint=false."""
-    mock_client = AsyncMock()
-    mock_client.aclose = AsyncMock()
+    mock_client_txt = AsyncMock()
+    mock_client_txt.aclose = AsyncMock()
+    mock_client_bin = AsyncMock()
+    mock_client_bin.aclose = AsyncMock()
 
-    mock_harness = AsyncMock()
+    mock_harness = MagicMock()
     mock_harness.capture_final_state = AsyncMock(return_value=None)
     mock_harness.close = AsyncMock()
 
     captured, mock_print = _capture_print()
 
+    args = SimpleNamespace(conversation_id="test-conv-123")
+
     with (
         patch(SETTINGS_PATCH, return_value=_fake_settings()),
-        patch(REDIS_FROM_URL_PATCH, return_value=mock_client),
+        patch(REDIS_FROM_URL_PATCH, side_effect=[mock_client_txt, mock_client_bin]),
         patch(REDIS_HARNESS_PATCH, return_value=mock_harness),
         patch("builtins.print", mock_print),
     ):
         from tests.e2e.harness.qa_turn_helper import _cmd_state
 
-        await _cmd_state(conversation_id="test-conv-123")
+        await _cmd_state(args)
 
     result = json.loads(captured[0])
     assert result == {"has_checkpoint": False}

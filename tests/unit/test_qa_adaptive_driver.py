@@ -50,7 +50,8 @@ def test_resolve_flow_context_exposes_adaptive_and_legacy_structures(
     assert context["flow_id"] == "booking_complete"
     assert context["persona_id"] == "maria_new_client"
     assert context["flow"].completion_rules == ["booking_completed"]
-    assert context["legacy_flow"] is not None
+    # booking_complete is an adaptive-only flow — no legacy Flow entry in the context file
+    assert context["legacy_flow"] is None
     assert isinstance(context["milestones"], list)
     assert context["milestones"][0].name == "greeting_done"
     assert context["legacy_steps"] == []
@@ -464,9 +465,7 @@ def test_milestone_tracker_escalation() -> None:
     )
 
     with pytest.raises(RunTerminated, match="escalation triggered") as exc_info:
-        tracker.record_turn(
-            classifier_output=ClassifierOutput(intent="escalation", confidence=0.8)
-        )
+        tracker.record_turn(classifier_output=ClassifierOutput(intent="escalation", confidence=0.8))
 
     assert exc_info.value.outcome == "escalation"
 
@@ -507,7 +506,9 @@ def test_milestone_tracker_dead_loop() -> None:
     tracker.record_turn(classifier_output=ClassifierOutput(intent="clarification", confidence=0.4))
     tracker.record_turn(classifier_output=ClassifierOutput(intent="clarification", confidence=0.4))
     with pytest.raises(RunTerminated, match="dead loop detected") as exc_info:
-        tracker.record_turn(classifier_output=ClassifierOutput(intent="clarification", confidence=0.4))
+        tracker.record_turn(
+            classifier_output=ClassifierOutput(intent="clarification", confidence=0.4)
+        )
 
     assert exc_info.value.outcome == "dead_loop"
 
@@ -541,7 +542,9 @@ def test_tracker_stops_on_max_turns() -> None:
         )
 
     with pytest.raises(RunTerminated, match="timeout after 16 turns") as exc_info:
-        tracker.record_turn(classifier_output=ClassifierOutput(intent="clarification", confidence=0.4))
+        tracker.record_turn(
+            classifier_output=ClassifierOutput(intent="clarification", confidence=0.4)
+        )
 
     assert exc_info.value.outcome == "timeout"
 
