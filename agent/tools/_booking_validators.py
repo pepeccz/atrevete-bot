@@ -33,12 +33,12 @@ from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
-logger = logging.getLogger(__name__)
+# First-party deps kept at module level so tests can patch them here
+# (agent.tools._booking_validators.{resolve_relative_date,is_date_closed,...}).
+from agent.booking.resolvers.time_resolver import MIN_BOOKING_DAYS, resolve_relative_date
+from shared.business_hours_validator import is_date_closed
 
-# Module-level imports so tests can patch them at the module level.
-# These are the only two external dependencies of the validator.
-from agent.booking.resolvers.time_resolver import MIN_BOOKING_DAYS, resolve_relative_date  # noqa: E402
-from shared.business_hours_validator import is_date_closed  # noqa: E402
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Canonical error codes — exported, consumed by adapter mapping tables in callers

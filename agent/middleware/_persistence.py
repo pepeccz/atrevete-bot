@@ -134,4 +134,8 @@ def persist_to_checkpoint(response: ModelResponse, delta: Mapping[str, Any]) -> 
     coerced = coerce_state_delta(delta)
     if not coerced:
         return response
-    return ExtendedModelResponse(model_response=response, command=Command(update=coerced))
+    # ExtendedModelResponse is the framework's persistence-carrying response variant;
+    # it is accepted wherever ModelResponse is at runtime but mypy lacks the subtype stub.
+    return ExtendedModelResponse(  # type: ignore[return-value]
+        model_response=response, command=Command(update=coerced)
+    )
