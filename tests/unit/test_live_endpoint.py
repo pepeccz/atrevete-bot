@@ -21,13 +21,27 @@ from fastapi.testclient import TestClient
 # ---------------------------------------------------------------------------
 
 
+def _make_admin_user():
+    """Return a MagicMock AdminUser with role='admin' so require_permission passes."""
+    from database.models import AdminUser
+
+    user = MagicMock(spec=AdminUser)
+    user.id = uuid4()
+    user.username = "admin"
+    user.role = "admin"
+    user.is_active = True
+    user.display_name = "Test Admin"
+    return user
+
+
 @pytest.fixture()
 def client():
     """FastAPI test client with admin auth bypassed."""
     from api.main import app
     from api.routes.admin import get_current_user
 
-    app.dependency_overrides[get_current_user] = lambda: {"sub": "admin", "role": "admin"}
+    admin = _make_admin_user()
+    app.dependency_overrides[get_current_user] = lambda: admin
     yield TestClient(app)
     app.dependency_overrides.clear()
 
@@ -37,7 +51,9 @@ def client():
 # ---------------------------------------------------------------------------
 
 
-def _make_checkpoint_tuple(summary: str | None, message_count: int, ts: str = "2026-04-28T10:00:00Z"):
+def _make_checkpoint_tuple(
+    summary: str | None, message_count: int, ts: str = "2026-04-28T10:00:00Z"
+):
     """Build a minimal mock object resembling a LangGraph CheckpointTuple."""
     messages = [MagicMock() for _ in range(message_count)]
     tpl = MagicMock()
