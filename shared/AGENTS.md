@@ -2,7 +2,8 @@
 
 This directory contains shared utilities, configuration, and clients used across the Atrévete Bot application.
 
-> **Architecture**: Pure utilities with no business logic. Config via Pydantic Settings, singleton clients for Redis/Chatwoot, circuit breaker pattern for resilience.
+> **Architecture**: Pure utilities with no business logic. Config via Pydantic Settings, singleton clients for Redis/Chatwoot.
+> **Resilience (post-removal)**: `circuit_breaker.py` was intentionally deleted. See `docs/system/07-resilience.md` for the current degradation strategy. Deletion guard: `tests/unit/test_dead_code_cleanup_assertions.py:52`.
 
 ---
 
@@ -27,7 +28,6 @@ shared/
 ├── config.py                  # Pydantic Settings (ALL env vars)
 ├── chatwoot_client.py         # Chatwoot API client (singleton)
 ├── redis_client.py            # Redis client (singleton + Streams)
-├── circuit_breaker.py         # Circuit breaker pattern
 ├── logging_config.py          # Structured JSON logging
 ├── encryption.py              # Fernet encryption utilities
 ├── business_hours_validator.py
@@ -228,50 +228,6 @@ await publish_to_channel("incoming_messages", {"data": "value"})
 
 ---
 
-## Circuit Breaker Pattern
-
-### Pre-Configured Breakers
-
-```python
-# shared/circuit_breaker.py
-from shared.circuit_breaker import openrouter_breaker, calendar_breaker, chatwoot_breaker
-
-# Usage
-async def call_llm():
-    return await openrouter_breaker.call_async(_actual_llm_call)
-```
-
-### Creating Custom Breakers
-
-```python
-from shared.circuit_breaker import get_circuit_breaker
-
-my_breaker = get_circuit_breaker(
-    name="my_service",
-    fail_max=5,
-    reset_timeout=30,
-)
-
-result = await my_breaker.call_async(my_async_function)
-```
-
-### Decorator Pattern
-
-```python
-from shared.circuit_breaker import with_circuit_breaker, openrouter_breaker
-
-@with_circuit_breaker(openrouter_breaker)
-async def call_external_api():
-    return await fetch_data()
-```
-
-### States
-
-- **CLOSED**: Normal operation, requests pass through
-- **OPEN**: Service is down, requests fail fast
-- **HALF_OPEN**: Testing if service recovered
-
----
 
 ## Common Utilities
 
@@ -321,11 +277,9 @@ decrypted = decrypt_value(encrypted)
 
 1. **ALWAYS use `get_settings()`** — NEVER use `os.getenv()` directly
 2. **ALWAYS cache Redis client** — Use `@lru_cache` or module-level singleton
-3. **ALWAYS use circuit breakers** for external API calls
-4. **ALWAYS use async Redis** — `redis.asyncio`, not sync client
-5. **NEVER store credentials in code** — Use env vars via Settings
-6. **NEVER create multiple Redis connections** — Always use `get_redis_client()`
-7. **NEVER ignore circuit breaker state** — Handle `CircuitBreakerError`
+3. **ALWAYS use async Redis** — `redis.asyncio`, not sync client
+4. **NEVER store credentials in code** — Use env vars via Settings
+5. **NEVER create multiple Redis connections** — Always use `get_redis_client()`
 
 ---
 
@@ -362,7 +316,7 @@ async def validate_startup_config(require_google_calendar: bool = True):
 - `shared/config.py` — All configuration settings
 - `shared/redis_client.py` — Redis client and Streams
 - `shared/chatwoot_client.py` — Chatwoot API client
-- `shared/circuit_breaker.py` — Resilience patterns
+- `docs/system/07-resilience.md` — Degradation strategy (circuit_breaker.py removed)
 
 **Last Updated**: March 2026
 

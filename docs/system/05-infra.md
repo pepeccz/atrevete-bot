@@ -61,7 +61,7 @@
 ### Contratos
 
 - Mensajes entrantes se persisten en `messages` table + push a Redis Stream.
-- Mensajes salientes se enviar via cliente; en caso de fallo, retry con circuit breaker.
+- Mensajes salientes se envian via cliente; en caso de fallo, se loggea el error y se continúa (fail-open). Ver `docs/system/07-resilience.md`.
 - El operador puede intervenir en cualquier conversación desde Chatwoot UI; el bot detecta `assignee_changed` event y se calla.
 
 ### Anti-patrones
@@ -316,7 +316,7 @@
 
 1. **Zero dominio del salón**. Si te encontrás escribiendo `if service.audience == "señora"` en infra, parate. Eso va a un core.
 2. **Configurable vía `shared/config.py`** (Pydantic Settings). Nada de `os.getenv()` directo.
-3. **Circuit breaker** para todo adaptador externo (`shared/circuit_breaker.py` ya provee templates).
+3. **Degradación explícita**: `shared/circuit_breaker.py` fue removido intencionalmente. La estrategia de degradación por adaptador (PG, GCal, Redis, LLM, Chatwoot) está documentada en `docs/system/07-resilience.md`.
 4. **Async-first**: todo I/O usa `async/await`.
 5. **Tests con fakes**: cada infra debe tener un fake mockable para que módulos puedan testearse sin la dependencia real.
 

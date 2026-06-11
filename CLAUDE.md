@@ -132,8 +132,9 @@ atrevete-bot/
 │   ├── config.py          # Pydantic Settings (env vars)
 │   ├── chatwoot_client.py # Chatwoot API client
 │   ├── redis_client.py    # Redis connection
-│   ├── logging_config.py  # Structured logging
-│   └── circuit_breaker.py # Circuit breaker pattern
+│   └── logging_config.py  # Structured logging
+│   # circuit_breaker.py intentionally removed — deletion guard: tests/unit/test_dead_code_cleanup_assertions.py:52
+│   # Degradation strategy: docs/system/07-resilience.md
 │
 ├── tests/                 # Test suite
 │   ├── unit/              # Unit tests

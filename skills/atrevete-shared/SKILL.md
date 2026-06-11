@@ -23,11 +23,12 @@ shared/
 ├── config.py              # Pydantic Settings (env vars)
 ├── chatwoot_client.py     # Chatwoot API client
 ├── redis_client.py        # Redis connection + utilities
-├── circuit_breaker.py     # Circuit breaker for external APIs
 ├── resilient_api.py       # Resilient HTTP client
 ├── logging_config.py      # Structured logging setup
 ├── archive_retrieval.py   # Conversation archive retrieval
 └── __init__.py            # Package exports
+# circuit_breaker.py intentionally removed — deletion guard: tests/unit/test_dead_code_cleanup_assertions.py:52
+# Degradation strategy: docs/system/07-resilience.md
 ```
 
 ## Configuration Access
@@ -120,35 +121,6 @@ doc = await redis.json().get("doc:key")
 
 # Search (RedisSearch module)
 # Requires Redis Stack
-```
-
-## Circuit Breaker
-
-```python
-from shared.circuit_breaker import circuit_breaker, CircuitBreakerError
-
-@circuit_breaker(
-    failure_threshold=5,
-    recovery_timeout=30,
-    name="openrouter_api"
-)
-async def call_openrouter(messages: list) -> str:
-    """Call OpenRouter with circuit breaker protection."""
-    async with aiohttp.ClientSession() as session:
-        async with session.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers={"Authorization": f"Bearer {api_key}"},
-            json={"model": model, "messages": messages},
-        ) as resp:
-            resp.raise_for_status()
-            return await resp.json()
-
-# Usage
-try:
-    response = await call_openrouter(messages)
-except CircuitBreakerError:
-    # Circuit is open — fallback logic
-    response = await fallback_llm(messages)
 ```
 
 ## Resilient API Client
@@ -292,7 +264,6 @@ async def flaky_operation():
 
 - **ALWAYS** import settings via `shared.config.get_settings()` — NEVER `os.getenv()`
 - **ALWAYS** use `get_redis_client()` to get Redis connection (singleton)
-- **ALWAYS** use circuit breaker for external API calls
 - **ALWAYS** use structured logging with `get_logger(__name__)`
 - **ALWAYS** use Europe/Madrid timezone for business logic
 - **ALWAYS** validate phone numbers as E.164 format

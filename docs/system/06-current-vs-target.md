@@ -152,7 +152,7 @@ E1 dead-code investigation (2026-04-18) resolved all "INVESTIGAR" labels. See `d
 | `shared/audience_maps.py` | `cores/services/audience.py` | MOVE | E2 |
 | `shared/business_hours_validator.py` | `cores/availability/business_hours.py` | MOVE | E2 |
 | `shared/stylist_cache.py` | `cores/stylists/cache.py` o `infra/redis/caches/stylist.py` | MOVE | E4 |
-| `shared/circuit_breaker.py` | `infra/circuit_breaker.py` | MOVE | E4 |
+| `shared/circuit_breaker.py` | ~~`infra/circuit_breaker.py`~~ | **DELETED** — module removed intentionally; see `docs/system/07-resilience.md` + deletion guard `tests/unit/test_dead_code_cleanup_assertions.py:52` | ~~E4~~ DONE |
 | `shared/encryption.py` | `infra/encryption.py` | MOVE | E4 |
 | `shared/audio_transcription.py`, `audio_conversion.py` | `infra/audio/` | MOVE | E4 |
 | `shared/resilient_api.py` | `infra/http/resilient_api.py` | MOVE | E4 |
