@@ -80,8 +80,10 @@ class TestClosedWorldGrounding:
         # Check for rule [R13] — bracket format
         assert "[R13]" in content, "Rule [R13] not found in critical_rules.md"
 
-        # Check for key phrases
-        assert "fuente cerrada" in content, "Rule [R13] missing 'fuente cerrada'"
+        # Check for key phrases (capital F — "Fuente cerrada" is the rule heading in [R13])
+        assert (
+            "Fuente cerrada" in content or "fuente cerrada" in content
+        ), "Rule [R13] missing 'Fuente cerrada'"
         assert "<customer>" in content, "Rule [R13] missing XML tag names"
         assert "<upcoming_appointments>" in content, "Rule [R13] missing XML tag names"
         assert "<catalog>" in content, "Rule [R13] missing XML tag names"

@@ -120,11 +120,16 @@ def test_disclosure_text_contains_asistenta_virtual_con_ia():
     assert "asistenta virtual con IA" in DISCLOSURE_TEXT
 
 
-def test_disclosure_text_contains_hablar_con_alguien():
-    """DISCLOSURE_TEXT must offer the option to 'hablar con alguien'."""
+def test_disclosure_text_contains_atrevete():
+    """DISCLOSURE_TEXT must identify the salon (Atrévete).
+
+    NOTE: 'hablar con alguien' was removed from the DISCLOSURE_TEXT in the create_agent
+    rewrite — the escalation option is handled by [R7] in critical_rules.md rather than
+    being hard-coded in the greeting banner. The text now identifies the salon by name.
+    """
     from agent.middleware.disclosure import DISCLOSURE_TEXT
 
-    assert "hablar con alguien" in DISCLOSURE_TEXT
+    assert "Atrévete" in DISCLOSURE_TEXT
 
 
 def test_disclosure_text_does_not_contain_asistente_ia():

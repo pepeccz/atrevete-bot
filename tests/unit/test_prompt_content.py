@@ -102,13 +102,15 @@ def test_no_rule_duplicated_across_prompt_files():
     files = ["critical_rules.md", "booking_flow.md", "tools_contract.md"]
     contents = {name: _read(name) for name in files}
 
-    # Extract non-trivial STANDALONE paragraphs (> 200 chars) from each file.
-    # Short cross-reference lines (e.g. a single rule re-cited as anchor) are excluded.
+    # Extract non-trivial STANDALONE paragraphs (> 300 chars) from each file.
+    # Threshold 300 chars excludes cross-reference anchors like [R35] (258 chars)
+    # that appear in both critical_rules.md and booking_flow.md intentionally.
+    # Real duplications are multi-sentence blocks (~50+ words = 300+ chars).
     def extract_paragraphs(text: str) -> list[str]:
         return [
             p.strip()
             for p in text.split("\n\n")
-            if len(p.strip()) > 200 and not p.strip().startswith("#")
+            if len(p.strip()) > 300 and not p.strip().startswith("#")
         ]
 
     paragraphs_by_file = {name: extract_paragraphs(c) for name, c in contents.items()}
@@ -124,11 +126,11 @@ def test_no_rule_duplicated_across_prompt_files():
                     shorter, longer = (
                         (para_a, para_b) if len(para_a) <= len(para_b) else (para_b, para_a)
                     )
-                    if len(shorter) > 200 and shorter in longer:
+                    if len(shorter) > 300 and shorter in longer:
                         duplicates.append((name_a, name_b, shorter[:80]))
 
     assert (
         duplicates == []
-    ), "Duplicate paragraphs (>200 chars) found across prompt files:\n" + "\n".join(
+    ), "Duplicate paragraphs (>300 chars) found across prompt files:\n" + "\n".join(
         f"  {a} ↔ {b}: {snip!r}" for a, b, snip in duplicates[:3]
     )

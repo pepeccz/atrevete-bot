@@ -58,7 +58,11 @@ async def test_subscribe_to_incoming_messages_uses_authoritative_runtime_graph()
             "last_node": "summarize",
         }
     )
-    settings = SimpleNamespace(MESSAGE_BATCH_WINDOW_SECONDS=0, USE_REDIS_STREAMS=True)
+    settings = SimpleNamespace(
+        MESSAGE_BATCH_WINDOW_SECONDS=0,
+        USE_REDIS_STREAMS=True,
+        REDIS_URL="redis://localhost:6379/0",  # required by get_checkpointer in main.py
+    )
     # Fake module with current agent.checkpointer API (get_checkpointer / setup_checkpointer)
     fake_cm = MagicMock()
     fake_cm.__aenter__ = AsyncMock(return_value="checkpoint")
