@@ -235,6 +235,26 @@ class Settings(BaseSettings):
             "Example: 'openai' or 'openai,anthropic'."
         ),
     )
+    LLM_MAX_RETRIES: int = Field(
+        default=3,
+        ge=0,
+        description=(
+            "Max retries for transient OpenRouter failures via the openai SDK retry policy. "
+            "Retried codes: 408, 409, 429, >=500, and connection/timeout errors. "
+            "Non-transient 4xx (400, 401, 403, 422) are NOT retried (fail fast). "
+            "Backoff: exponential with jitter (openai SDK built-in). "
+            "Previous implicit SDK default was 2; set explicitly to 3 (Change U / U2)."
+        ),
+    )
+    LLM_REQUEST_TIMEOUT: float = Field(
+        default=60.0,
+        gt=0,
+        description=(
+            "Per-request timeout in seconds for LLM calls to OpenRouter. "
+            "Tightened from the implicit SDK default of 600 s to 60 s (Change U / U2). "
+            "On timeout the SDK counts it as a transient failure and retries per LLM_MAX_RETRIES."
+        ),
+    )
 
     # State Delivery — synthetic message primitive (E1 seed)
     STATE_DELIVERY_SYNTHETIC_ENABLED: bool = Field(

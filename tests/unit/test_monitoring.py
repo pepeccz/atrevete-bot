@@ -1,5 +1,5 @@
 """
-Unit tests for agent/utils/monitoring.py — C3 race-condition fix.
+Unit tests for agent/utils/monitoring.py — C3 race-condition fix + keyless guard (U1).
 
 Bug C3: get_langfuse_handler() used to mutate 6 process-global env vars
 (LANGFUSE_SESSION_ID, LANGFUSE_USER_ID, LANGFUSE_TAGS, etc.) on every call.
@@ -11,6 +11,10 @@ Fix: session_id, user_id, tags are passed as kwargs to propagate_attributes()
 Credentials (public_key, secret_key, host) are configured once at module
 level via env vars — the Docker deploy sets them and they don't change
 per-call.
+
+U1 (keyless guard): get_langfuse_handler() returns (None, None) when either
+Langfuse key is absent, without constructing a CallbackHandler or making any
+network call. Keys-present path is byte-identical to pre-guard.
 """
 
 from __future__ import annotations
@@ -286,3 +290,126 @@ def test_get_langfuse_handler_returns_sync_context_manager(monkeypatch):
     assert not hasattr(ctx, "__aexit__"), (
         "ctx must NOT be an async context manager — agent/main.py uses sync `with`"
     )
+
+
+# ---------------------------------------------------------------------------
+# Tests 6-8 — U1 keyless guard
+# ---------------------------------------------------------------------------
+
+
+def test_get_langfuse_handler_returns_none_tuple_when_both_keys_absent(monkeypatch):
+    """
+    U1: when both LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY are absent,
+    get_langfuse_handler() must return (None, None) without constructing a
+    CallbackHandler or making any network call.
+    """
+    monkeypatch.delenv("LANGFUSE_PUBLIC_KEY", raising=False)
+    monkeypatch.delenv("LANGFUSE_SECRET_KEY", raising=False)
+
+    # Invalidate the settings cache so monkeypatched env is visible
+    from shared.config import get_settings
+
+    get_settings.cache_clear()
+
+    handler_constructed = []
+
+    class _SpyHandler:
+        def __init__(self, **kwargs: Any) -> None:
+            handler_constructed.append(kwargs)
+
+    with patch("agent.utils.monitoring.CallbackHandler", _SpyHandler):
+        from agent.utils.monitoring import get_langfuse_handler
+
+        result = get_langfuse_handler(
+            conversation_id="conv-keyless",
+            customer_phone="+34000000001",
+        )
+
+    get_settings.cache_clear()  # restore cache state for other tests
+
+    assert result == (None, None), f"Expected (None, None) when keys absent, got {result!r}"
+    assert not handler_constructed, "CallbackHandler must NOT be constructed when keys absent"
+
+
+def test_get_langfuse_handler_returns_none_tuple_when_only_public_key_set(monkeypatch):
+    """
+    U1 edge case: only PUBLIC_KEY present, SECRET_KEY absent → (None, None).
+    Partial credentials are treated as absent (guard is 'or'-based).
+    """
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-only")
+    monkeypatch.delenv("LANGFUSE_SECRET_KEY", raising=False)
+
+    from shared.config import get_settings
+
+    get_settings.cache_clear()
+
+    handler_constructed = []
+
+    class _SpyHandler:
+        def __init__(self, **kwargs: Any) -> None:
+            handler_constructed.append(kwargs)
+
+    with patch("agent.utils.monitoring.CallbackHandler", _SpyHandler):
+        from agent.utils.monitoring import get_langfuse_handler
+
+        result = get_langfuse_handler(
+            conversation_id="conv-partial",
+            customer_phone="+34000000002",
+        )
+
+    get_settings.cache_clear()
+
+    assert result == (None, None), (
+        f"Expected (None, None) when only PUBLIC_KEY set, got {result!r}"
+    )
+    assert not handler_constructed, "CallbackHandler must NOT be constructed with partial keys"
+
+
+def test_get_langfuse_handler_builds_handler_when_both_keys_present(monkeypatch):
+    """
+    U1 regression guard: when both keys are valid non-empty strings,
+    get_langfuse_handler() must return a (CallbackHandler, ctx) tuple — the
+    keys-present path must be byte-identical to pre-guard behavior.
+    """
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-valid")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-valid")
+
+    from shared.config import get_settings
+
+    get_settings.cache_clear()
+
+    class _FakeHandler:
+        def __init__(self, **kwargs: Any) -> None:
+            self.kwargs = kwargs
+
+    class _FakePropagateCtx:
+        def __init__(self, **kwargs: Any) -> None:
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+    def _fake_propagate(**kwargs):
+        return _FakePropagateCtx(**kwargs)
+
+    with (
+        patch("agent.utils.monitoring.CallbackHandler", _FakeHandler),
+        patch("agent.utils.monitoring.propagate_attributes", _fake_propagate),
+    ):
+        from agent.utils.monitoring import get_langfuse_handler
+
+        handler, ctx = get_langfuse_handler(
+            conversation_id="conv-valid",
+            customer_phone="+34000000003",
+            customer_name="Test User",
+        )
+
+    get_settings.cache_clear()
+
+    assert isinstance(handler, _FakeHandler), (
+        f"Expected CallbackHandler instance when both keys present, got {type(handler)!r}"
+    )
+    assert ctx is not None, "ctx must not be None when both keys present"
