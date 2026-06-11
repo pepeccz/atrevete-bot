@@ -297,27 +297,38 @@ def test_get_langfuse_handler_returns_sync_context_manager(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_get_langfuse_handler_returns_none_tuple_when_both_keys_absent(monkeypatch):
+def _make_settings_stub(public_key=None, secret_key=None):
+    """Return a minimal settings stub for monitoring tests."""
+    from unittest.mock import MagicMock
+
+    s = MagicMock()
+    s.LANGFUSE_PUBLIC_KEY = public_key
+    s.LANGFUSE_SECRET_KEY = secret_key
+    return s
+
+
+def test_get_langfuse_handler_returns_none_tuple_when_both_keys_absent():
     """
-    U1: when both LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY are absent,
+    U1: when both LANGFUSE_PUBLIC_KEY and LANGFUSE_SECRET_KEY are absent (None),
     get_langfuse_handler() must return (None, None) without constructing a
     CallbackHandler or making any network call.
+
+    Uses a patched get_settings so the test is environment-independent
+    (pydantic_settings reads from .env; delenv alone is insufficient).
     """
-    monkeypatch.delenv("LANGFUSE_PUBLIC_KEY", raising=False)
-    monkeypatch.delenv("LANGFUSE_SECRET_KEY", raising=False)
-
-    # Invalidate the settings cache so monkeypatched env is visible
-    from shared.config import get_settings
-
-    get_settings.cache_clear()
-
     handler_constructed = []
 
     class _SpyHandler:
         def __init__(self, **kwargs: Any) -> None:
             handler_constructed.append(kwargs)
 
-    with patch("agent.utils.monitoring.CallbackHandler", _SpyHandler):
+    with (
+        patch(
+            "agent.utils.monitoring.get_settings",
+            return_value=_make_settings_stub(public_key=None, secret_key=None),
+        ),
+        patch("agent.utils.monitoring.CallbackHandler", _SpyHandler),
+    ):
         from agent.utils.monitoring import get_langfuse_handler
 
         result = get_langfuse_handler(
@@ -325,31 +336,28 @@ def test_get_langfuse_handler_returns_none_tuple_when_both_keys_absent(monkeypat
             customer_phone="+34000000001",
         )
 
-    get_settings.cache_clear()  # restore cache state for other tests
-
     assert result == (None, None), f"Expected (None, None) when keys absent, got {result!r}"
     assert not handler_constructed, "CallbackHandler must NOT be constructed when keys absent"
 
 
-def test_get_langfuse_handler_returns_none_tuple_when_only_public_key_set(monkeypatch):
+def test_get_langfuse_handler_returns_none_tuple_when_only_public_key_set():
     """
     U1 edge case: only PUBLIC_KEY present, SECRET_KEY absent → (None, None).
-    Partial credentials are treated as absent (guard is 'or'-based).
+    Partial credentials are treated as absent (guard is 'not A or not B').
     """
-    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-only")
-    monkeypatch.delenv("LANGFUSE_SECRET_KEY", raising=False)
-
-    from shared.config import get_settings
-
-    get_settings.cache_clear()
-
     handler_constructed = []
 
     class _SpyHandler:
         def __init__(self, **kwargs: Any) -> None:
             handler_constructed.append(kwargs)
 
-    with patch("agent.utils.monitoring.CallbackHandler", _SpyHandler):
+    with (
+        patch(
+            "agent.utils.monitoring.get_settings",
+            return_value=_make_settings_stub(public_key="pk-only", secret_key=None),
+        ),
+        patch("agent.utils.monitoring.CallbackHandler", _SpyHandler),
+    ):
         from agent.utils.monitoring import get_langfuse_handler
 
         result = get_langfuse_handler(
@@ -357,26 +365,18 @@ def test_get_langfuse_handler_returns_none_tuple_when_only_public_key_set(monkey
             customer_phone="+34000000002",
         )
 
-    get_settings.cache_clear()
-
     assert result == (None, None), (
         f"Expected (None, None) when only PUBLIC_KEY set, got {result!r}"
     )
     assert not handler_constructed, "CallbackHandler must NOT be constructed with partial keys"
 
 
-def test_get_langfuse_handler_builds_handler_when_both_keys_present(monkeypatch):
+def test_get_langfuse_handler_builds_handler_when_both_keys_present():
     """
     U1 regression guard: when both keys are valid non-empty strings,
     get_langfuse_handler() must return a (CallbackHandler, ctx) tuple — the
     keys-present path must be byte-identical to pre-guard behavior.
     """
-    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-valid")
-    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-valid")
-
-    from shared.config import get_settings
-
-    get_settings.cache_clear()
 
     class _FakeHandler:
         def __init__(self, **kwargs: Any) -> None:
@@ -396,6 +396,10 @@ def test_get_langfuse_handler_builds_handler_when_both_keys_present(monkeypatch)
         return _FakePropagateCtx(**kwargs)
 
     with (
+        patch(
+            "agent.utils.monitoring.get_settings",
+            return_value=_make_settings_stub(public_key="pk-valid", secret_key="sk-valid"),
+        ),
         patch("agent.utils.monitoring.CallbackHandler", _FakeHandler),
         patch("agent.utils.monitoring.propagate_attributes", _fake_propagate),
     ):
@@ -406,8 +410,6 @@ def test_get_langfuse_handler_builds_handler_when_both_keys_present(monkeypatch)
             customer_phone="+34000000003",
             customer_name="Test User",
         )
-
-    get_settings.cache_clear()
 
     assert isinstance(handler, _FakeHandler), (
         f"Expected CallbackHandler instance when both keys present, got {type(handler)!r}"
