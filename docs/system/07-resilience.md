@@ -22,7 +22,7 @@
 
 | Failure point | Behavior |
 |---|---|
-| Startup | `validate_startup_config()` in `shared/startup_validator.py` probes PG; raises `StartupValidationError` → `agent/main.py` logs CRITICAL and exits non-zero. |
+| Startup | `validate_startup_config()` in `shared/startup_validator.py` probes PG; raises `StartupValidationError` → `agent/main.py __main__` catches it explicitly, logs CRITICAL (no traceback), and calls `sys.exit(1)`. |
 | `customer_resolve` middleware | DB lookup wrapped in try/except; on failure, the customer slot is omitted → agent treats the user as a new customer (fail-open). Booking proceeds; the appointment is not created until the next DB-successful turn. |
 | `book` tool | `AsyncSession.commit()` failure raises; the tool returns a `retry_later` result, the agent tells the user to try again. No partial write (SQLAlchemy rolls back automatically). |
 
@@ -38,7 +38,7 @@
 
 | Failure point | Behavior |
 |---|---|
-| Absent at startup | `startup_validator.py:157-197` probes Redis (MODULE LIST). Failure → `StartupValidationError` with a clear human-readable message. `agent/main.py:307-309` catches it, logs CRITICAL, and re-raises → process exits non-zero. No raw traceback to stdout. |
+| Absent at startup | `startup_validator.py:157-197` probes Redis (MODULE LIST). Failure → `StartupValidationError` with a clear human-readable message. `agent/main.py __main__` catches `StartupValidationError` explicitly, logs CRITICAL (no `exc_info` → no raw traceback), and calls `sys.exit(1)` → exits non-zero. |
 | Lost at runtime | Redis is a hard dependency for the LangGraph checkpointer and the Redis Streams message queue. Runtime Redis loss causes the agent to fail processing new messages. No graceful degradation — this is a documented SPOF. HA (Redis Sentinel / cluster) is deferred to a future infrastructure change. |
 
 **Operational note**: Monitor Redis health via `docker compose logs redis` and set up alerts on the `incoming_messages` stream lag.
@@ -68,14 +68,16 @@ Multi-provider fallback (`LLM_FALLBACK_MODEL`, `LLM_EMERGENCY_MODEL`) is availab
 
 ## Redis Startup Path — Verified Friendly Fatal
 
-The startup Redis failure path was verified during Change U (2026-06-11):
+The startup Redis failure path was verified and remediated during Change U (2026-06-11):
 
-1. `agent/main.py:304-309` calls `validate_startup_config()` inside a try/except.
+1. `agent/main.py` calls `validate_startup_config()` inside `async def main()`.
 2. `shared/startup_validator.py` probes Redis and raises `StartupValidationError("Redis connection failed: ...")` on failure.
-3. `agent/main.py:308` logs `logger.critical(f"Startup blocked due to configuration errors: {e}")`.
-4. Line 309 re-raises → the asyncio event loop terminates with a non-zero exit code.
+3. `main()` re-raises the `StartupValidationError`; `asyncio.run(main())` propagates it.
+4. The `__main__` guard catches `StartupValidationError` **before** the broad `except Exception`, logs
+   `logger.critical(f"Startup validation failed: {e}")` (no `exc_info=True` → no raw traceback), then
+   calls `sys.exit(1)`.
 
-Result: a clean, human-readable CRITICAL log line. No raw exception traceback.
+Result: a clean, human-readable CRITICAL log line, exit code 1. No raw exception traceback to stdout.
 
 ---
 
@@ -87,7 +89,7 @@ Result: a clean, human-readable CRITICAL log line. No raw exception traceback.
 
 | Package | CVE | Vulnerable range | Fix version | Runtime? | Action |
 |---|---|---|---|---|---|
-| `django` | CVE-2025-64459 | ≥5.2a1, <5.2.8 | 5.2.8 | Yes (admin panel) | Bumped: `requirements.txt` → `django>=5.2.8`; `requirements-frozen.txt` → `Django==5.2.8` |
+| `django` | CVE-2025-64459 | ≥5.2a1, <5.2.8 | 5.2.8 | **No** — dead dependency (zero `import django` in the codebase; admin-panel is Next.js, not Django). Installs into api/agent images via `Dockerfile.api:24` / `Dockerfile.agent:23` as an unused transitive chain. The ≥5.2.8 bump mitigates CVE-2025-64459. Proper fix (removing the dead Django block) deferred to a named follow-up change (dead-dep-cleanup). | Bumped: `requirements.txt` → `django>=5.2.8`; `requirements-frozen.txt` → `Django==5.2.8` |
 | `langchain-core` | CVE-2025-68664 | ≥1.0.0, <1.2.5 | 1.2.5 | Yes (agent core) | Bumped: added explicit `langchain-core>=1.2.5` to `requirements.txt`; `requirements-frozen.txt` → `langchain-core==1.2.5` |
 
 ### High CVEs — DEFERRED (out of scope for Change U)

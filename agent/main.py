@@ -1084,6 +1084,12 @@ if __name__ == "__main__":
         asyncio.run(main())
     except KeyboardInterrupt:
         logger.info("Received keyboard interrupt")
+    except StartupValidationError as e:
+        # Startup validation failed (Redis unavailable, missing config, etc.).
+        # Log a clean human-readable CRITICAL line — no raw traceback — then
+        # exit non-zero so the process supervisor knows startup failed.
+        logger.critical(f"Startup validation failed: {e}")
+        sys.exit(1)
     except Exception as e:
         logger.error(f"Fatal error: {e}", exc_info=True)
     finally:

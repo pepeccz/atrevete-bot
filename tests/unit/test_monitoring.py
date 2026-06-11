@@ -50,8 +50,6 @@ def test_get_langfuse_handler_does_not_mutate_global_environ(monkeypatch):
     per-call context is scoped to the propagate_attributes context manager.
     """
     # Arrange: seed credentials (static, set once at deploy)
-    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
-    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test")
     monkeypatch.delenv("LANGFUSE_SESSION_ID", raising=False)
     monkeypatch.delenv("LANGFUSE_USER_ID", raising=False)
     monkeypatch.delenv("LANGFUSE_TAGS", raising=False)
@@ -86,8 +84,14 @@ def test_get_langfuse_handler_does_not_mutate_global_environ(monkeypatch):
         propagate_calls.append(kwargs)
         return _FakePropagateCtx(**kwargs)
 
-    # Stub out both CallbackHandler and propagate_attributes so no real SDK call
+    # Stub out CallbackHandler, propagate_attributes, AND get_settings so the
+    # lru_cache on get_settings() does not return a keyless stub from a
+    # previously-run test in the same process.
     with (
+        patch(
+            "agent.utils.monitoring.get_settings",
+            return_value=_make_settings_stub(public_key="pk-test", secret_key="sk-test"),
+        ),
         patch("agent.utils.monitoring.CallbackHandler", _FakeHandler),
         patch("agent.utils.monitoring.propagate_attributes", _fake_propagate_attributes),
     ):
@@ -143,8 +147,6 @@ async def test_get_langfuse_handler_concurrent_calls_do_not_cross_contaminate(mo
 
     This proves no shared global-state contamination.
     """
-    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
-    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test")
     monkeypatch.delenv("LANGFUSE_SESSION_ID", raising=False)
     monkeypatch.delenv("LANGFUSE_USER_ID", raising=False)
     monkeypatch.delenv("LANGFUSE_TAGS", raising=False)
@@ -175,7 +177,13 @@ async def test_get_langfuse_handler_concurrent_calls_do_not_cross_contaminate(mo
         propagate_calls.append(dict(kwargs))
         return _FakePropagateCtx(**kwargs)
 
+    # Patch get_settings to return keys-present stub (bypasses lru_cache pollution
+    # from earlier tests in the suite that may have cached a keyless settings object).
     with (
+        patch(
+            "agent.utils.monitoring.get_settings",
+            return_value=_make_settings_stub(public_key="pk-test", secret_key="sk-test"),
+        ),
         patch("agent.utils.monitoring.CallbackHandler", _FakeHandler),
         patch("agent.utils.monitoring.propagate_attributes", _fake_propagate),
     ):
@@ -222,8 +230,6 @@ def test_get_langfuse_handler_raises_when_callback_handler_fails(monkeypatch):
     When CallbackHandler.__init__ raises, the exception must propagate
     (so the caller can catch it and continue without tracing).
     """
-    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
-    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test")
 
     class _BrokenHandler:
         def __init__(self, **kwargs: Any) -> None:
@@ -242,7 +248,12 @@ def test_get_langfuse_handler_raises_when_callback_handler_fails(monkeypatch):
     def _fake_propagate(**kwargs):
         return _FakePropagateCtx(**kwargs)
 
+    # Patch get_settings to return keys-present stub (bypasses lru_cache pollution).
     with (
+        patch(
+            "agent.utils.monitoring.get_settings",
+            return_value=_make_settings_stub(public_key="pk-test", secret_key="sk-test"),
+        ),
         patch("agent.utils.monitoring.CallbackHandler", _BrokenHandler),
         patch("agent.utils.monitoring.propagate_attributes", _fake_propagate),
     ):
@@ -271,16 +282,19 @@ def test_get_langfuse_handler_returns_sync_context_manager(monkeypatch):
     Guard: the returned ctx must implement __enter__/__exit__ (sync protocol)
     and must NOT implement __aenter__/__aexit__.
     """
-    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
-    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test")
+    # Patch get_settings to return keys-present stub (bypasses lru_cache pollution
+    # from earlier tests in the suite that may have cached a keyless settings object).
+    with patch(
+        "agent.utils.monitoring.get_settings",
+        return_value=_make_settings_stub(public_key="pk-test", secret_key="sk-test"),
+    ):
+        from agent.utils.monitoring import get_langfuse_handler
 
-    from agent.utils.monitoring import get_langfuse_handler
-
-    _, ctx = get_langfuse_handler(
-        conversation_id="conv-sync",
-        customer_phone="+34111111111",
-        customer_name=None,
-    )
+        _, ctx = get_langfuse_handler(
+            conversation_id="conv-sync",
+            customer_phone="+34111111111",
+            customer_name=None,
+        )
 
     assert hasattr(ctx, "__enter__"), "ctx must support sync `with` protocol"
     assert hasattr(ctx, "__exit__"), "ctx must support sync `with` protocol"
