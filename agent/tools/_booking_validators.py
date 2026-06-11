@@ -37,8 +37,8 @@ logger = logging.getLogger(__name__)
 
 # Module-level imports so tests can patch them at the module level.
 # These are the only two external dependencies of the validator.
-from agent.booking.resolvers.time_resolver import MIN_BOOKING_DAYS, resolve_relative_date
-from shared.business_hours_validator import is_date_closed
+from agent.booking.resolvers.time_resolver import MIN_BOOKING_DAYS, resolve_relative_date  # noqa: E402
+from shared.business_hours_validator import is_date_closed  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Canonical error codes — exported, consumed by adapter mapping tables in callers
