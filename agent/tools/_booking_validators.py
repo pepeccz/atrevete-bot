@@ -250,7 +250,7 @@ async def _fetch_valid_candidate_services(session, found_uuids: set) -> list[dic
             return []
         return [{"id": str(row[0]), "name": row[1]} for row in rows]
     except Exception as exc:
-        logger.warning("valid_candidates fetch failed (fail-open): %s", exc)
+        logger.error("valid_candidates fetch failed (fail-open): %s", exc, exc_info=True)
         return []
 
 

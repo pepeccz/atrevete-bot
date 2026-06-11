@@ -84,7 +84,6 @@ def test_get_summarizer_llm_uses_override_model_when_set():
 # ---------------------------------------------------------------------------
 
 
-
 def _make_request(messages: list, extra_state: dict | None = None) -> MagicMock:
     """Build a ModelRequest mock with the given messages in state."""
     state: dict = {"messages": messages, **(extra_state or {})}
@@ -95,7 +94,9 @@ def _make_request(messages: list, extra_state: dict | None = None) -> MagicMock:
     def _override(**kw):
         new_req = MagicMock()
         new_req.state = kw.get("state", state)
-        new_req.override = MagicMock(side_effect=lambda **kw2: _make_request(kw2.get("state", {}).get("messages", [])))
+        new_req.override = MagicMock(
+            side_effect=lambda **kw2: _make_request(kw2.get("state", {}).get("messages", []))
+        )
         return new_req
 
     req.override = MagicMock(side_effect=_override)
@@ -229,7 +230,11 @@ async def test_no_summary_key_on_summarizer_exception():
 # T2-cursor: cursor=None, 21 messages → first run, compaction fires
 @pytest.mark.asyncio
 async def test_cursor_set_after_first_compaction():
-    """T2-cursor: cursor=None + 21 msgs → LLM called 1x, cursor=11, summary set."""
+    """T2-cursor: cursor=None + 21 msgs → LLM called 1x, cursor=11, summary set.
+
+    ADR-2: cursor = total - keep_tail = 21 - 10 = 11.
+    (Coincidentally same as old formula 1 + keep_tail = 11 when total=21.)
+    """
     from agent.middleware.summarize import SummarizeMiddleware
 
     mw = SummarizeMiddleware(window=20, keep_tail=10)
@@ -248,19 +253,37 @@ async def test_cursor_set_after_first_compaction():
 
     mock_summarize.assert_called_once()
     assert captured_state.get("conversation_summary") == "PRIMER_RESUMEN"
-    # Post-trim cursor = 1 SystemMessage + 10 tail = 11
+    # ADR-2: cursor = total - keep_tail = 21 - 10 = 11
     assert captured_state.get("last_summarized_msg_count") == 11
 
 
-# T3b: cursor=15, total=21, new_since=6 < threshold → idempotency gate holds
+# T3b: cursor=5, total=21, new_since (ADR-2) = 21-(5+10)=6 < threshold → idempotency gate holds
 @pytest.mark.asyncio
 async def test_idempotency_gate_skips_llm_when_few_new_messages():
-    """T3b: cursor=15, 21 msgs, new_since=6 < 10 → LLM NOT called, cursor unchanged."""
+    """T3b: cursor=5, 21 msgs, new_since=6 < 10 → LLM NOT called, cursor UNCHANGED (== 5).
+
+    ADR-2 new_since formula: total - (cursor + keep_tail) = 21 - (5 + 10) = 6 < 10.
+    Gate 2 fires: overlay rebuilt LLM-free; cursor stays at 5 in the checkpoint so that
+    new_since continues accumulating on the next turn. Gate 2 does NOT persist anything —
+    it only does request.override (no Command emitted). If Gate 2 advanced the cursor to 11,
+    new_since on the next turn would reset to 0 → Gate 3 never re-fires → summarizer
+    starvation (verified: 26/51 msgs lost in 15-turn repro).
+
+    ADR-2 (post-C1-fix): Gate 2 = request.override ONLY, no persist.
+    """
     from agent.middleware.summarize import SummarizeMiddleware
 
     mw = SummarizeMiddleware(window=20, keep_tail=10)
     messages = _human_messages(21)
-    request = _make_request(messages, extra_state={"last_summarized_msg_count": 15})
+    # cursor=5: 5 raw messages folded into summary; keep_tail=10 kept; total_at_compaction=15
+    # new_since = 21 - (5 + 10) = 6 < threshold → Gate 2
+    request = _make_request(
+        messages,
+        extra_state={
+            "last_summarized_msg_count": 5,
+            "conversation_summary": "Resumen previo",
+        },
+    )
 
     captured_state: dict = {}
 
@@ -275,19 +298,25 @@ async def test_idempotency_gate_skips_llm_when_few_new_messages():
             await mw.awrap_model_call(request, handler)
 
     mock_summarize.assert_not_called()
-    # cursor must remain unchanged (handler receives original state)
-    assert captured_state.get("last_summarized_msg_count") == 15
+    # Gate 2 does NOT advance the cursor — stays at 5 so new_since accumulates next turn.
+    # ADR-2 (post-C1-fix): Gate 2 = request.override only. No persist → no starvation.
+    assert captured_state.get("last_summarized_msg_count") == 5
 
 
-# T4: cursor=11, total=21, new_since=10 >= threshold → compaction fires
+# T4: cursor=5, total=25, new_since (ADR-2) = 25-(5+10)=10 >= threshold → compaction fires
 @pytest.mark.asyncio
 async def test_threshold_crossing_triggers_compaction():
-    """T4: cursor=11, 21 msgs, new_since=10 >= 10 → LLM called 1x, cursor=11."""
+    """T4: cursor=5, 25 msgs, new_since=10 >= 10 → LLM called 1x, cursor=15.
+
+    ADR-2 new_since formula: total - (cursor + keep_tail) = 25 - (5 + 10) = 10 >= threshold.
+    Gate 3 fires: compaction runs, cursor updated to total - keep_tail = 25 - 10 = 15.
+    """
     from agent.middleware.summarize import SummarizeMiddleware
 
     mw = SummarizeMiddleware(window=20, keep_tail=10)
-    messages = _human_messages(21)
-    request = _make_request(messages, extra_state={"last_summarized_msg_count": 11})
+    # 25 messages with cursor=5: new_since = 25-(5+10)=10 >= threshold
+    messages = _human_messages(25)
+    request = _make_request(messages, extra_state={"last_summarized_msg_count": 5})
 
     captured_state: dict = {}
 
@@ -300,19 +329,23 @@ async def test_threshold_crossing_triggers_compaction():
         await mw.awrap_model_call(request, handler)
 
     mock_summarize.assert_called_once()
-    # cursor resets to post-trim length = 11
-    assert captured_state.get("last_summarized_msg_count") == 11
+    # ADR-2: cursor = total - keep_tail = 25 - 10 = 15
+    assert captured_state.get("last_summarized_msg_count") == 15
 
 
 # T5: LLM raises → original messages preserved, cursor unchanged
 @pytest.mark.asyncio
 async def test_cursor_unchanged_when_summarizer_raises():
-    """T5: LLM raises → original messages preserved, cursor NOT advanced."""
+    """T5: LLM raises → original messages preserved, cursor NOT advanced.
+
+    Uses cursor=1 so new_since = 21-(1+10)=10 >= threshold, Gate 3 fires and raises.
+    """
     from agent.middleware.summarize import SummarizeMiddleware
 
     mw = SummarizeMiddleware(window=20, keep_tail=10)
     messages = _human_messages(21)
-    original_cursor = 5
+    # cursor=1: new_since = 21-(1+10)=10 >= threshold → Gate 3 fires → exception
+    original_cursor = 1
     request = _make_request(messages, extra_state={"last_summarized_msg_count": original_cursor})
 
     received_request = None
@@ -348,7 +381,9 @@ async def test_summarize_uses_default_llm_when_summarizer_model_empty():
         return MagicMock()
 
     mock_get_llm = MagicMock(return_value=MagicMock())
-    with patch("agent.middleware.summarize.get_summarizer_llm", return_value=mock_get_llm.return_value) as mock_resolver:
+    with patch(
+        "agent.middleware.summarize.get_summarizer_llm", return_value=mock_get_llm.return_value
+    ) as mock_resolver:
         with patch(
             "agent.middleware.summarize._summarize_messages",
             new=AsyncMock(return_value="OK"),

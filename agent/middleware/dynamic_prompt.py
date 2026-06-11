@@ -87,13 +87,13 @@ class DynamicPromptMiddleware(AgentMiddleware):
         try:
             catalog_section = await build_catalog_prompt_section()
         except Exception:
-            logger.warning("Could not build catalog section", exc_info=True)
+            logger.error("Could not build catalog section", exc_info=True)
             catalog_section = ""
 
         try:
             hours = await load_business_hours_snapshot()
         except Exception:
-            logger.warning("Could not load business hours", exc_info=True)
+            logger.error("Could not load business hours", exc_info=True)
             hours = {}
 
         # --- Write _slot_* keys (no system_message mutation) ---

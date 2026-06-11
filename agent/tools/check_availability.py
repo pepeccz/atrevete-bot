@@ -208,7 +208,7 @@ async def check_availability(
     try:
         min_days, _buffer_hours = await _load_lead_time_settings()
     except Exception as exc:
-        logger.warning("check_availability: SettingsService unavailable: %s", exc)
+        logger.error("check_availability: SettingsService unavailable: %s", exc, exc_info=True)
         return ToolResponse(
             status="rejected",
             errors=[

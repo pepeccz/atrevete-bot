@@ -76,13 +76,19 @@ async def _persist_policy_acceptance(
             )
             await session.commit()
         except Exception as exc:
-            logger.warning("policy acceptance DB persist failed at gate clear (fail-open): %s", exc)
+            logger.error(
+                "policy acceptance DB persist failed at gate clear (fail-open): %s",
+                exc,
+                exc_info=True,
+            )
             try:
                 await session.rollback()
             except Exception as rollback_exc:
                 # Never let a rollback failure mask the original persist error log.
-                logger.warning(
-                    "session rollback failed after policy persist failure: %s", rollback_exc
+                logger.error(
+                    "session rollback failed after policy persist failure: %s",
+                    rollback_exc,
+                    exc_info=True,
                 )
     if conversation_id:
         await set_conversation_policy_acceptance(conversation_id, policy_version)

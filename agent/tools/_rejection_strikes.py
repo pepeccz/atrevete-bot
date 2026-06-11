@@ -152,6 +152,8 @@ def apply_rejection_strike_json(raw_json: str, messages: list, tool_name: str) -
             return raw_json
         response = ToolResponse(**data)
     except Exception:
+        # fail-open: malformed tool response JSON — return raw_json unchanged so the
+        # tool-calling loop is never broken by a strike-layer parse failure
         return raw_json
 
     transformed = apply_rejection_strike(response, messages, tool_name)
