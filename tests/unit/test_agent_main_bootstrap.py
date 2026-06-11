@@ -100,7 +100,8 @@ async def test_subscribe_to_incoming_messages_uses_authoritative_runtime_graph()
         ):
             await agent_main.subscribe_to_incoming_messages()
 
-    mock_create_graph.assert_called_once_with(checkpointer="checkpoint", store=None)
+    # agent/main.py calls create_graph(checkpointer=saver) without store kwarg
+    mock_create_graph.assert_called_once_with(checkpointer="checkpoint")
 
     invoked_state = fake_graph.ainvoke.await_args.args[0]
     invoked_config = fake_graph.ainvoke.await_args.kwargs["config"]
