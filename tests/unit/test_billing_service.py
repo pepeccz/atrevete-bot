@@ -129,7 +129,9 @@ class TestGenerateInvoiceHappyPath:
 
         svc = BillingService.__new__(BillingService)
         svc.pdf_service = AsyncMock()
-        svc.pdf_service.generate_invoice_pdf = AsyncMock(return_value="/data/invoices/ATR-2026-03-001.pdf")
+        svc.pdf_service.generate_invoice_pdf = AsyncMock(
+            return_value="/data/invoices/ATR-2026-03-001.pdf"
+        )
         svc.stripe_service = AsyncMock()
         svc.stripe_service.get_sepa_status = AsyncMock(return_value={"configured": False})
         svc.email_service = AsyncMock()
@@ -167,9 +169,9 @@ class TestGenerateInvoiceNoTokenUsage:
         session = _make_async_session()
 
         session.execute.side_effect = [
-            _scalar_result(None),   # duplicate check
-            _scalar_result(None),   # token usage → None
-            _scalar_count(0),       # invoice count for number
+            _scalar_result(None),  # duplicate check
+            _scalar_result(None),  # token usage → None
+            _scalar_count(0),  # invoice count for number
         ]
 
         svc = BillingService.__new__(BillingService)
@@ -282,7 +284,9 @@ class TestGenerateInvoicePdfFailure:
 
         svc = BillingService.__new__(BillingService)
         svc.pdf_service = AsyncMock()
-        svc.pdf_service.generate_invoice_pdf = AsyncMock(side_effect=RuntimeError("weasyprint crash"))
+        svc.pdf_service.generate_invoice_pdf = AsyncMock(
+            side_effect=RuntimeError("weasyprint crash")
+        )
         svc.stripe_service = AsyncMock()
         svc.stripe_service.get_sepa_status = AsyncMock(return_value={"configured": False})
         svc.email_service = AsyncMock()
@@ -395,6 +399,7 @@ class TestVoidInvoice:
             await svc.void_invoice(session, uuid.uuid4())
 
         assert exc_info.value.status_code == 404
+
 
 # ---------------------------------------------------------------------------
 # T8 — Tests: void_invoice uses only stripe Invoice.void after dead code removal
@@ -636,11 +641,18 @@ class TestNextInvoiceNumber:
         assert number == "ATR-2026-03-001"
 
     async def test_next_invoice_number_format_subsequent(self):
-        """Second invoice of period is SEQ 002."""
+        """Second invoice of period is SEQ 002.
+
+        Production uses len(result.all()) not result.scalar(), so the mock
+        must return a list with 1 item from .all() (commit 3c262b7).
+        """
         from api.services.billing_service import BillingService
 
         session = _make_async_session()
-        session.execute.return_value = _scalar_count(1)
+        # result.all() must return a 1-item list so len() == 1 → seq = 2
+        mock_result = MagicMock()
+        mock_result.all.return_value = [MagicMock()]
+        session.execute.return_value = mock_result
 
         svc = BillingService.__new__(BillingService)
         number = await svc._next_invoice_number(session, 2026, 3)
@@ -686,9 +698,9 @@ class TestGenerateInvoicePdfPersistence:
         session = _make_async_session()
 
         session.execute.side_effect = [
-            _scalar_result(None),       # duplicate check
+            _scalar_result(None),  # duplicate check
             _scalar_result(token_usage),  # token usage
-            _scalar_count(0),           # _next_invoice_number
+            _scalar_count(0),  # _next_invoice_number
         ]
 
         expected_pdf_path = "/data/invoices/ATR-2026-03-001.pdf"
@@ -709,9 +721,9 @@ class TestGenerateInvoicePdfPersistence:
 
         # The invoice object added to session must have pdf_path set
         added = session.add.call_args_list[0][0][0]
-        assert added.pdf_path == expected_pdf_path, (
-            f"Expected invoice.pdf_path={expected_pdf_path!r}, got {added.pdf_path!r}"
-        )
+        assert (
+            added.pdf_path == expected_pdf_path
+        ), f"Expected invoice.pdf_path={expected_pdf_path!r}, got {added.pdf_path!r}"
 
         # email must be called with that pdf_path
         call_kwargs = svc.email_service.send_invoice_email.call_args
@@ -722,9 +734,9 @@ class TestGenerateInvoicePdfPersistence:
             sent_pdf_path = call_kwargs.args[4]
         else:
             sent_pdf_path = "NOT_FOUND"
-        assert sent_pdf_path == expected_pdf_path, (
-            f"send_invoice_email called with pdf_path={sent_pdf_path!r}, expected {expected_pdf_path!r}"
-        )
+        assert (
+            sent_pdf_path == expected_pdf_path
+        ), f"send_invoice_email called with pdf_path={sent_pdf_path!r}, expected {expected_pdf_path!r}"
 
     async def test_generate_invoice_handles_pdf_failure_gracefully(self):
         """
@@ -748,9 +760,7 @@ class TestGenerateInvoicePdfPersistence:
 
         svc = BillingService.__new__(BillingService)
         svc.pdf_service = AsyncMock()
-        svc.pdf_service.ensure_pdf_exists = AsyncMock(
-            side_effect=OSError("weasyprint unavailable")
-        )
+        svc.pdf_service.ensure_pdf_exists = AsyncMock(side_effect=OSError("weasyprint unavailable"))
         svc.stripe_service = AsyncMock()
         svc.stripe_service.get_sepa_status = AsyncMock(return_value={"configured": False})
         svc.email_service = AsyncMock()
@@ -776,6 +786,6 @@ class TestGenerateInvoicePdfPersistence:
             sent_pdf_path = call_kwargs.args[4]
         else:
             sent_pdf_path = "NOT_FOUND"
-        assert sent_pdf_path is None, (
-            f"Expected send_invoice_email(pdf_path=None), got pdf_path={sent_pdf_path!r}"
-        )
+        assert (
+            sent_pdf_path is None
+        ), f"Expected send_invoice_email(pdf_path=None), got pdf_path={sent_pdf_path!r}"
