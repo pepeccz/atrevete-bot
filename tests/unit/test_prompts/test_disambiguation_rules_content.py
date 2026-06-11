@@ -70,39 +70,33 @@ def test_r32_mentions_explicit_customer_signal():
 
 
 # ---------------------------------------------------------------------------
-# T3.3 [RED] — R-33 no auto-disclosure
+# T3.3 — R-33 was deliberately pruned (commit 2f4a74d, Change B: agent-cost-optimization)
+# R-33 was a duplicate of R8 and was removed in the prompt consolidation (-42% lines).
+# R8 is the canonical no-auto-disclosure rule.
 # ---------------------------------------------------------------------------
 
 
-def test_r33_no_autodisclosure_canonical_substring():
-    """R-33 canonical substring __DISCLOSURE__ must be present in critical_rules.md.
+def test_r8_covers_disclosure_rule():
+    """R8 is the canonical first-turn AI disclosure rule (R-33 was pruned as a dup of R8).
 
-    Canonical: "__DISCLOSURE__"
-    Refs: REQ-PR-2, spec A3, design §R-33 wording.
+    Refs: commit 2f4a74d CHANGE B — 'Prune retired/duplicate rules in critical_rules.md (R2/R3/R9/R15/R33)'.
     """
     content = _read("critical_rules.md")
-    assert "__DISCLOSURE__" in content, (
-        "R-33 no-auto-disclosure rule not found in critical_rules.md. "
-        "Expected canonical substring: '__DISCLOSURE__'. "
-        "T3.4 must add R-33 to the file."
+    assert "[R8]" in content, (
+        "R8 (AI disclosure — no greeting, no manual saludo) must be present in critical_rules.md. "
+        "R-33 was pruned as it was redundant with R8."
     )
 
 
-def test_r33_references_middleware():
-    """R-33 must state middleware owns the disclosure text (not the LLM)."""
+def test_r8_references_first_turn_disclosure():
+    """R8 must reference the first-turn disclosure mechanism."""
     content = _read("critical_rules.md")
-    assert "middleware" in content.lower(), (
-        "R-33 must reference 'middleware' as the owner of the disclosure text. "
-        "Verify rule body mentions that middleware inserts the AI disclosure."
-    )
-
-
-def test_r33_reinforces_r8():
-    """R-33 must reference R8 (existing disclosure rule) to avoid contradiction."""
-    content = _read("critical_rules.md")
-    assert "R8" in content, (
-        "R-33 must reference R8 to reinforce the existing disclosure rule. "
-        "Verify rule body contains 'R8'."
+    # R8 prohibits the LLM from greeting (disclosure is middleware's job)
+    assert (
+        "PRIMER turno" in content or "primer turno" in content.lower() or "NUNCA saludes" in content
+    ), (
+        "R8 must reference first-turn disclosure behavior (NUNCA saludes or PRIMER turno). "
+        "R-33 was merged into R8 semantics."
     )
 
 

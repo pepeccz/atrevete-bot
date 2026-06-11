@@ -1,13 +1,14 @@
-"""RED → GREEN tests for audience/variant disambiguation prompt rules.
+"""Tests for audience/variant disambiguation prompt rules.
 
 Validates:
 - critical_rules.md rule 9b uses catalog-keyed metadata tokens (no hardcoded service names)
-- examples.md has examples 4 (audience) and 5 (variant)
-- booking_flow.md has Paso 0 before Paso 1
+- examples.md has Ejemplo 1 (variant disambiguation example)
+- booking_flow.md has Paso 1 (services step) — Paso 0 was deliberately dropped (commit 3a46daf)
 - tools_contract.md has _required routing clause in update_booking entry
 
 Refs: spec R1-R4/E1-E3/F1-F3/T1-T2, design Decisions 1-4
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -50,119 +51,97 @@ def test_critical_rules_contains_parent_service_name_token() -> None:
 def test_critical_rules_no_hardcoded_service_names() -> None:
     """R2: rule 9b must NOT hardcode specific service names in the 9b block."""
     content = _read(_CRITICAL_RULES)
-    # Find the 9b block: from "9b" to the next rule header "9b-response" or "10."
+    # Find the 9b block: from "[R9b]" to the next rule header
     lines = content.splitlines()
     in_9b_block = False
     block_lines: list[str] = []
     for line in lines:
-        if line.startswith("9b-trigger") or (line.startswith("9b.") and "desambiguación" in line.lower()):
+        if line.strip().startswith("[R9b]"):
             in_9b_block = True
-        elif in_9b_block and (line.startswith("9b-response") or line.startswith("10.")):
+        elif in_9b_block and line.strip().startswith("[R") and not line.strip().startswith("[R9b]"):
             break
         if in_9b_block:
             block_lines.append(line.lower())
 
     block = "\n".join(block_lines)
     # The rule must not hardcode specific service names outside of illustrative (ej.) parens
-    # We check the entire block does not have standalone hardcoded names outside parens
     forbidden_standalone = ["corte dama", "corte caballero", "corte niño", "corte niña"]
     for name in forbidden_standalone:
-        assert name not in block or "ej." in block, (
-            f"9b block must not hardcode '{name}' (use catalog metadata tokens instead)"
-        )
+        assert (
+            name not in block or "ej." in block
+        ), f"9b block must not hardcode '{name}' (use catalog metadata tokens instead)"
 
 
 # ---------------------------------------------------------------------------
-# examples.md — examples 4 and 5
+# examples.md — has variant disambiguation example (Ejemplo 1)
 # ---------------------------------------------------------------------------
-
-
-def test_examples_contains_audience_disambiguation_example() -> None:
-    """E1/E3: examples.md must contain example 4 (audience/haircut disambiguation)."""
-    content = _read(_EXAMPLES)
-    assert "4-audience-disambiguation" in content, (
-        "examples.md must contain example id '4-audience-disambiguation'"
-    )
 
 
 def test_examples_contains_variant_disambiguation_example() -> None:
-    """E2/E3: examples.md must contain example 5 (variant/wax disambiguation)."""
+    """examples.md must contain Ejemplo 1 (variant/peinado disambiguation)."""
     content = _read(_EXAMPLES)
-    assert "5-variant-disambiguation" in content, (
-        "examples.md must contain example id '5-variant-disambiguation'"
-    )
+    assert (
+        "Ejemplo 1" in content
+    ), "examples.md must contain 'Ejemplo 1' — peinado variant disambiguation"
 
 
-def test_examples_audience_example_contains_audience_keywords() -> None:
-    """E1: example 4 must contain audience keywords (señora/caballero or similar)."""
-    content = _read(_EXAMPLES)
-    lower = content.lower()
-    # Check at least one audience-dimension keyword is present after the example id
-    idx = lower.find("4-audience-disambiguation")
-    assert idx != -1
-    snippet = lower[idx : idx + 500]
-    audience_keywords = ["señora", "caballero", "niña", "niño", "bebé", "dama"]
-    assert any(kw in snippet for kw in audience_keywords), (
-        f"Example 4 must contain audience keywords; found: {snippet[:200]}"
-    )
-
-
-def test_examples_variant_example_contains_zone_keyword() -> None:
-    """E2: example 5 must contain a body-zone keyword."""
+def test_examples_variant_example_contains_peinado_keyword() -> None:
+    """Ejemplo 1 must contain peinado-related variant keywords."""
     content = _read(_EXAMPLES)
     lower = content.lower()
-    idx = lower.find("5-variant-disambiguation")
+    # Ejemplo 1 is about peinado disambiguation
+    idx = lower.find("ejemplo 1")
     assert idx != -1
     snippet = lower[idx : idx + 500]
-    zone_keywords = ["zona", "axilas", "piernas", "cera", "depila"]
-    assert any(kw in snippet for kw in zone_keywords), (
-        f"Example 5 must contain body-zone keywords; found: {snippet[:200]}"
-    )
+    variant_keywords = ["peinado", "variante", "moldeado"]
+    assert any(
+        kw in snippet for kw in variant_keywords
+    ), f"Ejemplo 1 must contain variant keywords; found: {snippet[:200]}"
 
 
 # ---------------------------------------------------------------------------
-# booking_flow.md — Paso 0 before Paso 1
+# booking_flow.md — Paso 1 present (Paso 0 was deliberately removed in 3a46daf)
 # ---------------------------------------------------------------------------
 
 
-def test_booking_flow_paso0_present() -> None:
-    """F1/F3: booking_flow.md must declare 'Paso 0' before 'Paso 1'."""
+def test_booking_flow_paso1_present() -> None:
+    """F1/F3: booking_flow.md must declare 'Paso 1' (services step)."""
     content = _read(_BOOKING_FLOW)
-    assert "Paso 0" in content, "booking_flow.md must contain 'Paso 0'"
+    assert "Paso 1" in content, "booking_flow.md must contain 'Paso 1'"
 
 
-def test_booking_flow_paso0_before_paso1() -> None:
-    """F3: Paso 0 must appear before Paso 1 in document order."""
+def test_booking_flow_paso1_contains_update_booking_call() -> None:
+    """F1: Paso 1 must reference the update_booking call."""
     content = _read(_BOOKING_FLOW)
-    idx0 = content.find("Paso 0")
     idx1 = content.find("Paso 1")
-    assert idx0 != -1, "booking_flow.md must contain 'Paso 0'"
+    idx2 = content.find("Paso 2")
     assert idx1 != -1, "booking_flow.md must contain 'Paso 1'"
-    assert idx0 < idx1, f"'Paso 0' (pos {idx0}) must appear before 'Paso 1' (pos {idx1})"
+    assert idx2 != -1, "booking_flow.md must contain 'Paso 2'"
+    paso1_block = content[idx1:idx2]
+    assert "update_booking" in paso1_block, "Paso 1 block must contain 'update_booking'"
 
 
-def test_booking_flow_paso0_contains_update_booking_call() -> None:
-    """F1: Paso 0 must reference the update_booking call."""
+def test_booking_flow_paso1_before_paso2() -> None:
+    """F3: Paso 1 must appear before Paso 2 in document order."""
     content = _read(_BOOKING_FLOW)
-    idx0 = content.find("Paso 0")
     idx1 = content.find("Paso 1")
-    assert idx0 != -1 and idx1 != -1
-    paso0_block = content[idx0:idx1]
-    assert "update_booking" in paso0_block, (
-        "Paso 0 block must contain 'update_booking'"
-    )
+    idx2 = content.find("Paso 2")
+    assert idx1 != -1, "booking_flow.md must contain 'Paso 1'"
+    assert idx2 != -1, "booking_flow.md must contain 'Paso 2'"
+    assert idx1 < idx2, f"'Paso 1' (pos {idx1}) must appear before 'Paso 2' (pos {idx2})"
 
 
-def test_booking_flow_paso0_references_required_suffix() -> None:
-    """F2: Paso 0 must cover *_required routing (at minimum audience_required)."""
+def test_booking_flow_paso2_references_required_suffix() -> None:
+    """F2: Paso 2 must cover *_required routing (at minimum audience_required)."""
     content = _read(_BOOKING_FLOW)
-    idx0 = content.find("Paso 0")
-    idx1 = content.find("Paso 1")
-    assert idx0 != -1 and idx1 != -1
-    paso0_block = content[idx0:idx1]
-    assert "audience_required" in paso0_block or "_required" in paso0_block, (
-        "Paso 0 must reference '*_required' routing (at minimum audience_required)"
-    )
+    idx2 = content.find("Paso 2")
+    idx3 = content.find("Paso 2.5")
+    assert idx2 != -1, "booking_flow.md must contain 'Paso 2'"
+    # Search from Paso 2 to end of file
+    paso2_block = content[idx2 : idx3 if idx3 != -1 else idx2 + 1000]
+    assert (
+        "audience_required" in paso2_block or "_required" in paso2_block
+    ), "Paso 2 must reference '*_required' routing (at minimum audience_required)"
 
 
 # ---------------------------------------------------------------------------
@@ -173,9 +152,9 @@ def test_booking_flow_paso0_references_required_suffix() -> None:
 def test_tools_contract_update_booking_mentions_required_suffix() -> None:
     """T1/T2: tools_contract.md update_booking entry must mention '_required' routing."""
     content = _read(_TOOLS_CONTRACT)
-    assert "_required" in content, (
-        "tools_contract.md must contain a '_required' routing clause in update_booking entry"
-    )
+    assert (
+        "_required" in content
+    ), "tools_contract.md must contain a '_required' routing clause in update_booking entry"
 
 
 def test_tools_contract_update_booking_first_action_clause() -> None:
@@ -187,6 +166,6 @@ def test_tools_contract_update_booking_first_action_clause() -> None:
     # Check within reasonable proximity (500 chars before/after) for first-call directive
     snippet = content[max(0, idx - 100) : idx + 600]
     first_keywords = ["primer", "primera", "primero", "first", "antes de"]
-    assert any(kw in snippet for kw in first_keywords), (
-        f"tools_contract.md update_booking entry must state 'call first' directive; found: {snippet[:300]}"
-    )
+    assert any(
+        kw in snippet for kw in first_keywords
+    ), f"tools_contract.md update_booking entry must state 'call first' directive; found: {snippet[:300]}"

@@ -25,15 +25,15 @@ class TestGlossaryLengthMap:
 
     def test_glossary_contains_length_map_header(self):
         content = _read("glossary.md")
-        assert "Mapeo longitud → variante" in content, (
-            "glossary.md must contain 'Mapeo longitud → variante' section header"
-        )
+        assert (
+            "Mapeo longitud → variante" in content
+        ), "glossary.md must contain 'Mapeo longitud → variante' section header"
 
     def test_glossary_contains_peinado_largo_entry(self):
         content = _read("glossary.md")
-        assert "Peinado Largo" in content, (
-            "glossary.md must contain 'Peinado Largo' in the length-map section"
-        )
+        assert (
+            "Peinado Largo" in content
+        ), "glossary.md must contain 'Peinado Largo' in the length-map section"
 
 
 class TestGlossaryLooseDatePhrases:
@@ -41,46 +41,55 @@ class TestGlossaryLooseDatePhrases:
 
     def test_glossary_contains_frases_de_fecha_vaga_section(self):
         content = _read("glossary.md")
-        assert "Frases de fecha vaga" in content, (
-            "glossary.md must contain 'Frases de fecha vaga' section"
-        )
+        assert (
+            "Frases de fecha vaga" in content
+        ), "glossary.md must contain 'Frases de fecha vaga' section"
 
 
 class TestBookingFlowPasos:
-    """booking_flow.md must have Paso 0, Paso 1, and 'primera con disponibilidad'."""
+    """booking_flow.md must have Paso 1 and key stylist/slot phrases.
 
-    def test_booking_flow_contains_paso_0(self):
-        content = _read("booking_flow.md")
-        assert "Paso 0" in content, "booking_flow.md must contain 'Paso 0'"
+    NOTE: Paso 0 was deliberately removed in commit 3a46daf (feat(prompts):
+    service disambiguation UX cleanup — PR-3). The 7-step flow now starts at Paso 1.
+    """
 
     def test_booking_flow_contains_paso_1(self):
         content = _read("booking_flow.md")
         assert "Paso 1" in content, "booking_flow.md must contain 'Paso 1'"
 
-    def test_booking_flow_contains_primera_con_disponibilidad(self):
+    def test_booking_flow_contains_paso_4(self):
+        """Paso 4 (stylist step) must be present."""
         content = _read("booking_flow.md")
-        assert "primera con disponibilidad" in content, (
-            "booking_flow.md must contain 'primera con disponibilidad' stylist option"
-        )
+        assert "Paso 4" in content, "booking_flow.md must contain 'Paso 4'"
+
+    def test_booking_flow_contains_payload_first_available_label(self):
+        """Paso 4 must reference payload.first_available_label as option 0 (R24)."""
+        content = _read("booking_flow.md")
+        assert (
+            "first_available_label" in content
+        ), "booking_flow.md must contain 'first_available_label' — the no-preference stylist slot"
 
 
 class TestCriticalRulesTwentyTwo:
-    """critical_rules.md rule 22 must reference get_next_available_options."""
+    """critical_rules.md rule [R22] must reference get_next_available_options.
+
+    NOTE: rules now use [R22] bracket format instead of old '22.' prefix (commit 8bf72b4).
+    """
 
     def test_rule_22_references_get_next_available_options(self):
         content = _read("critical_rules.md")
-        # Rule 22 must exist and reference the sanctioned tool
-        assert "get_next_available_options" in content, (
-            "critical_rules.md must reference 'get_next_available_options' in rule 22"
-        )
-        # Locate rule 22 text specifically
+        # Rule [R22] must exist and reference the sanctioned tool
+        assert (
+            "get_next_available_options" in content
+        ), "critical_rules.md must reference 'get_next_available_options' in rule [R22]"
+        # Locate rule [R22] text specifically
         lines = content.splitlines()
-        rule_22_lines = [ln for ln in lines if ln.strip().startswith("22.")]
-        assert rule_22_lines, "critical_rules.md must contain a rule starting with '22.'"
+        rule_22_lines = [ln for ln in lines if "[R22]" in ln]
+        assert rule_22_lines, "critical_rules.md must contain a rule marked '[R22]'"
         rule_22_block = " ".join(rule_22_lines)
-        assert "get_next_available_options" in rule_22_block, (
-            "Rule 22 specifically must reference 'get_next_available_options'"
-        )
+        assert (
+            "get_next_available_options" in rule_22_block
+        ), "[R22] specifically must reference 'get_next_available_options'"
 
 
 class TestToolsContractRouting:
@@ -95,13 +104,17 @@ class TestToolsContractRouting:
 
 
 class TestExamplesFile:
-    """examples.md must contain booking_flow Paso 0 citation."""
+    """examples.md must contain a safety gate example (Ejemplo 6 — R-37).
 
-    def test_examples_contains_booking_flow_paso_0_citation(self):
+    NOTE: [booking_flow Paso 0] citation was removed when Paso 0 was dropped (commit 3a46daf).
+    Ejemplo 6 is the closest structural equivalent — it shows the safety gate logic.
+    """
+
+    def test_examples_contains_safety_gate_example(self):
         content = _read("examples.md")
-        assert "[booking_flow Paso 0]" in content, (
-            "examples.md must cite '[booking_flow Paso 0]' in the example conversation"
-        )
+        assert (
+            "Ejemplo 6" in content
+        ), "examples.md must contain 'Ejemplo 6' — safety gate (R-37) example"
 
 
 class TestUpdateBookingDocstring:
@@ -109,9 +122,9 @@ class TestUpdateBookingDocstring:
 
     def test_update_booking_docstring_contains_variant_required(self):
         content = _read_tool("update_booking.py")
-        assert "variant_required" in content, (
-            "update_booking.py docstring must list 'variant_required' in next_step enumeration"
-        )
+        assert (
+            "variant_required" in content
+        ), "update_booking.py docstring must list 'variant_required' in next_step enumeration"
 
     def test_update_booking_docstring_references_glossary_length_map(self):
         content = _read_tool("update_booking.py")
@@ -132,13 +145,13 @@ class TestAudienceQualifierMapping:
         content = _read("booking_flow.md")
         lowered = content.lower()
         for qualifier in ("dama", "mujer", "señora", "caballero", "marido"):
-            assert qualifier in lowered, (
-                f"booking_flow.md Paso 2 must map the qualifier '{qualifier}'"
-            )
+            assert (
+                qualifier in lowered
+            ), f"booking_flow.md Paso 2 must map the qualifier '{qualifier}'"
         for audience in ("adult_female", "adult_male"):
-            assert audience in content, (
-                f"booking_flow.md Paso 2 mapping must reference audience '{audience}'"
-            )
+            assert (
+                audience in content
+            ), f"booking_flow.md Paso 2 mapping must reference audience '{audience}'"
 
     def test_paso2_maps_children_and_baby(self):
         content = _read("booking_flow.md")
@@ -149,9 +162,9 @@ class TestAudienceQualifierMapping:
     def test_paso2_forbids_reasking_encoded_audience(self):
         content = _read("booking_flow.md")
         lowered = content.lower()
-        assert "nunca" in lowered and ("vuelvas a preguntar" in lowered or "re-pregunt" in lowered), (
-            "Paso 2 must forbid re-asking audience when the client's phrase already encodes it"
-        )
+        assert "nunca" in lowered and (
+            "vuelvas a preguntar" in lowered or "re-pregunt" in lowered
+        ), "Paso 2 must forbid re-asking audience when the client's phrase already encodes it"
 
     def test_paso2_requires_open_question_not_enumeration(self):
         content = _read("booking_flow.md")
