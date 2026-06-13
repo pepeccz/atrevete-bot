@@ -68,7 +68,10 @@ async def state_reset(redis_client: redis.Redis) -> AsyncGenerator[StateResetHar
 @pytest.fixture
 def testing_context() -> QATestingContext:
     manager = TestingContextManager(root_path=Path.cwd())
-    return manager.load_context()
+    try:
+        return manager.load_context()
+    except FileNotFoundError as exc:
+        pytest.skip(f"QA context file not available in this environment: {exc}")
 
 
 def _make_run_identity(request: pytest.FixtureRequest) -> QARunIdentity:

@@ -130,7 +130,7 @@ async def session_with_duplicate_principal() -> AsyncGenerator:
                 INSERT INTO services (id, name, category, duration_minutes, is_active, audience, metadata)
                 VALUES (
                     :id, :name, 'HAIRDRESSING', 30, true, null,
-                    :meta::jsonb
+                    CAST(:meta AS jsonb)
                 )
                 """),
             {
@@ -274,7 +274,7 @@ async def session_with_cross_dimension_variant() -> AsyncGenerator:
                 INSERT INTO services (id, name, category, duration_minutes, is_active, audience, metadata)
                 VALUES (
                     :id, :name, 'HAIRDRESSING', 30, true, null,
-                    :meta::jsonb
+                    CAST(:meta AS jsonb)
                 )
                 """),
             {
@@ -366,7 +366,7 @@ async def session_with_operator_only_variant() -> AsyncGenerator:
                 INSERT INTO services (id, name, category, duration_minutes, is_active, audience, metadata)
                 VALUES (
                     :id, :name, 'HAIRDRESSING', 50, true, null,
-                    :meta::jsonb
+                    CAST(:meta AS jsonb)
                 )
             """),
             {

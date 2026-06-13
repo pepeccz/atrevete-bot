@@ -34,7 +34,7 @@ async def test_customer():
     """Create a test customer for use in tests."""
     customer_id = uuid4()
 
-    async for session in get_async_session():
+    async with get_async_session() as session:
         # Create test customer
         customer = Customer(
             id=customer_id,
@@ -44,17 +44,15 @@ async def test_customer():
         )
         session.add(customer)
         await session.commit()
-        break
 
     yield customer_id
 
     # Clean up
-    async for session in get_async_session():
+    async with get_async_session() as session:
         await session.execute(
             delete(Customer).where(Customer.id == customer_id)
         )
         await session.commit()
-        break
 
 
 @pytest.fixture
@@ -67,7 +65,7 @@ async def clean_test_data():
     if test_keys:
         redis_client.delete(*test_keys)
 
-    async for session in get_async_session():
+    async with get_async_session() as session:
         # Delete test conversation history
         await session.execute(
             delete(ConversationHistory).where(
@@ -75,7 +73,6 @@ async def clean_test_data():
             )
         )
         await session.commit()
-        break
 
     yield
 
@@ -84,14 +81,13 @@ async def clean_test_data():
     if test_keys:
         redis_client.delete(*test_keys)
 
-    async for session in get_async_session():
+    async with get_async_session() as session:
         await session.execute(
             delete(ConversationHistory).where(
                 ConversationHistory.conversation_id.like("test-conv-%")
             )
         )
         await session.commit()
-        break
 
 
 @pytest.mark.asyncio
@@ -174,7 +170,7 @@ async def test_full_archival_workflow_with_json_serialization(clean_test_data, t
     await archive_expired_conversations()
 
     # Step 3: Query PostgreSQL for archived messages (two-table schema)
-    async for session in get_async_session():
+    async with get_async_session() as session:
         # Query the parent ConversationHistory row
         parent_result = await session.execute(
             select(ConversationHistory)
@@ -189,7 +185,6 @@ async def test_full_archival_workflow_with_json_serialization(clean_test_data, t
             .order_by(ConversationMessage.created_at)
         )
         archived_messages = messages_result.scalars().all()
-        break
 
     # Assert: parent row exists with correct customer
     assert parent is not None
@@ -258,13 +253,12 @@ async def test_archival_with_conversation_summary(clean_test_data, test_customer
     await archive_expired_conversations()
 
     # Verify summary stored on the parent ConversationHistory row
-    async for session in get_async_session():
+    async with get_async_session() as session:
         result = await session.execute(
             select(ConversationHistory)
             .where(ConversationHistory.conversation_id == conversation_id)
         )
         parent = result.scalar_one_or_none()
-        break
 
     assert parent is not None
     assert parent.summary is not None
@@ -292,14 +286,13 @@ async def test_archival_skips_malformed_checkpoint(clean_test_data):
     await archive_expired_conversations()
 
     # Verify no conversation parent was created (nothing archived)
-    async for session in get_async_session():
+    async with get_async_session() as session:
         result = await session.execute(
             select(ConversationHistory).where(
                 ConversationHistory.conversation_id == conversation_id
             )
         )
         parent = result.scalar_one_or_none()
-        break
 
     assert parent is None
 
@@ -342,7 +335,7 @@ async def test_archival_handles_missing_customer_id(clean_test_data):
     await archive_expired_conversations()
 
     # Verify parent created with NULL customer_id, and 1 child message archived
-    async for session in get_async_session():
+    async with get_async_session() as session:
         parent_result = await session.execute(
             select(ConversationHistory).where(
                 ConversationHistory.conversation_id == conversation_id
@@ -356,7 +349,6 @@ async def test_archival_handles_missing_customer_id(clean_test_data):
             )
         )
         archived_messages = messages_result.scalars().all()
-        break
 
     assert parent is not None
     assert parent.customer_id is None

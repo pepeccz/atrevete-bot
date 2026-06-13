@@ -53,7 +53,7 @@ async def setup_database():
     """
     # Clean existing data (truncate tables in reverse dependency order)
     async with AsyncSessionLocal() as session:
-        await session.execute(text("TRUNCATE conversation_history, appointments, policies, packs, services, customers, stylists CASCADE"))
+        await session.execute(text("TRUNCATE conversation_history, appointments, policies, services, customers, stylists CASCADE"))
         await session.commit()
 
     # Seed dependencies (stylists, services)
@@ -64,7 +64,7 @@ async def setup_database():
 
     # Cleanup after test
     async with AsyncSessionLocal() as session:
-        await session.execute(text("TRUNCATE conversation_history, appointments, policies, packs, services, customers, stylists CASCADE"))
+        await session.execute(text("TRUNCATE conversation_history, appointments, policies, services, customers, stylists CASCADE"))
         await session.commit()
 
 
