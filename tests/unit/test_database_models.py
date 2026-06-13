@@ -58,8 +58,8 @@ async def setup_database():
         """)
         )
 
-        # Apply triggers
-        for table in ["stylists", "services", "packs"]:
+        # Apply triggers (packs table removed in migration 0088717d25dd)
+        for table in ["stylists", "services"]:
             # Drop trigger if exists (separate statement)
             await conn.execute(
                 text(f"DROP TRIGGER IF EXISTS update_{table}_updated_at ON {table}")
