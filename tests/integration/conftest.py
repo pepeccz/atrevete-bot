@@ -136,24 +136,6 @@ def pytest_recording_configure(config: Any, vcr: Any) -> None:
 # for that phone, matching the state captured during the original recording.
 
 
-@pytest.fixture(autouse=True, scope="module")
-async def _dispose_engine_after_module() -> None:
-    """Dispose the SQLAlchemy engine connection pool after each test module.
-
-    Tests using loop_scope="module" (e.g. test_service_catalog_integrity.py)
-    close the module event loop on teardown, which leaves the shared engine's
-    connection pool holding references to the closed loop. Disposing the pool
-    here ensures the next module gets a fresh pool on a fresh event loop.
-    """
-    yield
-    try:
-        from database.connection import engine
-
-        await engine.dispose()
-    except Exception:
-        pass  # Best-effort — never block subsequent tests
-
-
 @pytest.fixture(autouse=True)
 async def _wipe_test_phone_appointments(request: pytest.FixtureRequest) -> None:
     """Delete appointments for phone +34600000001 before each integration test.
