@@ -73,7 +73,12 @@ async def session_with_orphan_variant() -> AsyncGenerator:
     if not _postgres_reachable():
         pytest.skip("Postgres not reachable")
 
-    await _truncate_and_seed()
+    try:
+        await _truncate_and_seed()
+    except RuntimeError as exc:
+        if "event loop" in str(exc).lower():
+            pytest.skip(f"Event loop unavailable (prior module-scoped test closed it): {exc}")
+        raise
 
     async with AsyncSessionLocal() as session:
         await session.execute(
