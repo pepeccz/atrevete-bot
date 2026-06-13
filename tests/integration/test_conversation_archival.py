@@ -35,6 +35,13 @@ async def test_customer():
     customer_id = uuid4()
 
     async with get_async_session() as session:
+        # Remove any stale customer with the same phone from prior test runs
+        await session.execute(
+            delete(Customer).where(Customer.phone == "+34612345678")
+        )
+        await session.commit()
+
+    async with get_async_session() as session:
         # Create test customer
         customer = Customer(
             id=customer_id,
