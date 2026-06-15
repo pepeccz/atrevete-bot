@@ -135,6 +135,10 @@ jobs:
       - name: Comment coverage on PR
         uses: py-cov-action/python-coverage-comment-action@v3
         if: github.event_name == 'pull_request'
+        # Informational PR comment only — the coverage THRESHOLD is already enforced
+        # by the pytest step (--cov-fail-under). Its internal "No source for code"
+        # path-resolution error must not fail the build.
+        continue-on-error: true
         with:
           GITHUB_TOKEN: ${{ github.token }}
           MINIMUM_GREEN: 85
