@@ -275,19 +275,27 @@ async def test_book_creates_new_customer_and_appointment(test_stylist, test_serv
 
     phone = f"+34600{uuid4().hex[:6]}"
 
+    _start = future_start_iso()
+    _expires = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+    _offered = [{"start_iso": _start, "stylist_id": str(test_stylist), "expires_at": _expires, "turn_index": 0}]
+
     with patch(
-        "agent.tools.book.fire_and_forget_push_appointment",
+        "agent.services.gcal_push_service.fire_and_forget_push_appointment",
         new_callable=AsyncMock,
-    ) as mock_push:
+    ) as mock_push, patch(
+        "agent.tools.book.check_slot_availability",
+        new=AsyncMock(return_value={"available": True}),
+    ):
         raw = await book.coroutine(
             service_ids=[str(test_service)],
             stylist_id=str(test_stylist),
-            start_iso=future_start_iso(),
+            start_iso=_start,
             customer_full_name="María García",
             notes=None,
             confirmed=True,
             pre_book_validated=True,
-            state={"customer_phone": phone},
+            policy_accepted=True,
+            state={"customer_phone": phone, "recently_offered_slots": _offered},
         )
 
     data = parse_response(raw)
@@ -312,12 +320,19 @@ async def test_book_creates_new_customer_and_appointment(test_stylist, test_serv
         assert cust.last_name == "García"
 
     # Cleanup
+    from sqlalchemy import delete as sa_delete
+
+    from database.models import CustomerConsent
+
     async with get_async_session() as sess:
         appt = await sess.get(Appointment, data["payload"]["appointment_id"])
         if appt:
             await sess.delete(appt)
         await sess.commit()
-        cust = await sess.get(Customer, data["payload"]["customer_id"])
+        cust_id = data["payload"]["customer_id"]
+        await sess.execute(sa_delete(CustomerConsent).where(CustomerConsent.customer_id == cust_id))
+        await sess.commit()
+        cust = await sess.get(Customer, cust_id)
         if cust:
             await sess.delete(cust)
         await sess.commit()
@@ -346,16 +361,22 @@ async def test_book_reuses_existing_customer(test_stylist, test_service):
         await sess.commit()
         existing_id = existing.id
 
-    with patch("agent.tools.book.fire_and_forget_push_appointment", new_callable=AsyncMock):
+    _start2 = future_start_iso(days_ahead=6)
+    _expires2 = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+    _offered2 = [{"start_iso": _start2, "stylist_id": str(test_stylist), "expires_at": _expires2, "turn_index": 0}]
+
+    with patch("agent.services.gcal_push_service.fire_and_forget_push_appointment", new_callable=AsyncMock), \
+         patch("agent.tools.book.check_slot_availability", new=AsyncMock(return_value={"available": True})):
         raw = await book.coroutine(
             service_ids=[str(test_service)],
             stylist_id=str(test_stylist),
-            start_iso=future_start_iso(days_ahead=6),
+            start_iso=_start2,
             customer_full_name="Different Name",
             notes=None,
             confirmed=True,
             pre_book_validated=True,
-            state={"customer_phone": phone},
+            policy_accepted=True,
+            state={"customer_phone": phone, "recently_offered_slots": _offered2},
         )
 
     data = parse_response(raw)
@@ -363,6 +384,10 @@ async def test_book_reuses_existing_customer(test_stylist, test_service):
     assert str(data["payload"]["customer_id"]) == str(existing_id)
 
     # Cleanup
+    from sqlalchemy import delete as sa_delete
+
+    from database.models import CustomerConsent
+
     async with get_async_session() as sess:
         appts = (
             (await sess.execute(select(Appointment).where(Appointment.customer_id == existing_id)))
@@ -371,6 +396,8 @@ async def test_book_reuses_existing_customer(test_stylist, test_service):
         )
         for a in appts:
             await sess.delete(a)
+        await sess.commit()
+        await sess.execute(sa_delete(CustomerConsent).where(CustomerConsent.customer_id == existing_id))
         await sess.commit()
         c = await sess.get(Customer, existing_id)
         if c:
@@ -389,19 +416,27 @@ async def test_book_calls_gcal_push_after_db_commit(test_stylist, test_service):
 
     phone = f"+34622{uuid4().hex[:6]}"
 
+    _start3 = future_start_iso(days_ahead=7)
+    _expires3 = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+    _offered3 = [{"start_iso": _start3, "stylist_id": str(test_stylist), "expires_at": _expires3, "turn_index": 0}]
+
     with patch(
-        "agent.tools.book.fire_and_forget_push_appointment",
+        "agent.services.gcal_push_service.fire_and_forget_push_appointment",
         new_callable=AsyncMock,
-    ) as mock_push:
+    ) as mock_push, patch(
+        "agent.tools.book.check_slot_availability",
+        new=AsyncMock(return_value={"available": True}),
+    ):
         raw = await book.coroutine(
             service_ids=[str(test_service)],
             stylist_id=str(test_stylist),
-            start_iso=future_start_iso(days_ahead=7),
+            start_iso=_start3,
             customer_full_name="Ana López",
             notes="test note",
             confirmed=True,
             pre_book_validated=True,
-            state={"customer_phone": phone},
+            policy_accepted=True,
+            state={"customer_phone": phone, "recently_offered_slots": _offered3},
         )
 
     data = parse_response(raw)
@@ -409,6 +444,10 @@ async def test_book_calls_gcal_push_after_db_commit(test_stylist, test_service):
     mock_push.assert_called_once()
 
     # Cleanup
+    from sqlalchemy import delete as sa_delete
+
+    from database.models import CustomerConsent
+
     async with get_async_session() as sess:
         cust = (
             await sess.execute(select(Customer).where(Customer.phone == phone))
@@ -421,6 +460,8 @@ async def test_book_calls_gcal_push_after_db_commit(test_stylist, test_service):
             )
             for a in appts:
                 await sess.delete(a)
+            await sess.commit()
+            await sess.execute(sa_delete(CustomerConsent).where(CustomerConsent.customer_id == cust.id))
             await sess.commit()
             await sess.delete(cust)
             await sess.commit()
