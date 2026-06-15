@@ -1,13 +1,19 @@
 """Tests that load_system_prompt() assembles sections in required order."""
 from __future__ import annotations
 
-import importlib
-
 
 def _reload_loader():
-    """Force fresh load of loader (bypasses lru_cache)."""
+    """Force fresh assembly bypassing the lru_cache.
+
+    NOTE: must NOT use importlib.reload(m) — reloading the module recreates the
+    module-level _TtlCache class, breaking isinstance identity for any module
+    that already imported it (e.g. agent.prompts.business_hours._hours_cache),
+    which pollutes later tests in full-suite order. Clearing the lru_cache on
+    load_system_prompt achieves the same fresh-assembly goal with no pollution.
+    """
     import agent.prompts.loader as m
-    importlib.reload(m)
+
+    m.load_system_prompt.cache_clear()
     return m
 
 
