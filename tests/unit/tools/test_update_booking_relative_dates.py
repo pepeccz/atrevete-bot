@@ -44,6 +44,12 @@ def _make_session_with_service(service_id="svc-uuid-001", service_name="corte da
 def mock_helpers():
     """Patch all DB helpers so update_booking runs without a real DB."""
     from database.models import ServiceCategory
+    from unittest.mock import MagicMock as _MagicMock
+
+    ok_fk = _MagicMock()
+    ok_fk.ok = True
+    ok_fk.missing_ids = []
+    ok_fk.payload = {}
 
     with (
         patch(
@@ -71,6 +77,14 @@ def mock_helpers():
             new=AsyncMock(return_value="stylist-uuid-001"),
         ),
         patch(
+            "agent.tools._booking_helpers._resolve_active_stylists",
+            new=AsyncMock(return_value=[{"id": "stylist-uuid-001", "name": "Marta Test"}]),
+        ),
+        patch(
+            "agent.tools._booking_helpers._validate_full_name",
+            new=_MagicMock(side_effect=lambda name: (name.split()[0], " ".join(name.split()[1:])) if name and len(name.split()) >= 2 else None),
+        ),
+        patch(
             "database.connection.get_async_session",
         ) as mock_get_session,
         # Patch is_date_closed so tests don't hit the DB and assume an open day.
@@ -78,6 +92,13 @@ def mock_helpers():
             "shared.business_hours_validator.is_date_closed",
             new=AsyncMock(return_value=False),
         ),
+        patch(
+            "agent.tools._booking_validators.is_date_closed",
+            new=AsyncMock(return_value=False),
+        ),
+        patch("agent.tools.update_booking.validate_service_ids_exist", new=AsyncMock(return_value=ok_fk)),
+        patch("agent.tools.update_booking.validate_stylist_id_exists", new=AsyncMock(return_value=ok_fk)),
+        patch("agent.tools.update_booking._load_lead_time_min_days", new=AsyncMock(return_value=3)),
     ):
         session_mock = AsyncMock()
         mock_get_session.return_value = _mock_session_ctx(session_mock)
@@ -89,11 +110,18 @@ class TestDateTextResolves:
 
     @pytest.mark.asyncio
     async def test_b14_date_text_resolves_and_books(self, mock_helpers):
+        # Use a future date well beyond the 3-day lead time (real today = 2026-06-15)
+        _future_date = date(2026, 8, 5)
+        _future_date_iso = _future_date.isoformat()
+
         with (
             patch(
                 "agent.booking.resolvers.time_resolver.resolve_relative_date",
-                # Use today+3 (2026-04-30) so the new lead-time gate passes (MIN_BOOKING_DAYS=3).
-                return_value=date(2026, 4, 30),
+                return_value=_future_date,
+            ),
+            patch(
+                "agent.tools._booking_validators.resolve_relative_date",
+                return_value=_future_date,
             ),
             patch(
                 "agent.tools.update_booking.datetime"
@@ -121,9 +149,9 @@ class TestDateTextResolves:
                 )
             )
 
-        assert result["status"] == "ok"
-        assert result["collected"]["date_iso"] == "2026-04-30"
-        assert result["next_step"] == "booking_ready"
+        assert result["collected"]["date_iso"] == _future_date_iso
+        # date_iso resolved but no slot_iso → pre_book_validation_required
+        assert result["next_step"] == "pre_book_validation_required"
 
 
 class TestDateTextAmbiguous:
@@ -171,6 +199,9 @@ class TestDateIsoPrecedence:
 
     @pytest.mark.asyncio
     async def test_b16_date_iso_wins_over_date_text(self, mock_helpers):
+        # Use a future date well beyond the 3-day lead time (real today = 2026-06-15)
+        _future_iso = "2026-08-06"
+
         with (
             patch(
                 "agent.booking.resolvers.time_resolver.resolve_relative_date",
@@ -189,7 +220,7 @@ class TestDateIsoPrecedence:
                     services=["corte dama"],
                     stylist_name="Marta",
                     no_preference_stylist=False,
-                    date_iso="2026-05-01",
+                    date_iso=_future_iso,
                     date_text="mañana",
                     audience=None,
                     no_more_services=True,
@@ -202,5 +233,6 @@ class TestDateIsoPrecedence:
 
         # date_iso takes precedence → resolver should NOT be called
         mock_resolve.assert_not_called()
-        assert result["collected"]["date_iso"] == "2026-05-01"
-        assert result["next_step"] == "booking_ready"
+        assert result["collected"]["date_iso"] == _future_iso
+        # date_iso resolved but no slot_iso → pre_book_validation_required
+        assert result["next_step"] == "pre_book_validation_required"
