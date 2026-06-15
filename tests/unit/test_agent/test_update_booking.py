@@ -51,11 +51,29 @@ async def test_variant_gate_fires_with_known_audience():
 
     from database.models import ServiceCategory
 
+    _ok_fk = MagicMock()
+    _ok_fk.ok = True
+    _ok_fk.missing_ids = []
+    _ok_fk.payload = {}
+
     with (
         patch("database.connection.get_async_session", return_value=ctx),
         patch(
             "agent.tools._booking_helpers._resolve_service_ids",
             new=AsyncMock(return_value=(["service-uuid-1"], [])),
+        ),
+        patch(
+            "agent.tools._booking_helpers._resolve_service_ids_strict",
+            new=AsyncMock(return_value=([], [], [
+                {
+                    "status": "ambiguous",
+                    "axis": "variant",
+                    "service_term": "Peinado",
+                    "family_label": "Peinado",
+                    "candidates": ["Peinado", "Peinado Novia", "Peinado Fiesta"],
+                    "question_hint": "variant_required",
+                }
+            ], [])),
         ),
         patch(
             "agent.tools._booking_helpers._resolve_audience_variants",
@@ -75,6 +93,10 @@ async def test_variant_gate_fires_with_known_audience():
             "agent.tools._booking_helpers._resolve_stylist",
             new=AsyncMock(return_value=None),
         ),
+        patch(
+            "agent.tools.update_booking.validate_service_ids_exist",
+            new=AsyncMock(return_value=_ok_fk),
+        ),
     ):
         # audience IS already set — the variant gate must still fire
         data = await _call_update_booking(
@@ -86,7 +108,9 @@ async def test_variant_gate_fires_with_known_audience():
         f"Expected 'variant_required' when audience known but service is principal with variants, "
         f"got '{data['next_step']}'"
     )
-    assert data.get("payload", {}).get("variants") is not None
+    payload = data.get("payload", {})
+    # The ambiguous descriptor uses "candidates" key (not "variants")
+    assert payload.get("candidates") is not None or payload.get("variants") is not None
 
 
 # ---------------------------------------------------------------------------
@@ -103,11 +127,20 @@ async def test_stylist_required_payload_populated():
 
     from database.models import ServiceCategory
 
+    _ok_fk2 = MagicMock()
+    _ok_fk2.ok = True
+    _ok_fk2.missing_ids = []
+    _ok_fk2.payload = {}
+
     with (
         patch("database.connection.get_async_session", return_value=ctx),
         patch(
             "agent.tools._booking_helpers._resolve_service_ids",
             new=AsyncMock(return_value=(["service-uuid-1"], [])),
+        ),
+        patch(
+            "agent.tools._booking_helpers._resolve_service_ids_strict",
+            new=AsyncMock(return_value=(["service-uuid-1"], [], [], [])),
         ),
         patch(
             "agent.tools._booking_helpers._resolve_audience_variants",
@@ -128,6 +161,10 @@ async def test_stylist_required_payload_populated():
         patch(
             "agent.tools._booking_helpers._resolve_active_stylists",
             new=AsyncMock(return_value=active_first_names),
+        ),
+        patch(
+            "agent.tools.update_booking.validate_service_ids_exist",
+            new=AsyncMock(return_value=_ok_fk2),
         ),
     ):
         data = await _call_update_booking(
@@ -157,6 +194,14 @@ _FAKE_STYLIST_ID_LT = "aabbccdd-0001-0002-0003-000000000001"
 _FAKE_SERVICE_ID_LT = "aabbccdd-0001-0002-0003-000000000002"
 
 
+def _make_ok_fk():
+    r = MagicMock()
+    r.ok = True
+    r.missing_ids = []
+    r.payload = {}
+    return r
+
+
 def _lt_patches(is_date_closed_return: bool = False) -> dict:
     """Standard patch dict that gets past Steps 1-5 (service/stylist resolution)."""
     from database.models import ServiceCategory
@@ -164,6 +209,9 @@ def _lt_patches(is_date_closed_return: bool = False) -> dict:
     return {
         "agent.tools._booking_helpers._resolve_service_ids": AsyncMock(
             return_value=([_FAKE_SERVICE_ID_LT], [])
+        ),
+        "agent.tools._booking_helpers._resolve_service_ids_strict": AsyncMock(
+            return_value=([_FAKE_SERVICE_ID_LT], [], [], [])
         ),
         "agent.tools._booking_helpers._resolve_service_categories": AsyncMock(
             return_value={ServiceCategory.HAIRDRESSING}
@@ -187,6 +235,16 @@ def _lt_patches(is_date_closed_return: bool = False) -> dict:
         "shared.business_hours_validator.is_date_closed": AsyncMock(
             return_value=is_date_closed_return
         ),
+        "agent.tools._booking_validators.is_date_closed": AsyncMock(
+            return_value=is_date_closed_return
+        ),
+        "agent.tools.update_booking.validate_service_ids_exist": AsyncMock(
+            return_value=_make_ok_fk()
+        ),
+        "agent.tools.update_booking.validate_stylist_id_exists": AsyncMock(
+            return_value=_make_ok_fk()
+        ),
+        "agent.tools.update_booking._load_lead_time_min_days": AsyncMock(return_value=3),
     }
 
 
@@ -207,6 +265,7 @@ async def _call_impl(date_iso, patches_override=None, **extra_kwargs):
 
     with (
         patch("agent.tools._booking_helpers._resolve_service_ids", patches["agent.tools._booking_helpers._resolve_service_ids"]),
+        patch("agent.tools._booking_helpers._resolve_service_ids_strict", patches["agent.tools._booking_helpers._resolve_service_ids_strict"]),
         patch("agent.tools._booking_helpers._resolve_service_categories", patches["agent.tools._booking_helpers._resolve_service_categories"]),
         patch("agent.tools._booking_helpers._resolve_service_id_to_category_map", patches["agent.tools._booking_helpers._resolve_service_id_to_category_map"]),
         patch("agent.tools._booking_helpers._resolve_audience_variants", patches["agent.tools._booking_helpers._resolve_audience_variants"]),
@@ -215,6 +274,10 @@ async def _call_impl(date_iso, patches_override=None, **extra_kwargs):
         patch("agent.tools._booking_helpers._validate_full_name", patches["agent.tools._booking_helpers._validate_full_name"]),
         patch("database.connection.get_async_session", patches["database.connection.get_async_session"]),
         patch("shared.business_hours_validator.is_date_closed", patches["shared.business_hours_validator.is_date_closed"]),
+        patch("agent.tools._booking_validators.is_date_closed", patches["agent.tools._booking_validators.is_date_closed"]),
+        patch("agent.tools.update_booking.validate_service_ids_exist", patches["agent.tools.update_booking.validate_service_ids_exist"]),
+        patch("agent.tools.update_booking.validate_stylist_id_exists", patches["agent.tools.update_booking.validate_stylist_id_exists"]),
+        patch("agent.tools.update_booking._load_lead_time_min_days", patches["agent.tools.update_booking._load_lead_time_min_days"]),
     ):
         raw = await _update_booking_impl(
             services=["Corte de Mujer"],
@@ -308,6 +371,7 @@ async def test_closed_day_takes_precedence_over_lead_time():
 
     patches_override = {
         "shared.business_hours_validator.is_date_closed": AsyncMock(return_value=True),
+        "agent.tools._booking_validators.is_date_closed": AsyncMock(return_value=True),
     }
 
     data = await _call_impl(date_iso=closed_and_below_min, patches_override=patches_override)
@@ -345,11 +409,20 @@ async def test_stylist_required_payload_empty_when_no_active_stylists():
 
     from database.models import ServiceCategory
 
+    _ok_fk3 = MagicMock()
+    _ok_fk3.ok = True
+    _ok_fk3.missing_ids = []
+    _ok_fk3.payload = {}
+
     with (
         patch("database.connection.get_async_session", return_value=ctx),
         patch(
             "agent.tools._booking_helpers._resolve_service_ids",
             new=AsyncMock(return_value=(["service-uuid-1"], [])),
+        ),
+        patch(
+            "agent.tools._booking_helpers._resolve_service_ids_strict",
+            new=AsyncMock(return_value=(["service-uuid-1"], [], [], [])),
         ),
         patch(
             "agent.tools._booking_helpers._resolve_audience_variants",
@@ -370,6 +443,10 @@ async def test_stylist_required_payload_empty_when_no_active_stylists():
         patch(
             "agent.tools._booking_helpers._resolve_active_stylists",
             new=AsyncMock(return_value=[]),
+        ),
+        patch(
+            "agent.tools.update_booking.validate_service_ids_exist",
+            new=AsyncMock(return_value=_ok_fk3),
         ),
     ):
         data = await _call_update_booking(
@@ -394,11 +471,20 @@ async def test_stylist_required_payload_on_unknown_stylist():
 
     from database.models import ServiceCategory
 
+    _ok_fk4 = MagicMock()
+    _ok_fk4.ok = True
+    _ok_fk4.missing_ids = []
+    _ok_fk4.payload = {}
+
     with (
         patch("database.connection.get_async_session", return_value=ctx),
         patch(
             "agent.tools._booking_helpers._resolve_service_ids",
             new=AsyncMock(return_value=(["service-uuid-1"], [])),
+        ),
+        patch(
+            "agent.tools._booking_helpers._resolve_service_ids_strict",
+            new=AsyncMock(return_value=(["service-uuid-1"], [], [], [])),
         ),
         patch(
             "agent.tools._booking_helpers._resolve_audience_variants",
@@ -419,6 +505,10 @@ async def test_stylist_required_payload_on_unknown_stylist():
         patch(
             "agent.tools._booking_helpers._resolve_active_stylists",
             new=AsyncMock(return_value=active_first_names),
+        ),
+        patch(
+            "agent.tools.update_booking.validate_service_ids_exist",
+            new=AsyncMock(return_value=_ok_fk4),
         ),
     ):
         data = await _call_update_booking(
@@ -460,6 +550,9 @@ def _pb_patches(stylist_id=_FAKE_STYLIST_ID_PB) -> dict:
         "agent.tools._booking_helpers._resolve_service_ids": AsyncMock(
             return_value=([_FAKE_SERVICE_ID_PB], [])
         ),
+        "agent.tools._booking_helpers._resolve_service_ids_strict": AsyncMock(
+            return_value=([_FAKE_SERVICE_ID_PB], [], [], [])
+        ),
         "agent.tools._booking_helpers._resolve_service_categories": AsyncMock(
             return_value={ServiceCategory.HAIRDRESSING}
         ),
@@ -475,7 +568,19 @@ def _pb_patches(stylist_id=_FAKE_STYLIST_ID_PB) -> dict:
             return_value=("Juan", "García")
         ),
         "shared.business_hours_validator.is_date_closed": AsyncMock(return_value=False),
+        # Also patch at the validators module level where is_date_closed is bound
+        "agent.tools._booking_validators.is_date_closed": AsyncMock(return_value=False),
         "database.connection.get_async_session": MagicMock(return_value=ctx_mock),
+        "agent.tools.update_booking.validate_service_ids_exist": AsyncMock(
+            return_value=_make_ok_fk()
+        ),
+        "agent.tools.update_booking.validate_stylist_id_exists": AsyncMock(
+            return_value=_make_ok_fk()
+        ),
+        "agent.tools.update_booking._load_lead_time_min_days": AsyncMock(return_value=3),
+        "agent.tools.update_booking.get_settings": MagicMock(
+            return_value=MagicMock(POLICY_VERSION="1.0", POLICY_URL="https://example.com")
+        ),
     }
 
 
@@ -492,13 +597,23 @@ def _build_avail_message(slot_iso: str, stylist_id: str, status: str = "ok") -> 
     return msg
 
 
+def _make_offered_slots(slot_iso, stylist_id):
+    """Build a recently_offered_slots entry for the given slot."""
+    from datetime import UTC, datetime, timedelta
+    expires = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+    return [{"start_iso": slot_iso, "stylist_id": stylist_id, "expires_at": expires, "turn_index": 0}]
+
+
 async def _call_pb_impl(slot_iso, messages=None, stylist_id=_FAKE_STYLIST_ID_PB, **extra):
     from agent.tools.update_booking import _update_booking_impl
 
     patches = _pb_patches(stylist_id=stylist_id)
+    # Build recently_offered_slots so J3 slot-binding guard passes when slot_iso is given
+    offered = _make_offered_slots(slot_iso, stylist_id) if slot_iso else []
 
     with (
         patch("agent.tools._booking_helpers._resolve_service_ids", patches["agent.tools._booking_helpers._resolve_service_ids"]),
+        patch("agent.tools._booking_helpers._resolve_service_ids_strict", patches["agent.tools._booking_helpers._resolve_service_ids_strict"]),
         patch("agent.tools._booking_helpers._resolve_service_categories", patches["agent.tools._booking_helpers._resolve_service_categories"]),
         patch("agent.tools._booking_helpers._resolve_audience_variants", patches["agent.tools._booking_helpers._resolve_audience_variants"]),
         patch("agent.tools._booking_helpers._resolve_stylist", patches["agent.tools._booking_helpers._resolve_stylist"]),
@@ -507,6 +622,11 @@ async def _call_pb_impl(slot_iso, messages=None, stylist_id=_FAKE_STYLIST_ID_PB,
         patch("agent.tools._booking_helpers._validate_full_name", patches["agent.tools._booking_helpers._validate_full_name"]),
         patch("shared.business_hours_validator.is_date_closed", patches["shared.business_hours_validator.is_date_closed"]),
         patch("database.connection.get_async_session", patches["database.connection.get_async_session"]),
+        patch("agent.tools.update_booking.validate_service_ids_exist", patches["agent.tools.update_booking.validate_service_ids_exist"]),
+        patch("agent.tools.update_booking.validate_stylist_id_exists", patches["agent.tools.update_booking.validate_stylist_id_exists"]),
+        patch("agent.tools._booking_validators.is_date_closed", patches["agent.tools._booking_validators.is_date_closed"]),
+        patch("agent.tools.update_booking._load_lead_time_min_days", patches["agent.tools.update_booking._load_lead_time_min_days"]),
+        patch("agent.tools.update_booking.get_settings", patches["agent.tools.update_booking.get_settings"]),
     ):
         raw = await _update_booking_impl(
             services=["Corte de Mujer"],
@@ -523,6 +643,8 @@ async def _call_pb_impl(slot_iso, messages=None, stylist_id=_FAKE_STYLIST_ID_PB,
             customer_known=True,
             slot_iso=slot_iso,
             messages=messages or [],
+            recently_offered_slots=offered,
+            policy_accepted=True,
             **extra,
         )
     return json.loads(raw)

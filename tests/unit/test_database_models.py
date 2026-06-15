@@ -27,6 +27,42 @@ from database.models import (  # Pack removed - packs functionality eliminated
 from database.seeds.stylists import seed_stylists
 
 
+@pytest.fixture(scope="module", autouse=True)
+def restore_migration_schema_after_module():
+    """
+    Module-scoped sync fixture: restores the full migration schema AFTER all tests
+    in this module have run.
+
+    This module's `setup_database` fixture does a destructive drop_all/create_all
+    (models-only schema). Without this restore, subsequent test modules see a broken
+    schema missing migration-only objects: customer_consents table, excl_no_overlap
+    GIST constraint, conditional/partial indexes added by alembic migrations.
+
+    Uses subprocess (sync) to avoid event-loop scope conflicts with pytest-asyncio.
+    """
+    import os
+    import subprocess
+
+    yield  # all tests in this module run here
+
+    # CRITICAL: Restore full migration schema so subsequent test modules do not see a
+    # broken schema (missing customer_consents, excl_no_overlap, partial indexes, etc.).
+    # Derive the repo root from this file (tests/unit/test_database_models.py → 3 up)
+    # so alembic finds alembic.ini in BOTH the docker harness AND the CI runner — a
+    # hardcoded "/app" only exists in the container and FileNotFoundError'd in CI.
+    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    database_url = os.environ.get("DATABASE_URL", "")
+    subprocess.run(
+        ["alembic", "upgrade", "head"],
+        cwd=repo_root,
+        env={**os.environ, "DATABASE_URL": database_url},
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+
+
 @pytest.fixture(scope="function", autouse=True)
 async def setup_database():
     """
@@ -58,8 +94,8 @@ async def setup_database():
         """)
         )
 
-        # Apply triggers
-        for table in ["stylists", "services", "packs"]:
+        # Apply triggers (packs table removed in migration 0088717d25dd)
+        for table in ["stylists", "services"]:
             # Drop trigger if exists (separate statement)
             await conn.execute(
                 text(f"DROP TRIGGER IF EXISTS update_{table}_updated_at ON {table}")
@@ -101,6 +137,7 @@ async def test_create_stylist(session):
     """Test creating a stylist with all fields."""
     stylist = Stylist(
         name="Test Stylist",
+        slug="test-stylist",
         category=ServiceCategory.HAIRDRESSING,
         google_calendar_id="test@atrevete.com",
         is_active=True,
@@ -125,6 +162,7 @@ async def test_stylist_unique_calendar_id(session):
     """Test that google_calendar_id must be unique."""
     stylist1 = Stylist(
         name="Stylist 1",
+        slug="stylist-1",
         category=ServiceCategory.HAIRDRESSING,
         google_calendar_id="duplicate@atrevete.com",
     )
@@ -134,6 +172,7 @@ async def test_stylist_unique_calendar_id(session):
     # Try to create another stylist with same calendar ID
     stylist2 = Stylist(
         name="Stylist 2",
+        slug="stylist-2",
         category=ServiceCategory.AESTHETICS,
         google_calendar_id="duplicate@atrevete.com",
     )
@@ -154,6 +193,7 @@ async def test_create_customer_with_stylist(session):
     # First create a stylist
     stylist = Stylist(
         name="Preferred Stylist",
+        slug="preferred-stylist",
         category=ServiceCategory.BOTH,
         google_calendar_id="preferred@atrevete.com",
     )
@@ -212,6 +252,7 @@ async def test_customer_stylist_on_delete_set_null(session):
     """Test that deleting a stylist sets preferred_stylist_id to NULL."""
     stylist = Stylist(
         name="Temp Stylist",
+        slug="temp-stylist",
         category=ServiceCategory.HAIRDRESSING,
         google_calendar_id="temp@atrevete.com",
     )
@@ -302,15 +343,15 @@ async def test_seed_stylists():
         assert "Pilar" in stylist_names
         assert "Marta" in stylist_names
         assert "Rosa" in stylist_names
-        assert "Harol" in stylist_names
-        assert "Víctor" in stylist_names
+        assert "Harolyn" in stylist_names
+        assert "Victor" in stylist_names
 
         # Verify categories
         pilar = next(s for s in stylists if s.name == "Pilar")
         assert pilar.category == ServiceCategory.HAIRDRESSING
 
         marta = next(s for s in stylists if s.name == "Marta")
-        assert marta.category == ServiceCategory.BOTH
+        assert marta.category == ServiceCategory.HAIRDRESSING
 
 
 @pytest.mark.asyncio

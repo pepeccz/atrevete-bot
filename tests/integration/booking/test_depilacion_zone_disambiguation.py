@@ -34,7 +34,7 @@ async def test_depilacion_principal_exists_post_migration(db_with_seeds):
         text(
             "SELECT COUNT(*) FROM services "
             "WHERE name = 'Depilación' "
-            "AND metadata_->>'service_type' = 'principal'"
+            "AND metadata->>'service_type' = 'principal'"
         )
     )
     count = result.scalar()
@@ -48,7 +48,7 @@ async def test_depilacion_principal_exists_post_migration(db_with_seeds):
         text(
             "SELECT COUNT(*) FROM services "
             "WHERE name = 'Depilación de Piernas Enteras' "
-            "AND metadata_->>'service_type' = 'principal'"
+            "AND metadata->>'service_type' = 'principal'"
         )
     )
     old_count = result_old.scalar()
@@ -68,7 +68,7 @@ async def test_piernas_enteras_variant_exists(db_with_seeds):
         text(
             "SELECT COUNT(*) FROM services "
             "WHERE name = 'Piernas Enteras' "
-            "AND metadata_->>'parent_service_name' = 'Depilación'"
+            "AND metadata->>'parent_service_name' = 'Depilación'"
         )
     )
     count = result.scalar()
@@ -86,8 +86,7 @@ async def test_depilacion_has_twelve_variants(db_with_seeds):
 
     result = await db_with_seeds.execute(
         text(
-            "SELECT COUNT(*) FROM services "
-            "WHERE metadata_->>'parent_service_name' = 'Depilación'"
+            "SELECT COUNT(*) FROM services " "WHERE metadata->>'parent_service_name' = 'Depilación'"
         )
     )
     count = result.scalar()
@@ -137,7 +136,9 @@ async def test_depilacion_candidates_include_piernas_enteras(db_with_seeds):
     """Candidates for 'depilación' must include the new 'Piernas Enteras' variant (PR-1)."""
     from agent.tools._booking_helpers import _resolve_service_ids_strict
 
-    _, _, ambiguous_descriptors, _ = await _resolve_service_ids_strict(db_with_seeds, ["depilación"])
+    _, _, ambiguous_descriptors, _ = await _resolve_service_ids_strict(
+        db_with_seeds, ["depilación"]
+    )
 
     assert len(ambiguous_descriptors) > 0, "Expected ambiguous descriptor for 'depilación'"
     candidates = ambiguous_descriptors[0]["candidates"]

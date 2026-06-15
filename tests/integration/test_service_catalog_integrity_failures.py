@@ -73,7 +73,12 @@ async def session_with_orphan_variant() -> AsyncGenerator:
     if not _postgres_reachable():
         pytest.skip("Postgres not reachable")
 
-    await _truncate_and_seed()
+    try:
+        await _truncate_and_seed()
+    except RuntimeError as exc:
+        if "event loop" in str(exc).lower():
+            pytest.skip(f"Event loop unavailable (prior module-scoped test closed it): {exc}")
+        raise
 
     async with AsyncSessionLocal() as session:
         await session.execute(
@@ -130,7 +135,7 @@ async def session_with_duplicate_principal() -> AsyncGenerator:
                 INSERT INTO services (id, name, category, duration_minutes, is_active, audience, metadata)
                 VALUES (
                     :id, :name, 'HAIRDRESSING', 30, true, null,
-                    :meta::jsonb
+                    CAST(:meta AS jsonb)
                 )
                 """),
             {
@@ -274,7 +279,7 @@ async def session_with_cross_dimension_variant() -> AsyncGenerator:
                 INSERT INTO services (id, name, category, duration_minutes, is_active, audience, metadata)
                 VALUES (
                     :id, :name, 'HAIRDRESSING', 30, true, null,
-                    :meta::jsonb
+                    CAST(:meta AS jsonb)
                 )
                 """),
             {
@@ -366,7 +371,7 @@ async def session_with_operator_only_variant() -> AsyncGenerator:
                 INSERT INTO services (id, name, category, duration_minutes, is_active, audience, metadata)
                 VALUES (
                     :id, :name, 'HAIRDRESSING', 50, true, null,
-                    :meta::jsonb
+                    CAST(:meta AS jsonb)
                 )
             """),
             {

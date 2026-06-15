@@ -67,6 +67,7 @@ async def ambiguous_services(db_session):
         db_session.add(svc)
 
     await db_session.flush()
+    await db_session.commit()
 
     yield {"family": family_key, "variants": variants}
 
@@ -74,6 +75,7 @@ async def ambiguous_services(db_session):
         delete(Service).where(Service.name.in_(variant_names + [family_key]))
     )
     await db_session.flush()
+    await db_session.commit()
 
 
 @pytest.mark.asyncio

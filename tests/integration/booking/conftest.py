@@ -1,8 +1,9 @@
 """Integration fixtures for booking regression tests (PR-4 / Slice 4).
 
 Fixtures:
-  - db_with_seeds: session-scoped async DB session. Skips gracefully if Postgres
-    is unreachable (same pattern used across the integration suite).
+  - db_with_seeds: session-scoped async DB session with services catalog seeded.
+    Skips gracefully if Postgres is unreachable (same pattern used across the
+    integration suite).
   - stub_llm: simple callable that returns canned tool-call responses without
     hitting a real LLM. Suitable for structural prompt assertions.
   - conv_factory: helper that builds a minimal conversation state dict for
@@ -13,27 +14,43 @@ Refs: design §2 Slice 4, tasks 4.1
 
 from __future__ import annotations
 
+import os
+import re
+import socket
 from typing import Any
 from uuid import uuid4
 
 import pytest
 
 # ---------------------------------------------------------------------------
-# Postgres reachability probe — shared graceful-skip helper
+# Postgres reachability probe — reads port from DATABASE_URL env var
 # ---------------------------------------------------------------------------
 
 _POSTGRES_REACHABLE: bool | None = None  # cached per session
 
 
+def _db_host_port() -> tuple[str, int]:
+    """Extract host and port from DATABASE_URL env var.
+
+    Falls back to localhost:5432 when DATABASE_URL is absent or unparseable.
+    Supports the asyncpg URL scheme used in CI:
+        postgresql+asyncpg://user:pass@host:port/dbname
+    """
+    url = os.environ.get("DATABASE_URL", "")
+    m = re.search(r"@([^:/]+):(\d+)/", url)
+    if m:
+        return m.group(1), int(m.group(2))
+    return "localhost", 5432
+
+
 def _postgres_is_reachable() -> bool:
-    """Probe the test DB once per session. Returns False if unreachable."""
+    """Probe the configured test DB host:port once per session."""
     global _POSTGRES_REACHABLE
     if _POSTGRES_REACHABLE is not None:
         return _POSTGRES_REACHABLE
+    host, port = _db_host_port()
     try:
-        import socket
-
-        s = socket.create_connection(("localhost", 5432), timeout=1)
+        s = socket.create_connection((host, port), timeout=2)
         s.close()
         _POSTGRES_REACHABLE = True
     except OSError:
@@ -42,21 +59,67 @@ def _postgres_is_reachable() -> bool:
 
 
 # ---------------------------------------------------------------------------
-# db_with_seeds — session-scoped async DB session (skips if no Postgres)
+# _seed_catalog — idempotent one-time seeding helper (module-scoped)
+# ---------------------------------------------------------------------------
+
+_CATALOG_SEEDED: bool = False  # module-level flag, reset per process
+
+
+async def _ensure_catalog_seeded() -> None:
+    """Seed the services catalog if the table is empty.
+
+    Idempotent: checks row count first; only seeds when the table is empty.
+    This avoids TRUNCATE (which would cascade to appointments) while still
+    guaranteeing a seeded state for CI where the test DB starts empty.
+    """
+    global _CATALOG_SEEDED
+    if _CATALOG_SEEDED:
+        return
+
+    from sqlalchemy import text
+
+    from database.connection import get_async_session
+    from database.seeds.services import seed_services
+    from database.seeds.stylists import seed_stylists
+
+    async with get_async_session() as s:
+        row = await s.execute(text("SELECT COUNT(*) FROM services"))
+        count = row.scalar()
+
+    if count == 0:
+        await seed_services()
+        await seed_stylists()
+
+    _CATALOG_SEEDED = True
+
+
+# ---------------------------------------------------------------------------
+# db_with_seeds — function-scoped async DB session, catalog pre-seeded
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture
 async def db_with_seeds():
-    """Async session connected to the test DB (post-alembic-upgrade state).
+    """Async session connected to the test DB with the service catalog seeded.
 
     Function-scoped (matches asyncio_default_fixture_loop_scope="function" in pyproject.toml).
-    Skips the test gracefully when Postgres is not reachable (local dev without
-    Docker or CI without DB service). The skip matches the pattern established
-    by PR-2 DB-dependent tests.
+
+    Lifecycle:
+    1. Skip gracefully when Postgres is not reachable (local dev without Docker
+       or CI without DB service).
+    2. Seed services + stylists if the services table is empty (idempotent).
+    3. Yield a fresh session for the test body.
+
+    The seed step only runs once per process (module-level flag). Subsequent
+    tests in the same session reuse the already-seeded catalog.
     """
     if not _postgres_is_reachable():
         pytest.skip("Postgres not reachable — skipping DB-dependent integration test")
+
+    try:
+        await _ensure_catalog_seeded()
+    except Exception as exc:
+        pytest.skip(f"Catalog seed failed ({type(exc).__name__}: {exc})")
 
     try:
         from database.connection import get_async_session

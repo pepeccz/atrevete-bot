@@ -974,7 +974,11 @@ NOTIFICATION_CATEGORIES = {
         "confirmation_received",
         "auto_cancelled",
         "confirmation_failed",
+        "confirmation_retry",
+        "confirmation_permanently_failed",
         "reminder_sent",
+        "reminder_failed",
+        "reminder_permanently_failed",
     ],
     "escalaciones": [
         "escalation_manual",
@@ -982,6 +986,10 @@ NOTIFICATION_CATEGORIES = {
         "escalation_auto",
         "escalation_medical",
         "escalation_ambiguity",
+    ],
+    "sistema": [
+        "conversation_paused_reminder",
+        "gcal_push_failed",
     ],
 }
 

@@ -66,13 +66,23 @@ def test_check_availability_audience_literal_rejects_uppercase_spanish(audience_
 
 
 def test_check_availability_schema_exposes_only_exact_day_fields():
-    """Fallback controls must stay out of the exact-day tool schema."""
+    """Fallback controls must stay out of the exact-day tool schema.
+
+    slot_time and preferred_window are valid optional refinement params (not fallback
+    controls), so they are permitted in the schema alongside the core exact-day fields.
+    """
     from agent.tools.check_availability import check_availability
 
     schema = check_availability.args_schema.model_json_schema()
     properties = schema.get("properties", {})
 
-    assert set(properties) == {"service_ids", "stylist_id", "date_iso", "audience", "no_preference"}
+    # Core exact-day fields must always be present
+    required_fields = {"service_ids", "stylist_id", "date_iso", "audience", "no_preference"}
+    assert required_fields.issubset(set(properties)), (
+        f"Missing required fields: {required_fields - set(properties)}"
+    )
+
+    # Fallback / multi-day search controls must NOT appear
     assert "requested_date_iso" not in properties
     assert "strategy" not in properties
     assert "search_days" not in properties

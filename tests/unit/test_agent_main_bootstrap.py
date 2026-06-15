@@ -37,23 +37,38 @@ class _FakeBatcher:
 
 
 def test_agent_main_uses_authoritative_graph_factory():
-    source = Path("agent/main.py").read_text(encoding="utf-8")
+    """agent/main.py must import create_graph from agent.graph (create_agent rewrite).
 
-    assert "from agent.graphs.conversation_flow import create_graph" in source
-    assert "graph = create_graph(checkpointer=checkpointer, store=store)" in source
+    NOTE: old path was agent.graphs.conversation_flow (pre-create_agent architecture).
+    Current path is agent.graph (commit 8bf72b4 — create_agent rewrite).
+    """
+    repo_root = Path(__file__).parent.parent.parent
+    source = (repo_root / "agent" / "main.py").read_text(encoding="utf-8")
+
+    assert "from agent.graph import create_graph" in source
 
 
 @pytest.mark.asyncio
 async def test_subscribe_to_incoming_messages_uses_authoritative_runtime_graph():
     fake_graph = MagicMock()
+    # The state seed already contains 1 HumanMessage (messages_before=1).
+    # The freshness guard requires messages_after > messages_before AND last_role == "assistant".
+    # Return 2 messages: original human + new AI reply so the guard passes.
     fake_graph.ainvoke = AsyncMock(
         return_value={
-            "messages": [{"role": "assistant", "content": "Hola, soy Maite"}],
+            "messages": [
+                {"role": "human", "content": "Hola"},
+                {"role": "assistant", "content": "Hola, soy Maite"},
+            ],
             "current_mode": "GREETING",
             "last_node": "summarize",
         }
     )
-    settings = SimpleNamespace(MESSAGE_BATCH_WINDOW_SECONDS=0, USE_REDIS_STREAMS=True)
+    settings = SimpleNamespace(
+        MESSAGE_BATCH_WINDOW_SECONDS=0,
+        USE_REDIS_STREAMS=True,
+        REDIS_URL="redis://localhost:6379/0",  # required by get_checkpointer in main.py
+    )
     # Fake module with current agent.checkpointer API (get_checkpointer / setup_checkpointer)
     fake_cm = MagicMock()
     fake_cm.__aenter__ = AsyncMock(return_value="checkpoint")
@@ -91,7 +106,8 @@ async def test_subscribe_to_incoming_messages_uses_authoritative_runtime_graph()
         ):
             await agent_main.subscribe_to_incoming_messages()
 
-    mock_create_graph.assert_called_once_with(checkpointer="checkpoint", store=None)
+    # agent/main.py calls create_graph(checkpointer=saver) without store kwarg
+    mock_create_graph.assert_called_once_with(checkpointer="checkpoint")
 
     invoked_state = fake_graph.ainvoke.await_args.args[0]
     invoked_config = fake_graph.ainvoke.await_args.kwargs["config"]
@@ -101,7 +117,8 @@ async def test_subscribe_to_incoming_messages_uses_authoritative_runtime_graph()
     assert invoked_state["user_message"] == "Hola"
     assert invoked_state["pending_whatsapp_name"] == "Pepe Garcia"
     assert "customer_name" not in invoked_state
-    assert invoked_config["configurable"]["thread_id"] == "conv-bootstrap-001"
+    # thread_id is prefixed with "v2:" in production (create_agent rewrite namespacing)
+    assert invoked_config["configurable"]["thread_id"] == "v2:conv-bootstrap-001"
 
     mock_publish.assert_awaited_once_with(
         "outgoing_messages",

@@ -268,7 +268,7 @@ async def stylists_mixed(db_session):
 
     from sqlalchemy import delete
 
-    from database.models import Stylist
+    from database.models import ServiceCategory, Stylist
 
     names = [
         "Zara Estilista Test",
@@ -281,10 +281,13 @@ async def stylists_mixed(db_session):
     await db_session.flush()
 
     for i, name in enumerate(names):
+        slug = name.lower().replace(" ", "-")
         db_session.add(
             Stylist(
                 id=uuid4(),
                 name=name,
+                slug=slug,
+                category=ServiceCategory.HAIRDRESSING,
                 is_active=(i < 3),  # first 3 active, last inactive
             )
         )
@@ -303,7 +306,7 @@ async def no_active_stylists(db_session):
 
     from sqlalchemy import delete
 
-    from database.models import Stylist
+    from database.models import ServiceCategory, Stylist
 
     names = ["Solo Inactiva Test A", "Solo Inactiva Test B"]
 
@@ -311,7 +314,16 @@ async def no_active_stylists(db_session):
     await db_session.flush()
 
     for name in names:
-        db_session.add(Stylist(id=uuid4(), name=name, is_active=False))
+        slug = name.lower().replace(" ", "-")
+        db_session.add(
+            Stylist(
+                id=uuid4(),
+                name=name,
+                slug=slug,
+                category=ServiceCategory.HAIRDRESSING,
+                is_active=False,
+            )
+        )
     await db_session.flush()
 
     yield names

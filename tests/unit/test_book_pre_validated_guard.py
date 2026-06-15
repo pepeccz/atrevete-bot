@@ -96,7 +96,24 @@ async def test_book_pre_book_validated_default_is_false() -> None:
 SERVICE_ID_T10 = "00000000-0000-0000-0000-000000000001"
 STYLIST_ID_T10 = "00000000-0000-0000-0000-000000000002"
 START_ISO_T10 = "2026-05-10T10:00:00+02:00"
-STATE_T10 = {"customer_phone": "+34611000050"}
+STATE_T10 = {
+    "customer_phone": "+34611000050",
+    "recently_offered_slots": [
+        {
+            "start_iso": START_ISO_T10,
+            "stylist_id": STYLIST_ID_T10,
+            "expires_at": "2099-01-01T00:00:00+00:00",
+        }
+    ],
+}
+
+
+def _make_ok_fk():
+    ok = MagicMock()
+    ok.ok = True
+    ok.missing_ids = []
+    ok.payload = {}
+    return ok
 
 
 def _make_session_ctx_t10(duration=30):
@@ -121,6 +138,7 @@ async def test_book_rechecks_availability_despite_pre_book_validated():
     If the slot is no longer available, book must return rejected + reoffer_slots.
     """
     ctx = _make_session_ctx_t10()
+    ok_fk = _make_ok_fk()
 
     with (
         patch("database.connection.get_async_session", return_value=ctx),
@@ -128,6 +146,8 @@ async def test_book_rechecks_availability_despite_pre_book_validated():
             "agent.tools.book.check_slot_availability",
             new=AsyncMock(return_value={"available": False}),
         ),
+        patch("agent.tools.book.validate_service_ids_exist", new=AsyncMock(return_value=ok_fk)),
+        patch("agent.tools.book.validate_stylist_id_exists", new=AsyncMock(return_value=ok_fk)),
     ):
         result = await book.coroutine(
             service_ids=[SERVICE_ID_T10],
@@ -152,6 +172,7 @@ async def test_book_rechecks_availability_despite_pre_book_validated():
 async def test_book_proceeds_when_recheck_passes():
     """B3: When availability recheck passes (available=True), booking proceeds normally."""
     ctx = _make_session_ctx_t10()
+    ok_fk = _make_ok_fk()
 
     with (
         patch("database.connection.get_async_session", return_value=ctx),
@@ -159,6 +180,8 @@ async def test_book_proceeds_when_recheck_passes():
             "agent.tools.book.check_slot_availability",
             new=AsyncMock(return_value={"available": True}),
         ),
+        patch("agent.tools.book.validate_service_ids_exist", new=AsyncMock(return_value=ok_fk)),
+        patch("agent.tools.book.validate_stylist_id_exists", new=AsyncMock(return_value=ok_fk)),
     ):
         result = await book.coroutine(
             service_ids=[SERVICE_ID_T10],

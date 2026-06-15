@@ -94,6 +94,11 @@ def run_migrations_online() -> None:
         )
 
         context.run_migrations()
+        # psycopg3 uses autocommit=False by default; the connection context manager
+        # rolls back on exit rather than committing. Explicit commit is required so
+        # that DDL changes (ALTER TABLE, CREATE TABLE, etc.) and the updated
+        # alembic_version row are actually persisted to the database.
+        connection.commit()
 
 
 if context.is_offline_mode():

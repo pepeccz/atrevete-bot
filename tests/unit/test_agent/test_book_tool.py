@@ -160,6 +160,11 @@ async def test_book_returns_calendar_link_on_success():
     settings_mock.POLICY_VERSION = "1.0"
     settings_mock.POLICY_URL = "https://example.com"
 
+    ok_fk = MagicMock()
+    ok_fk.ok = True
+    ok_fk.missing_ids = []
+    ok_fk.payload = {}
+
     with (
         patch("database.connection.get_async_session", side_effect=make_session),
         patch(
@@ -173,6 +178,9 @@ async def test_book_returns_calendar_link_on_success():
             return_value={"available": True},
         ),
         patch("agent.tools.book.get_settings", return_value=settings_mock),
+        patch("agent.tools.book.validate_service_ids_exist", new=AsyncMock(return_value=ok_fk)),
+        patch("agent.tools.book.validate_stylist_id_exists", new=AsyncMock(return_value=ok_fk)),
+        patch("agent.tools.book.accept_policy", new=AsyncMock()),
     ):
         result = await book.coroutine(
             service_ids=[str(service_uuid)],
@@ -181,8 +189,18 @@ async def test_book_returns_calendar_link_on_success():
             customer_full_name="Ana García",
             confirmed=True,
             pre_book_validated=True,
+            policy_accepted=True,
             notes="Sin fragancia",
-            state={"customer_phone": "+5491112345678"},
+            state={
+                "customer_phone": "+5491112345678",
+                "recently_offered_slots": [
+                    {
+                        "start_iso": "2026-05-01T10:00:00+00:00",
+                        "stylist_id": str(stylist_uuid),
+                        "expires_at": "2099-01-01T00:00:00+00:00",
+                    }
+                ],
+            },
         )
 
     payload = json.loads(result)

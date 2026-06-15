@@ -58,10 +58,13 @@ class TestRedisClient:
             assert mock_from_url.call_count == 1
 
     def test_redis_client_configured_with_pool(self):
-        """Test that Redis client is configured with connection pool."""
+        """Test that Redis client is configured with connection pool (no password)."""
         with patch("shared.redis_client.redis.from_url") as mock_from_url:
             with patch("shared.redis_client.get_settings") as mock_settings:
                 mock_settings.return_value.REDIS_URL = "redis://test:6379/0"
+                # Explicitly set empty password so the code skips password= kwarg.
+                # MagicMock() would return a truthy object for any attribute — must be falsy.
+                mock_settings.return_value.REDIS_PASSWORD = ""
 
                 get_redis_client.cache_clear()
                 get_redis_client()
@@ -119,9 +122,7 @@ class TestPublishToChannel:
     async def test_redis_connection_error_raises_503(self):
         """Test that Redis connection errors raise HTTPException 503."""
         mock_client = AsyncMock()
-        mock_client.publish = AsyncMock(
-            side_effect=RedisConnectionError("Connection refused")
-        )
+        mock_client.publish = AsyncMock(side_effect=RedisConnectionError("Connection refused"))
 
         with patch("shared.redis_client.get_redis_client", return_value=mock_client):
             message = {"conversation_id": "123", "text": "Hello"}
@@ -215,9 +216,7 @@ class TestAddToStream:
     async def test_add_message_redis_error_raises_503(self):
         """Test that Redis connection errors raise HTTPException 503."""
         mock_client = AsyncMock()
-        mock_client.xadd = AsyncMock(
-            side_effect=RedisConnectionError("Connection refused")
-        )
+        mock_client.xadd = AsyncMock(side_effect=RedisConnectionError("Connection refused"))
 
         with patch("shared.redis_client.get_redis_client", return_value=mock_client):
             message = {"conversation_id": "123"}
@@ -282,12 +281,23 @@ class TestReadFromStream:
         """Test that messages are read from stream successfully."""
         mock_client = AsyncMock()
         # Simulate XREADGROUP response format
-        mock_client.xreadgroup = AsyncMock(return_value=[
-            (INCOMING_STREAM, [
-                ("1234567890123-0", {"data": '{"conversation_id": "123", "text": "Hello"}'}),
-                ("1234567890123-1", {"data": '{"conversation_id": "456", "text": "World"}'}),
-            ])
-        ])
+        mock_client.xreadgroup = AsyncMock(
+            return_value=[
+                (
+                    INCOMING_STREAM,
+                    [
+                        (
+                            "1234567890123-0",
+                            {"data": '{"conversation_id": "123", "text": "Hello"}'},
+                        ),
+                        (
+                            "1234567890123-1",
+                            {"data": '{"conversation_id": "456", "text": "World"}'},
+                        ),
+                    ],
+                )
+            ]
+        )
 
         with patch("shared.redis_client.get_redis_client", return_value=mock_client):
             result = await read_from_stream(
@@ -307,9 +317,7 @@ class TestReadFromStream:
         mock_client.xreadgroup = AsyncMock(return_value=None)
 
         with patch("shared.redis_client.get_redis_client", return_value=mock_client):
-            result = await read_from_stream(
-                INCOMING_STREAM, CONSUMER_GROUP, "consumer-1"
-            )
+            result = await read_from_stream(INCOMING_STREAM, CONSUMER_GROUP, "consumer-1")
 
             assert result == []
 
@@ -322,9 +330,7 @@ class TestReadFromStream:
         )
 
         with patch("shared.redis_client.get_redis_client", return_value=mock_client):
-            result = await read_from_stream(
-                INCOMING_STREAM, CONSUMER_GROUP, "consumer-1"
-            )
+            result = await read_from_stream(INCOMING_STREAM, CONSUMER_GROUP, "consumer-1")
 
             assert result == []
 
@@ -332,9 +338,7 @@ class TestReadFromStream:
     async def test_read_connection_error_raises_503(self):
         """Test that connection errors raise HTTPException 503."""
         mock_client = AsyncMock()
-        mock_client.xreadgroup = AsyncMock(
-            side_effect=RedisConnectionError("Connection refused")
-        )
+        mock_client.xreadgroup = AsyncMock(side_effect=RedisConnectionError("Connection refused"))
 
         with patch("shared.redis_client.get_redis_client", return_value=mock_client):
             with pytest.raises(HTTPException) as exc_info:
@@ -353,9 +357,7 @@ class TestAcknowledgeMessage:
         mock_client.xack = AsyncMock(return_value=1)
 
         with patch("shared.redis_client.get_redis_client", return_value=mock_client):
-            result = await acknowledge_message(
-                INCOMING_STREAM, CONSUMER_GROUP, "1234567890123-0"
-            )
+            result = await acknowledge_message(INCOMING_STREAM, CONSUMER_GROUP, "1234567890123-0")
 
             assert result == 1
             mock_client.xack.assert_called_once_with(
@@ -369,9 +371,7 @@ class TestAcknowledgeMessage:
         mock_client.xack = AsyncMock(return_value=0)
 
         with patch("shared.redis_client.get_redis_client", return_value=mock_client):
-            result = await acknowledge_message(
-                INCOMING_STREAM, CONSUMER_GROUP, "1234567890123-0"
-            )
+            result = await acknowledge_message(INCOMING_STREAM, CONSUMER_GROUP, "1234567890123-0")
 
             assert result == 0
 
@@ -379,15 +379,11 @@ class TestAcknowledgeMessage:
     async def test_acknowledge_connection_error_raises_503(self):
         """Test that connection errors raise HTTPException 503."""
         mock_client = AsyncMock()
-        mock_client.xack = AsyncMock(
-            side_effect=RedisConnectionError("Connection refused")
-        )
+        mock_client.xack = AsyncMock(side_effect=RedisConnectionError("Connection refused"))
 
         with patch("shared.redis_client.get_redis_client", return_value=mock_client):
             with pytest.raises(HTTPException) as exc_info:
-                await acknowledge_message(
-                    INCOMING_STREAM, CONSUMER_GROUP, "1234567890123-0"
-                )
+                await acknowledge_message(INCOMING_STREAM, CONSUMER_GROUP, "1234567890123-0")
 
             assert exc_info.value.status_code == 503
 
@@ -410,7 +406,7 @@ class TestMoveToDeadLetter:
                 CONSUMER_GROUP,
                 "1234567890123-0",
                 message_data,
-                "Processing error: timeout"
+                "Processing error: timeout",
             )
 
             assert result == "dlq-1234567890123-0"
@@ -443,7 +439,7 @@ class TestMoveToDeadLetter:
                 CONSUMER_GROUP,
                 "1234567890123-0",
                 {"conversation_id": "123"},
-                long_error
+                long_error,
             )
 
             xadd_call = mock_client.xadd.call_args
@@ -454,9 +450,7 @@ class TestMoveToDeadLetter:
     async def test_move_to_dlq_connection_error_raises_503(self):
         """Test that connection errors raise HTTPException 503."""
         mock_client = AsyncMock()
-        mock_client.xadd = AsyncMock(
-            side_effect=RedisConnectionError("Connection refused")
-        )
+        mock_client.xadd = AsyncMock(side_effect=RedisConnectionError("Connection refused"))
 
         with patch("shared.redis_client.get_redis_client", return_value=mock_client):
             with pytest.raises(HTTPException) as exc_info:
@@ -465,7 +459,7 @@ class TestMoveToDeadLetter:
                     CONSUMER_GROUP,
                     "1234567890123-0",
                     {"conversation_id": "123"},
-                    "Error"
+                    "Error",
                 )
 
             assert exc_info.value.status_code == 503

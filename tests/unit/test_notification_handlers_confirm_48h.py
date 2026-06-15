@@ -82,7 +82,13 @@ async def test_send_success_calls_template_with_correct_params(monkeypatch):
     class DummySettings:
         WHATSAPP_TEMPLATE_CONFIRM_48H = "atrevete_confirm_48h"
 
+    class DummySettingsService:
+        async def get(self, key: str, default: str = "") -> str:
+            return default
+
     monkeypatch.setattr(confirm_48h, "get_settings", lambda: DummySettings())
+    # Patch the name as imported in confirm_48h (not in the source module)
+    monkeypatch.setattr(confirm_48h, "get_settings_service", AsyncMock(return_value=DummySettingsService()))
 
     appt = SimpleNamespace(
         id=uuid4(),

@@ -25,38 +25,67 @@ EXPECTED_NEXT_STEP_VALUES = {
     "reoffer_slots",
     "retry_later",
     "booking_complete",
+    # Policy gate values added in policy-acceptance change
+    "policy_acceptance_required",
+    "policy_escalation_required",
 }
 
 # R10: no imperative verb prefix
 BANNED_PREFIXES = (
-    "ask_", "call_", "wait_", "do_", "get_", "show_", "send_",
-    "pregunta", "llama", "debes", "haz", "envía", "muestra",
-    "pedí", "confirmá", "mostrá", "responde", "verificá", "seleccioná",
+    "ask_",
+    "call_",
+    "wait_",
+    "do_",
+    "get_",
+    "show_",
+    "send_",
+    "pregunta",
+    "llama",
+    "debes",
+    "haz",
+    "envía",
+    "muestra",
+    "pedí",
+    "confirmá",
+    "mostrá",
+    "responde",
+    "verificá",
+    "seleccioná",
 )
 
-NEXT_STEPS_PATH = pathlib.Path(__file__).parent.parent.parent.parent / "agent" / "tools" / "next_steps.py"
+NEXT_STEPS_PATH = (
+    pathlib.Path(__file__).parent.parent.parent.parent / "agent" / "tools" / "next_steps.py"
+)
 
 
 class TestVocabularyCompleteness:
     def test_vocabulary_completeness(self):
         """R9: exactly the 12 expected values importable."""
         from agent.tools.next_steps import NextStep
+
         assert set(NextStep.__args__) == EXPECTED_NEXT_STEP_VALUES
 
-    def test_next_step_literal_has_12_values(self):
+    def test_next_step_literal_has_14_values(self):
+        """NextStep now has 14 values: original 12 + policy_acceptance_required + policy_escalation_required.
+
+        NOTE: policy_acceptance_required and policy_escalation_required were added in the
+        policy-acceptance change. Updated from 12 to 14.
+        """
         from agent.tools.next_steps import NextStep
-        assert len(NextStep.__args__) == 12
+
+        assert len(NextStep.__args__) == 14
 
 
 class TestNoImperativeVerbs:
     def test_no_imperative_verbs(self):
         """R10: every value is a descriptive noun/state, not an imperative verb."""
         from agent.tools.next_steps import NextStep
+
         for value in NextStep.__args__:
             for banned in BANNED_PREFIXES:
-                assert not value.startswith(banned), (
-                    f"NextStep value '{value}' starts with imperative prefix '{banned}'"
-                )
+                assert not value.startswith(
+                    banned
+                ), f"NextStep value '{value}' starts with imperative prefix '{banned}'"
 
 
 class TestInlineComments:
@@ -77,6 +106,7 @@ class TestInlineComments:
                 comments_by_line[lineno] = comment_body
 
         from agent.tools.next_steps import NextStep
+
         # For each value find its line in source and confirm an inline comment exists
         for value in NextStep.__args__:
             found = False
@@ -85,30 +115,34 @@ class TestInlineComments:
                     if i in comments_by_line and len(comments_by_line[i]) >= 10:
                         found = True
                         break
-            assert found, (
-                f"NextStep value '{value}' lacks an inline comment with ≥10 chars in next_steps.py"
-            )
+            assert (
+                found
+            ), f"NextStep value '{value}' lacks an inline comment with ≥10 chars in next_steps.py"
 
 
 class TestPayloadContract:
     def test_payload_contract_importable(self):
         """R9: NEXT_STEP_PAYLOAD_CONTRACT importable as a dict."""
         from agent.tools.next_steps import NEXT_STEP_PAYLOAD_CONTRACT
+
         assert isinstance(NEXT_STEP_PAYLOAD_CONTRACT, dict)
 
     def test_audience_required_has_variants_and_family(self):
         from agent.tools.next_steps import NEXT_STEP_PAYLOAD_CONTRACT
+
         assert "variants" in NEXT_STEP_PAYLOAD_CONTRACT["audience_required"]
         assert "family" in NEXT_STEP_PAYLOAD_CONTRACT["audience_required"]
 
     def test_advance_policy_violated_payload_keys(self):
         from agent.tools.next_steps import NEXT_STEP_PAYLOAD_CONTRACT
+
         keys = NEXT_STEP_PAYLOAD_CONTRACT["advance_policy_violated"]
         assert "first_valid_date" in keys
         assert "policy_min_days" in keys
 
     def test_booking_complete_payload_keys(self):
         from agent.tools.next_steps import NEXT_STEP_PAYLOAD_CONTRACT
+
         keys = NEXT_STEP_PAYLOAD_CONTRACT["booking_complete"]
         assert "appointment_id" in keys
         assert "calendar_link" in keys
@@ -116,5 +150,6 @@ class TestPayloadContract:
     def test_no_extra_next_step_keys_in_contract(self):
         """Contract keys must be a subset of known NextStep values."""
         from agent.tools.next_steps import NEXT_STEP_PAYLOAD_CONTRACT, NextStep
+
         for key in NEXT_STEP_PAYLOAD_CONTRACT:
             assert key in NextStep.__args__, f"Unknown key in contract: {key}"

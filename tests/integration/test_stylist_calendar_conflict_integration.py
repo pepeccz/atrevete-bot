@@ -79,7 +79,14 @@ class TestCreateStylistIntegration:
 
                 mock_session.add = MagicMock()
                 mock_session.commit = AsyncMock()
-                mock_session.refresh = AsyncMock()
+
+                # refresh must populate created_at/updated_at on the actual Stylist object
+                async def _mock_refresh(obj):
+                    obj.id = uuid4()
+                    obj.created_at = datetime.now(UTC)
+                    obj.updated_at = datetime.now(UTC)
+
+                mock_session.refresh = _mock_refresh
                 mock_session_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
                 mock_session_factory.return_value.__aexit__ = AsyncMock(return_value=False)
 
@@ -295,46 +302,45 @@ class TestRaceConditionHandling:
         """GIVEN race condition on create, WHEN IntegrityError occurs, THEN returns 409."""
         from api.routes.admin import CreateStylistRequest, create_stylist
 
-        with patch("api.routes.admin._check_calendar_conflict") as mock_check:
-            # Pre-validation passes
-            mock_check.return_value = (False, [])
+        with patch("api.routes.admin.get_async_session") as mock_session_factory:
+            mock_session = AsyncMock()
+            mock_session.add = MagicMock()
 
-            with patch("api.routes.admin.get_async_session") as mock_session_factory:
-                mock_session = AsyncMock()
-                mock_session.add = MagicMock()
+            # Simulate commit failure with unique constraint violation
+            error = IntegrityError(
+                "duplicate key value violates unique constraint \"stylists_google_calendar_id_key\"",
+                params=None,
+                orig=Exception("stylists_google_calendar_id_key"),
+            )
+            mock_session.commit = AsyncMock(side_effect=error)
+            mock_session.rollback = AsyncMock()
+            mock_session_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
+            mock_session_factory.return_value.__aexit__ = AsyncMock(return_value=False)
 
-                # Simulate commit failure with unique constraint violation
-                error = IntegrityError(
-                    "duplicate key value violates unique constraint \"stylists_google_calendar_id_key\"",
-                    params=None,
-                    orig=Exception("stylists_google_calendar_id_key"),
-                )
-                mock_session.commit = AsyncMock(side_effect=error)
-                mock_session.rollback = AsyncMock()
-                mock_session_factory.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-                mock_session_factory.return_value.__aexit__ = AsyncMock(return_value=False)
-
+            # Use side_effect list: first call (pre-check) passes, second call
+            # (post-rollback re-check) finds the conflict
+            with patch(
+                "api.routes.admin._check_calendar_conflict",
+                new_callable=AsyncMock,
+                side_effect=[(False, []), (True, ["Maria"])],
+            ) as mock_check:
                 with patch("api.routes.admin._is_unique_constraint_violation") as mock_is_unique:
                     mock_is_unique.return_value = True
 
-                    # After rollback, re-check finds the conflict
-                    with patch("api.routes.admin._check_calendar_conflict") as mock_recheck:
-                        mock_recheck.return_value = (True, ["Maria"])
+                    request = CreateStylistRequest(
+                        name="Test Stylist",
+                        category="HAIRDRESSING",
+                        google_calendar_id="conflict@calendar.com",
+                        is_active=True,
+                    )
+                    mock_user = {"sub": "admin"}
 
-                        request = CreateStylistRequest(
-                            name="Test Stylist",
-                            category="HAIRDRESSING",
-                            google_calendar_id="conflict@calendar.com",
-                            is_active=True,
-                        )
-                        mock_user = {"sub": "admin"}
+                    from fastapi import HTTPException
+                    with pytest.raises(HTTPException) as exc_info:
+                        await create_stylist(request, mock_user)
 
-                        from fastapi import HTTPException
-                        with pytest.raises(HTTPException) as exc_info:
-                            await create_stylist(request, mock_user)
-
-                        assert exc_info.value.status_code == 409
-                        mock_session.rollback.assert_called_once()
+                    assert exc_info.value.status_code == 409
+                    mock_session.rollback.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_non_constraint_integrity_error_re_raised(self, mock_current_user):
@@ -383,18 +389,36 @@ class TestDatabaseConstraintIntegrity:
     """Tests to verify the database schema maintains the unique constraint."""
 
     def test_unique_constraint_on_google_calendar_id(self):
-        """Verify that the database schema has unique constraint on google_calendar_id."""
+        """Verify that the database schema enforces uniqueness on google_calendar_id.
+
+        The uniqueness is implemented as a partial unique Index in __table_args__
+        (unique where google_calendar_id IS NOT NULL), named
+        'uq_stylists_google_calendar_id_notnull'. This allows multiple NULL values
+        while enforcing uniqueness on non-null calendar IDs.
+        """
 
         from database.models import Stylist
 
-        # Get the table
         table = Stylist.__table__
 
-        # Check that google_calendar_id column has unique=True
-        calendar_col = table.c.google_calendar_id
-        assert calendar_col.unique is True, "google_calendar_id should have unique constraint"
-        assert calendar_col.nullable is False, "google_calendar_id should not be nullable"
-        assert calendar_col.index is True, "google_calendar_id should be indexed"
+        # Column must exist
+        assert "google_calendar_id" in table.c, "google_calendar_id column must exist"
+
+        # Uniqueness is enforced via a partial unique Index (not column-level unique=True).
+        # SQLAlchemy registers Indexes on the table's indexes set.
+        calendar_unique_index = next(
+            (
+                idx for idx in table.indexes
+                if idx.unique and any(
+                    col.name == "google_calendar_id" for col in idx.columns
+                )
+            ),
+            None,
+        )
+        assert calendar_unique_index is not None, (
+            "A unique Index covering google_calendar_id must exist in __table_args__ "
+            "(expected 'uq_stylists_google_calendar_id_notnull' partial index)"
+        )
 
     def test_model_requires_calendar_id(self):
         """Verify Stylist model requires google_calendar_id."""

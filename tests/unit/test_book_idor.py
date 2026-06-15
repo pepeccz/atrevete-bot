@@ -73,6 +73,11 @@ async def test_book_uses_state_customer_phone():
         captured_phone["phone"] = phone
         return customer
 
+    ok_fk = MagicMock()
+    ok_fk.ok = True
+    ok_fk.missing_ids = []
+    ok_fk.payload = {}
+
     with (
         patch("database.connection.get_async_session", return_value=ctx),
         patch("agent.tools.book.get_settings", return_value=settings_mock),
@@ -83,6 +88,9 @@ async def test_book_uses_state_customer_phone():
         patch("agent.tools.book._invalidate_cached_customer", AsyncMock()),
         patch("agent.tools.book.asyncio.create_task"),
         patch("agent.tools.book.check_slot_availability", AsyncMock(return_value={"available": True})),
+        patch("agent.tools.book.validate_service_ids_exist", AsyncMock(return_value=ok_fk)),
+        patch("agent.tools.book.validate_stylist_id_exists", AsyncMock(return_value=ok_fk)),
+        patch("agent.tools.book.accept_policy", AsyncMock()),
     ):
         # Call via coroutine — state kwarg provides the phone (InjectedState)
         result_json = await book.coroutine(
@@ -92,7 +100,17 @@ async def test_book_uses_state_customer_phone():
             customer_full_name="Ana García",
             confirmed=True,
             pre_book_validated=True,
-            state={"customer_phone": STATE_PHONE},
+            policy_accepted=True,
+            state={
+                "customer_phone": STATE_PHONE,
+                "recently_offered_slots": [
+                    {
+                        "start_iso": FUTURE_ISO,
+                        "stylist_id": FAKE_STYLIST_ID,
+                        "expires_at": "2099-01-01T00:00:00+00:00",
+                    }
+                ],
+            },
         )
 
     result = json.loads(result_json)

@@ -19,7 +19,7 @@ import pytest
 def mock_op():
     """Provide a mock alembic op with execute capture."""
     with patch(
-        "database.alembic.versions.a1b2c3d4e5f6_rename_memories_notes_to_agent_notes.op"
+        "database.alembic.versions.b8c9d0e1f2g3_rename_memories_notes_to_agent_notes.op"
     ) as m:
         yield m
 
@@ -36,7 +36,7 @@ def test_upgrade_sql_renames_notes_to_agent_notes(mock_op):
     THEN op.execute is called with SQL that moves memories.notes -> memories.agent_notes
     AND the WHERE clause guards against already-migrated rows.
     """
-    from database.alembic.versions.a1b2c3d4e5f6_rename_memories_notes_to_agent_notes import (
+    from database.alembic.versions.b8c9d0e1f2g3_rename_memories_notes_to_agent_notes import (
         upgrade,
     )
 
@@ -64,7 +64,7 @@ def test_upgrade_sql_has_idempotency_guard(mock_op):
     WHEN called
     THEN the SQL contains a NOT (metadata_->'memories' ? 'agent_notes') guard.
     """
-    from database.alembic.versions.a1b2c3d4e5f6_rename_memories_notes_to_agent_notes import (
+    from database.alembic.versions.b8c9d0e1f2g3_rename_memories_notes_to_agent_notes import (
         upgrade,
     )
 
@@ -88,7 +88,7 @@ def test_downgrade_sql_renames_agent_notes_back_to_notes(mock_op):
     THEN op.execute is called with symmetric SQL that moves memories.agent_notes -> memories.notes
     AND the WHERE clause guards against double-downgrade.
     """
-    from database.alembic.versions.a1b2c3d4e5f6_rename_memories_notes_to_agent_notes import (
+    from database.alembic.versions.b8c9d0e1f2g3_rename_memories_notes_to_agent_notes import (
         downgrade,
     )
 
@@ -111,7 +111,7 @@ def test_upgrade_and_downgrade_are_symmetric(mock_op):
     WHEN both are called
     THEN both issue exactly one op.execute call each (no side effects beyond SQL).
     """
-    from database.alembic.versions.a1b2c3d4e5f6_rename_memories_notes_to_agent_notes import (
+    from database.alembic.versions.b8c9d0e1f2g3_rename_memories_notes_to_agent_notes import (
         downgrade,
         upgrade,
     )

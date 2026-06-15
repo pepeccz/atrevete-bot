@@ -16,7 +16,11 @@ from agent.tools.manage_appointments_tool import manage_appointments
 
 
 def _get_sig():
-    fn = manage_appointments.coroutine if hasattr(manage_appointments, "coroutine") else manage_appointments
+    fn = (
+        manage_appointments.coroutine
+        if hasattr(manage_appointments, "coroutine")
+        else manage_appointments
+    )
     return inspect.signature(fn)
 
 
@@ -40,9 +44,9 @@ def test_customer_phone_not_in_tool_params():
     """customer_phone must NOT be an explicit tool parameter (it is InjectedState)."""
     sig = _get_sig()
     # state parameter carries customer_phone via InjectedState; no raw customer_phone param
-    assert "customer_phone" not in sig.parameters, (
-        "customer_phone should be removed from tool params and injected via InjectedState"
-    )
+    assert (
+        "customer_phone" not in sig.parameters
+    ), "customer_phone should be removed from tool params and injected via InjectedState"
 
 
 def test_action_accepts_confirm():
@@ -163,6 +167,22 @@ def _make_eligibility_ok():
     return eligible
 
 
+def _make_idor_ok():
+    """Return a mock IDOR validation result that passes ownership check."""
+    from agent.tools._booking_validators import FKValidationResult
+
+    return FKValidationResult(ok=True, error_code=None, error_message=None)
+
+
+def _make_async_session_ctx():
+    """Return an async context manager mock for get_async_session."""
+    mock_session = AsyncMock()
+    mock_ctx = AsyncMock()
+    mock_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_ctx.__aexit__ = AsyncMock(return_value=False)
+    return mock_ctx
+
+
 def _make_execute_reschedule_result():
     """Return a mock reschedule result for the happy path."""
     from datetime import datetime
@@ -193,6 +213,14 @@ async def test_reschedule_g1_unresolvable_relative_text_no_db_write():
 
     with (
         patch(
+            "agent.tools.manage_appointments_tool.get_async_session",
+            return_value=_make_async_session_ctx(),
+        ),
+        patch(
+            "agent.tools.manage_appointments_tool.validate_appointment_belongs_to_customer",
+            new=AsyncMock(return_value=_make_idor_ok()),
+        ),
+        patch(
             "agent.services.reschedule_service.validate_reschedule_eligibility",
             new=AsyncMock(return_value=_make_eligibility_ok()),
         ),
@@ -211,6 +239,7 @@ async def test_reschedule_g1_unresolvable_relative_text_no_db_write():
             new_date="mañana",
             new_time="10:00",
             reason=None,
+            customer_id=uuid4(),  # satisfy J2 IDOR guard — tests date validation, not the guard
         )
 
     assert result["success"] is False
@@ -236,6 +265,14 @@ async def test_reschedule_g2_sunday_closed_no_db_write():
 
     with (
         patch(
+            "agent.tools.manage_appointments_tool.get_async_session",
+            return_value=_make_async_session_ctx(),
+        ),
+        patch(
+            "agent.tools.manage_appointments_tool.validate_appointment_belongs_to_customer",
+            new=AsyncMock(return_value=_make_idor_ok()),
+        ),
+        patch(
             "agent.services.reschedule_service.validate_reschedule_eligibility",
             new=AsyncMock(return_value=_make_eligibility_ok()),
         ),
@@ -254,6 +291,7 @@ async def test_reschedule_g2_sunday_closed_no_db_write():
             new_date=SUNDAY_DATE,
             new_time="10:00",
             reason=None,
+            customer_id=uuid4(),  # satisfy J2 IDOR guard — tests closed_day validation
         )
 
     assert result["success"] is False
@@ -278,6 +316,14 @@ async def test_reschedule_g3_advance_policy_violated_no_db_write():
 
     with (
         patch(
+            "agent.tools.manage_appointments_tool.get_async_session",
+            return_value=_make_async_session_ctx(),
+        ),
+        patch(
+            "agent.tools.manage_appointments_tool.validate_appointment_belongs_to_customer",
+            new=AsyncMock(return_value=_make_idor_ok()),
+        ),
+        patch(
             "agent.services.reschedule_service.validate_reschedule_eligibility",
             new=AsyncMock(return_value=_make_eligibility_ok()),
         ),
@@ -296,6 +342,7 @@ async def test_reschedule_g3_advance_policy_violated_no_db_write():
             new_date="2026-04-29",  # tomorrow — within lead-time
             new_time="10:00",
             reason=None,
+            customer_id=uuid4(),  # satisfy J2 IDOR guard — tests advance_policy validation
         )
 
     assert result["success"] is False
@@ -321,6 +368,14 @@ async def test_reschedule_happy_path_valid_date_calls_db():
 
     with (
         patch(
+            "agent.tools.manage_appointments_tool.get_async_session",
+            return_value=_make_async_session_ctx(),
+        ),
+        patch(
+            "agent.tools.manage_appointments_tool.validate_appointment_belongs_to_customer",
+            new=AsyncMock(return_value=_make_idor_ok()),
+        ),
+        patch(
             "agent.services.reschedule_service.validate_reschedule_eligibility",
             new=AsyncMock(return_value=_make_eligibility_ok()),
         ),
@@ -339,6 +394,7 @@ async def test_reschedule_happy_path_valid_date_calls_db():
             new_date=OPEN_DATE,
             new_time="10:00",
             reason=None,
+            customer_id=uuid4(),  # satisfy J2 IDOR guard — tests happy path reschedule
         )
 
     assert result["success"] is True

@@ -63,13 +63,16 @@ def client():
 
 @pytest.fixture
 def mock_auth():
-    """Override get_current_user to bypass JWT authentication."""
-    fake_user = {
-        "sub": "admin",
-        "jti": str(uuid4()),
-        "exp": 9999999999,
-        "type": "admin",
-    }
+    """Override get_current_user to bypass JWT authentication.
+
+    Returns an AdminUser-like MagicMock with .role = "admin" so that
+    require_permission() in api/dependencies/auth.py can call current_user.role
+    without AttributeError (the previous dict-based fake lacked .role).
+    """
+    fake_user = MagicMock()
+    fake_user.role = "admin"
+    fake_user.is_active = True
+    fake_user.username = "admin"
     app.dependency_overrides[get_current_user] = lambda: fake_user
     yield fake_user
     app.dependency_overrides.pop(get_current_user, None)

@@ -131,6 +131,7 @@ async def category_stylists(db_session):
         Stylist(
             id=hair_id,
             name="_test_stylist_hair",
+            slug="_test_stylist_hair",
             category=ServiceCategory.HAIRDRESSING,
             is_active=True,
         )
@@ -139,6 +140,7 @@ async def category_stylists(db_session):
         Stylist(
             id=aesth_id,
             name="_test_stylist_aesth",
+            slug="_test_stylist_aesth",
             category=ServiceCategory.AESTHETICS,
             is_active=True,
         )
@@ -147,6 +149,7 @@ async def category_stylists(db_session):
         Stylist(
             id=both_id,
             name="_test_stylist_both",
+            slug="_test_stylist_both",
             category=ServiceCategory.BOTH,
             is_active=True,
         )
@@ -155,6 +158,7 @@ async def category_stylists(db_session):
         Stylist(
             id=inactive_id,
             name="_test_stylist_hair_inactive",
+            slug="_test_stylist_hair_inactive",
             category=ServiceCategory.HAIRDRESSING,
             is_active=False,
         )

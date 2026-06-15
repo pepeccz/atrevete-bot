@@ -21,7 +21,9 @@ Test scenarios:
 4. FSM rejects slots on closed days
 """
 
+import contextlib
 from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
@@ -32,6 +34,77 @@ from shared.business_hours_validator import (
     is_day_closed,
     validate_slot_on_open_day,
 )
+
+# ---------------------------------------------------------------------------
+# Business hours seed (matches production salon config):
+#   Mon (0) = closed, Tue–Fri (1–4) = open 10–20,
+#   Sat (5) = open 9–14, Sun (6) = closed
+# ---------------------------------------------------------------------------
+_BH_DATA = {
+    0: {"is_closed": True, "start_hour": None, "end_hour": None},
+    1: {"is_closed": False, "start_hour": 10, "end_hour": 20},
+    2: {"is_closed": False, "start_hour": 10, "end_hour": 20},
+    3: {"is_closed": False, "start_hour": 10, "end_hour": 20},
+    4: {"is_closed": False, "start_hour": 10, "end_hour": 20},
+    5: {"is_closed": False, "start_hour": 9, "end_hour": 14},
+    6: {"is_closed": True, "start_hour": None, "end_hour": None},
+}
+
+
+def _make_bh_row(day_of_week: int) -> MagicMock:
+    data = _BH_DATA[day_of_week]
+    row = MagicMock()
+    row.is_closed = data["is_closed"]
+    row.start_hour = data["start_hour"]
+    row.end_hour = data["end_hour"]
+    row.day_of_week = day_of_week
+    return row
+
+
+def _extract_day_from_stmt(stmt) -> int | None:
+    """Extract day_of_week integer from a SQLAlchemy WHERE BinaryExpression."""
+    try:
+        criteria = getattr(stmt, "_where_criteria", None) or []
+        for clause in criteria:
+            right = getattr(clause, "right", None)
+            if right is not None:
+                val = getattr(right, "value", None)
+                if isinstance(val, int) and 0 <= val <= 6:
+                    return val
+    except Exception:
+        pass
+    return None
+
+
+@pytest.fixture(autouse=True)
+def patch_bh_db():
+    """Autouse fixture: mock get_async_session in business_hours_validator."""
+    from unittest.mock import patch
+
+    def _session_factory():
+        session = AsyncMock()
+
+        async def fake_execute(stmt):
+            result = MagicMock()
+            day = _extract_day_from_stmt(stmt)
+            if day is None:
+                result.first.return_value = (True,)
+                result.scalar_one_or_none.return_value = None
+                return result
+            row = _make_bh_row(day)
+            result.first.return_value = (row.is_closed,)
+            result.scalar_one_or_none.return_value = row
+            return result
+
+        session.execute = fake_execute
+        return session
+
+    @contextlib.asynccontextmanager
+    async def _cm():
+        yield _session_factory()
+
+    with patch("shared.business_hours_validator.get_async_session", side_effect=lambda: _cm()):
+        yield
 
 # ============================================================================
 # Test Fixtures

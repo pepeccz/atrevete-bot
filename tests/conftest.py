@@ -550,7 +550,13 @@ async def cleanup_engine():
 
     from database.connection import engine
     if hasattr(engine, 'dispose') and not isinstance(engine, Mock):
-        await engine.dispose()
+        try:
+            await engine.dispose()
+        except RuntimeError as e:
+            if "event loop is closed" in str(e).lower():
+                pass  # Loop already closed — engine will be GC'd
+            else:
+                raise
 
     # Close Redis connections
     try:
@@ -560,3 +566,40 @@ async def cleanup_engine():
             await redis_client.close()
     except Exception:  # noqa: S110
         pass  # Redis client may not be initialized
+
+
+@pytest.fixture(scope="module", autouse=True)
+def dispose_engine_after_module():
+    """
+    Module-scoped sync fixture: disposes the SQLAlchemy engine pool after ALL tests
+    in the current module have completed.
+
+    Addresses cross-module event-loop contamination: when a module uses
+    `loop_scope="module"`, its asyncpg connections are bound to that module's loop.
+    After the module finishes and its loop closes, those connections become invalid.
+    The next module's tests would error with "Future attached to a different loop" when
+    trying to acquire a new connection from the pool.
+
+    Uses asyncio.run() (creates a fresh temporary loop) so this sync fixture can safely
+    call async engine.dispose() without needing the module's (already-closed) event loop.
+    """
+    yield  # all tests in this module run here
+
+    import asyncio as _asyncio
+    from unittest.mock import Mock
+
+    from database.connection import engine as _engine
+
+    if not hasattr(_engine, "dispose") or isinstance(_engine, Mock):
+        return
+
+    async def _dispose() -> None:
+        try:
+            await _engine.dispose()
+        except Exception:  # noqa: BLE001
+            pass  # best-effort — pool will be recreated on next use
+
+    try:
+        _asyncio.run(_dispose())
+    except RuntimeError:
+        pass  # event loop already running or other edge case — safe to ignore

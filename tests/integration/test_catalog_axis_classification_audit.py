@@ -164,7 +164,8 @@ async def test_barro_gold_extra_is_standalone_principal(seeded_session) -> None:
 # Design AR4: Barro and Tratamiento Facial omitted — they retain legitimate variants.
 EX_PARENTS_NOW_CLEAN: list[str] = [
     "Tinte",
-    "Mechas",
+    # "Mechas" excluded: retains legitimate zone-based variants (Mechas Localizadas,
+    # Mechas Localizadas Exprés) that are NOT duration-delta — variant gate correctly fires.
     "Tratamiento Anticelulítico Completo",
 ]
 

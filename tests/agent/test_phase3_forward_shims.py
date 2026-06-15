@@ -43,12 +43,13 @@ class TestAvailabilityServiceShim:
         assert required.issubset(set(mod.__all__)), f"__all__ missing: {required - set(mod.__all__)}"
 
     def test_shared_availability_service_symbols_are_same_objects_as_agent(self):
-        """Forward shim must delegate to agent implementation objects."""
-        import sys
+        """Forward shim must delegate to agent implementation objects.
 
-        for k in list(sys.modules.keys()):
-            if "availability_service" in k:
-                del sys.modules[k]
+        The shim re-exports by reference (`from agent... import X`), so identity
+        already holds on a normal import. Do NOT del+reimport sys.modules here —
+        that recreates module objects (and module-level caches) and pollutes later
+        tests in full-suite order.
+        """
         shim = importlib.import_module("shared.availability_service")
         canonical = importlib.import_module("agent.services.availability_service")
         assert shim.get_available_slots is canonical.get_available_slots
@@ -180,11 +181,9 @@ class TestCatalogBuilderShim:
         assert "invalidate_catalog_cache" in mod.__all__
 
     def test_shared_catalog_builder_symbol_is_same_object_as_agent(self):
-        import sys
-
-        for k in list(sys.modules.keys()):
-            if "catalog_builder" in k:
-                del sys.modules[k]
+        # Shim re-exports by reference; identity holds on a normal import. Do NOT
+        # del+reimport sys.modules (it recreates the catalog_builder cache and
+        # pollutes later full-suite tests).
         shim = importlib.import_module("shared.catalog_builder")
         canonical = importlib.import_module("agent.prompts.catalog_builder")
         assert shim.invalidate_catalog_cache is canonical.invalidate_catalog_cache

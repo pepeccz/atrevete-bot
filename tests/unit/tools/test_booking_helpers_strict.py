@@ -123,13 +123,13 @@ async def variant_ambiguous_catalog(db_session):
     await db_session.execute(delete(Service).where(Service.name.in_(all_names)))
     await db_session.flush()
 
-    # Principal row
+    # Principal row — duration_minutes=1 (placeholder; check_duration_positive requires > 0)
     db_session.add(
         Service(
             id=uuid4(),
             name=parent_name,
             category=ServiceCategory.AESTHETICS,
-            duration_minutes=0,
+            duration_minutes=1,
             is_active=True,
             audience=None,
             metadata_={

@@ -2,6 +2,7 @@
 
 R-IDs: R17
 """
+
 from __future__ import annotations
 
 import ast
@@ -14,6 +15,7 @@ from agent.middleware.customer_resolve import CustomerResolveMiddleware
 from agent.middleware.disclosure import DisclosureMiddleware
 from agent.middleware.dynamic_prompt import DynamicPromptMiddleware
 from agent.middleware.prompt_assembly import PromptAssemblyMiddleware
+from agent.middleware.response_groundedness import ResponseGroundednessMiddleware
 from agent.middleware.summarize import SummarizeMiddleware
 
 EXPECTED_MIDDLEWARE_CLASSES = [
@@ -24,6 +26,7 @@ EXPECTED_MIDDLEWARE_CLASSES = [
     AvailabilityContextMiddleware,  # injected after DynamicPrompt (ADR-1)
     PromptAssemblyMiddleware,
     SummarizeMiddleware,
+    ResponseGroundednessMiddleware,  # J5: post-hoc groundedness scan (LOG-ONLY)
 ]
 
 
@@ -42,9 +45,13 @@ def _extract_list_assignment(tree: ast.AST, var_name: str) -> list[str]:
 
 
 def test_middleware_stack_order() -> None:
-    """The base middleware list in agent_factory must contain exactly the 7 expected
+    """The base middleware list in agent_factory must contain exactly the 8 expected
     entries in the documented order. LLMTraceMiddleware is opt-in via flag and tracked
-    separately in test_agent_factory_trace.py (ADR-3)."""
+    separately in test_agent_factory_trace.py (ADR-3).
+
+    NOTE: ResponseGroundednessMiddleware (J5) was added as entry 8 — log-only post-hoc
+    groundedness scan. This updates the expected count from 7 to 8.
+    """
     import agent.agent_factory as factory_module
 
     source = pathlib.Path(factory_module.__file__).read_text(encoding="utf-8")

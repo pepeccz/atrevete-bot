@@ -125,23 +125,19 @@ def test_validate_missing_tool() -> None:
 
 
 def test_validate_out_of_order() -> None:
+    # Evidence with book_appointment BEFORE check_availability — genuine out-of-order.
     evidence = [
-        ToolCallEvidence("check_availability", {}, {}, "checkpoint", datetime.now(UTC)),
-        ToolCallEvidence("search_services", {}, {}, "checkpoint", datetime.now(UTC)),
         ToolCallEvidence(
             "book_appointment", {}, {"success": True}, "checkpoint", datetime.now(UTC)
         ),
+        ToolCallEvidence("check_availability", {}, {}, "checkpoint", datetime.now(UTC)),
     ]
 
     report = validate_tool_trace(evidence, flow_type="booking")
 
     assert report.all_required_present is False
     assert report.missing_tools == []
-    assert report.out_of_order == [
-        "check_availability",
-        "search_services",
-        "book_appointment",
-    ]
+    assert report.out_of_order == ["book_appointment", "check_availability"]
 
 
 def test_validate_non_booking_flow_skips() -> None:

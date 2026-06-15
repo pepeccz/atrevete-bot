@@ -39,10 +39,40 @@ async def _db_available() -> bool:
         return False
 
 
+_CATALOG_SEEDED_R32: bool = False
+
+
+async def _ensure_catalog_seeded_r32() -> None:
+    """Seed services catalog if the table is empty (idempotent)."""
+    global _CATALOG_SEEDED_R32
+    if _CATALOG_SEEDED_R32:
+        return
+
+    from sqlalchemy import text
+
+    from database.connection import get_async_session
+    from database.seeds.services import seed_services
+
+    async with get_async_session() as s:
+        row = await s.execute(text("SELECT COUNT(*) FROM services"))
+        count = row.scalar()
+
+    if count == 0:
+        await seed_services()
+
+    _CATALOG_SEEDED_R32 = True
+
+
 @pytest.fixture
 async def db_session():
     if not await _db_available():
         pytest.skip("Postgres not reachable")
+
+    try:
+        await _ensure_catalog_seeded_r32()
+    except Exception as exc:
+        pytest.skip(f"Catalog seed failed ({type(exc).__name__}: {exc})")
+
     from database.connection import get_async_session
 
     async with get_async_session() as session:

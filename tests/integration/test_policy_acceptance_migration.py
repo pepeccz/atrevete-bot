@@ -265,6 +265,11 @@ class TestPolicyAcceptanceMigrationSchema:
             row = result.fetchone()
             assert row is not None, "FK constraint on customer_consents.customer_id not found"
             # 'r' = RESTRICT, 'a' = NO ACTION, 'c' = CASCADE, 'n' = SET NULL
-            assert row[0] == "r", (
+            # asyncpg may return confdeltype as bytes (b'r') or str ('r') depending
+            # on the driver version — normalise to str before comparison.
+            confdeltype = row[0]
+            if isinstance(confdeltype, (bytes, bytearray)):
+                confdeltype = confdeltype.decode()
+            assert confdeltype == "r", (
                 f"Expected FK delete action RESTRICT ('r'), got '{row[0]}'"
             )

@@ -25,6 +25,7 @@ def _fake_stylist(name: str, category=None) -> SimpleNamespace:
 async def test_prompt_section_includes_stylist_roster(monkeypatch):
     """build_catalog_prompt_section() must include ## Estilistas disponibles with name + id=UUID per row."""
     from agent.prompts import catalog_builder
+    catalog_builder.invalidate_catalog_cache()
 
     # Patch get_active_services to avoid real DB
     fake_services = []
@@ -80,6 +81,7 @@ async def test_prompt_section_includes_stylist_roster(monkeypatch):
 async def test_prompt_section_no_stylist_section_when_empty(monkeypatch):
     """When no active stylists, ## Estilistas disponibles section is absent."""
     from agent.prompts import catalog_builder
+    catalog_builder.invalidate_catalog_cache()
 
     fake_services = []
     monkeypatch.setattr(catalog_builder, "get_active_services", AsyncMock(return_value=fake_services))

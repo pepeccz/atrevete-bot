@@ -56,7 +56,11 @@ class TestNotificationCategories:
             "confirmation_received",
             "auto_cancelled",
             "confirmation_failed",
+            "confirmation_retry",
+            "confirmation_permanently_failed",
             "reminder_sent",
+            "reminder_failed",
+            "reminder_permanently_failed",
         ]
         assert sorted(confirmaciones_types) == sorted(expected)
 
@@ -119,8 +123,9 @@ class TestNotificationModel:
             entity_id=uuid4(),
         )
 
-        # Default is_starred should be False
-        assert notification.is_starred is False or notification.is_starred == False
+        # Default is_starred should be False (or None before DB flush — SQLAlchemy 2.0
+        # column-level defaults are applied at INSERT, not at Python object construction).
+        assert notification.is_starred is False or notification.is_starred is None
         # Default starred_at should be None
         assert notification.starred_at is None
 
