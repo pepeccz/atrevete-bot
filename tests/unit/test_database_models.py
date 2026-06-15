@@ -47,10 +47,14 @@ def restore_migration_schema_after_module():
 
     # CRITICAL: Restore full migration schema so subsequent test modules do not see a
     # broken schema (missing customer_consents, excl_no_overlap, partial indexes, etc.).
+    # Derive the repo root from this file (tests/unit/test_database_models.py → 3 up)
+    # so alembic finds alembic.ini in BOTH the docker harness AND the CI runner — a
+    # hardcoded "/app" only exists in the container and FileNotFoundError'd in CI.
+    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     database_url = os.environ.get("DATABASE_URL", "")
     subprocess.run(
         ["alembic", "upgrade", "head"],
-        cwd="/app",
+        cwd=repo_root,
         env={**os.environ, "DATABASE_URL": database_url},
         capture_output=True,
         text=True,
