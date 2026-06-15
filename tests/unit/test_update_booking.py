@@ -24,10 +24,10 @@ import pytest
 FAKE_STYLIST_ID = uuid4()
 FAKE_SERVICE_ID = uuid4()
 
-# A Tuesday in the future — an open day (business assumes Mon-Sat open)
-OPEN_DATE_ISO = "2026-05-05"
+# A Tuesday well in the future — an open day (business assumes Mon-Sat open)
+OPEN_DATE_ISO = "2026-08-04"
 # A Sunday in the future — closed by default
-CLOSED_DATE_ISO = "2026-05-03"
+CLOSED_DATE_ISO = "2026-08-02"
 
 
 def parse_response(raw: str) -> dict:
@@ -96,6 +96,13 @@ def _patch_booking_helpers(
 
     is_date_closed_mock = AsyncMock(return_value=is_date_closed_return)
 
+    ok_fk = MagicMock()
+    ok_fk.ok = True
+    ok_fk.missing_ids = []
+    ok_fk.payload = {}
+    validate_svc_ids_mock = AsyncMock(return_value=ok_fk)
+    validate_sty_id_mock = AsyncMock(return_value=ok_fk)
+
     return {
         "agent.tools._booking_helpers._resolve_service_ids": resolve_service_ids,
         "agent.tools._booking_helpers._resolve_service_ids_strict": resolve_service_ids_strict,
@@ -110,6 +117,10 @@ def _patch_booking_helpers(
         "agent.tools._booking_validators.is_date_closed": is_date_closed_mock,
         # Also keep the original path for legacy tests that patch it directly
         "shared.business_hours_validator.is_date_closed": is_date_closed_mock,
+        # FK existence guards — must return ok so tests don't fail at validation
+        "agent.tools.update_booking.validate_service_ids_exist": validate_svc_ids_mock,
+        "agent.tools.update_booking.validate_stylist_id_exists": validate_sty_id_mock,
+        "agent.tools.update_booking._load_lead_time_min_days": AsyncMock(return_value=3),
     }
 
 
@@ -138,6 +149,9 @@ async def test_offer_slots_when_stylist_resolved_and_no_date():
         patch("agent.tools._booking_helpers._resolve_active_stylists", mocks["agent.tools._booking_helpers._resolve_active_stylists"]),
         patch("agent.tools._booking_helpers._validate_full_name", mocks["agent.tools._booking_helpers._validate_full_name"]),
         patch("database.connection.get_async_session", mocks["database.connection.get_async_session"]),
+        patch("agent.tools.update_booking.validate_service_ids_exist", mocks["agent.tools.update_booking.validate_service_ids_exist"]),
+        patch("agent.tools.update_booking.validate_stylist_id_exists", mocks["agent.tools.update_booking.validate_stylist_id_exists"]),
+        patch("agent.tools.update_booking._load_lead_time_min_days", mocks["agent.tools.update_booking._load_lead_time_min_days"]),
     ):
         raw = await _update_booking_impl(
             services=["corte dama"],
@@ -178,6 +192,9 @@ async def test_offer_slots_with_no_preference():
         patch("agent.tools._booking_helpers._resolve_active_stylists", mocks["agent.tools._booking_helpers._resolve_active_stylists"]),
         patch("agent.tools._booking_helpers._validate_full_name", mocks["agent.tools._booking_helpers._validate_full_name"]),
         patch("database.connection.get_async_session", mocks["database.connection.get_async_session"]),
+        patch("agent.tools.update_booking.validate_service_ids_exist", mocks["agent.tools.update_booking.validate_service_ids_exist"]),
+        patch("agent.tools.update_booking.validate_stylist_id_exists", mocks["agent.tools.update_booking.validate_stylist_id_exists"]),
+        patch("agent.tools.update_booking._load_lead_time_min_days", mocks["agent.tools.update_booking._load_lead_time_min_days"]),
     ):
         raw = await _update_booking_impl(
             services=["corte dama"],
@@ -226,6 +243,9 @@ async def test_date_required_regression_guard():
         patch("agent.tools._booking_helpers._resolve_active_stylists", mocks["agent.tools._booking_helpers._resolve_active_stylists"]),
         patch("agent.tools._booking_helpers._validate_full_name", mocks["agent.tools._booking_helpers._validate_full_name"]),
         patch("database.connection.get_async_session", mocks["database.connection.get_async_session"]),
+        patch("agent.tools.update_booking.validate_service_ids_exist", mocks["agent.tools.update_booking.validate_service_ids_exist"]),
+        patch("agent.tools.update_booking.validate_stylist_id_exists", mocks["agent.tools.update_booking.validate_stylist_id_exists"]),
+        patch("agent.tools.update_booking._load_lead_time_min_days", mocks["agent.tools.update_booking._load_lead_time_min_days"]),
     ):
         raw = await _update_booking_impl(
             services=["corte dama"],
@@ -271,6 +291,9 @@ async def test_closed_day_required_for_sunday():
         patch("agent.tools._booking_helpers._validate_full_name", mocks["agent.tools._booking_helpers._validate_full_name"]),
         patch("database.connection.get_async_session", mocks["database.connection.get_async_session"]),
         patch("agent.tools._booking_validators.is_date_closed", mocks["agent.tools._booking_validators.is_date_closed"]),
+        patch("agent.tools.update_booking.validate_service_ids_exist", mocks["agent.tools.update_booking.validate_service_ids_exist"]),
+        patch("agent.tools.update_booking.validate_stylist_id_exists", mocks["agent.tools.update_booking.validate_stylist_id_exists"]),
+        patch("agent.tools.update_booking._load_lead_time_min_days", mocks["agent.tools.update_booking._load_lead_time_min_days"]),
     ):
         raw = await _update_booking_impl(
             services=["corte dama"],
@@ -317,6 +340,9 @@ async def test_closed_day_required_uses_database_validator():
         patch("agent.tools._booking_helpers._validate_full_name", mocks["agent.tools._booking_helpers._validate_full_name"]),
         patch("database.connection.get_async_session", mocks["database.connection.get_async_session"]),
         patch("agent.tools._booking_validators.is_date_closed", is_date_closed_spy),
+        patch("agent.tools.update_booking.validate_service_ids_exist", mocks["agent.tools.update_booking.validate_service_ids_exist"]),
+        patch("agent.tools.update_booking.validate_stylist_id_exists", mocks["agent.tools.update_booking.validate_stylist_id_exists"]),
+        patch("agent.tools.update_booking._load_lead_time_min_days", mocks["agent.tools.update_booking._load_lead_time_min_days"]),
     ):
         await _update_booking_impl(
             services=["corte dama"],
@@ -358,6 +384,9 @@ async def test_open_day_passes_through_to_name_required():
         patch("agent.tools._booking_helpers._validate_full_name", mocks["agent.tools._booking_helpers._validate_full_name"]),
         patch("database.connection.get_async_session", mocks["database.connection.get_async_session"]),
         patch("agent.tools._booking_validators.is_date_closed", mocks["agent.tools._booking_validators.is_date_closed"]),
+        patch("agent.tools.update_booking.validate_service_ids_exist", mocks["agent.tools.update_booking.validate_service_ids_exist"]),
+        patch("agent.tools.update_booking.validate_stylist_id_exists", mocks["agent.tools.update_booking.validate_stylist_id_exists"]),
+        patch("agent.tools.update_booking._load_lead_time_min_days", mocks["agent.tools.update_booking._load_lead_time_min_days"]),
     ):
         raw = await _update_booking_impl(
             services=["corte dama"],
@@ -409,6 +438,9 @@ async def test_adapter_g1_date_clarification_required():
             "agent.booking.resolvers.time_resolver.resolve_relative_date",
             return_value=None,
         ),
+        patch("agent.tools.update_booking.validate_service_ids_exist", mocks["agent.tools.update_booking.validate_service_ids_exist"]),
+        patch("agent.tools.update_booking.validate_stylist_id_exists", mocks["agent.tools.update_booking.validate_stylist_id_exists"]),
+        patch("agent.tools.update_booking._load_lead_time_min_days", mocks["agent.tools.update_booking._load_lead_time_min_days"]),
     ):
         raw = await _update_booking_impl(
             services=["corte dama"],
@@ -449,6 +481,9 @@ async def test_adapter_g2_closed_day_required_wire_format():
         patch("agent.tools._booking_helpers._validate_full_name", mocks["agent.tools._booking_helpers._validate_full_name"]),
         patch("database.connection.get_async_session", mocks["database.connection.get_async_session"]),
         patch("agent.tools._booking_validators.is_date_closed", mocks["agent.tools._booking_validators.is_date_closed"]),
+        patch("agent.tools.update_booking.validate_service_ids_exist", mocks["agent.tools.update_booking.validate_service_ids_exist"]),
+        patch("agent.tools.update_booking.validate_stylist_id_exists", mocks["agent.tools.update_booking.validate_stylist_id_exists"]),
+        patch("agent.tools.update_booking._load_lead_time_min_days", mocks["agent.tools.update_booking._load_lead_time_min_days"]),
     ):
         raw = await _update_booking_impl(
             services=["corte dama"],
@@ -496,6 +531,9 @@ async def test_adapter_g3_advance_policy_violated_payload_forwarded():
         patch("agent.tools._booking_helpers._validate_full_name", mocks["agent.tools._booking_helpers._validate_full_name"]),
         patch("database.connection.get_async_session", mocks["database.connection.get_async_session"]),
         patch("agent.tools._booking_validators.is_date_closed", mocks["agent.tools._booking_validators.is_date_closed"]),
+        patch("agent.tools.update_booking.validate_service_ids_exist", mocks["agent.tools.update_booking.validate_service_ids_exist"]),
+        patch("agent.tools.update_booking.validate_stylist_id_exists", mocks["agent.tools.update_booking.validate_stylist_id_exists"]),
+        patch("agent.tools.update_booking._load_lead_time_min_days", mocks["agent.tools.update_booking._load_lead_time_min_days"]),
     ):
         raw = await _update_booking_impl(
             services=["corte dama"],
