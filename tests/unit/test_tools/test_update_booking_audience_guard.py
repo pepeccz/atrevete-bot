@@ -74,11 +74,13 @@ async def multi_audience_cut_catalog(db_session):
         )
         db_session.add(svc)
     await db_session.flush()
+    await db_session.commit()
 
     yield {"names": names, "dimension": dim, "null_principal": "Corte Guard"}
 
     await db_session.execute(delete(Service).where(Service.name.in_(names)))
     await db_session.flush()
+    await db_session.commit()
 
 
 @pytest.mark.asyncio
