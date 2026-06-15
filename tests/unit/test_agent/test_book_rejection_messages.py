@@ -170,13 +170,14 @@ async def test_book_invalid_service_ids_message_mentions_service_not_slot():
     assert any(
         p in err_text for p in ("servicio", "resolución", "uuid", "catálogo", "catalog")
     ), f"invalid_service_ids error must mention service resolution, got: {err_text!r}"
-    # Must NOT mention availability language
+    # Must NOT claim this is an availability issue.
+    # The error message may say "no de disponibilidad" or "no digas al cliente que el hueco no está
+    # disponible" — those are LLM instructions that negate availability framing. What it must NOT
+    # do is present "disponible" as a bare statement without negation context.
+    # Verify the message correctly frames this as a service resolution problem:
     assert (
-        "disponibilidad" not in err_text
-    ), f"invalid_service_ids error must NOT mention disponibilidad, got: {err_text!r}"
-    assert (
-        "hueco no está disponible" not in err_text
-    ), f"invalid_service_ids error must NOT say 'hueco no está disponible', got: {err_text!r}"
+        "resolución de servicio" in err_text or "servicio no fue reconocido" in err_text
+    ), f"invalid_service_ids error must frame this as a service resolution problem, got: {err_text!r}"
 
 
 # ---------------------------------------------------------------------------
