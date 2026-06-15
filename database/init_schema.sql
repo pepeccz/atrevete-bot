@@ -26,6 +26,19 @@ CREATE SCHEMA public;
 
 
 --
+-- Required extensions. This snapshot references public.gin_trgm_ops (pg_trgm),
+-- GIST EXCLUDE constraints over uuid columns (btree_gist), and uuid defaults
+-- (uuid-ossp). pg_dump omitted these, so a fresh bootstrap (CI / new prod) must
+-- create them BEFORE the indexes/constraints below or those statements fail
+-- silently and leave the schema incomplete. IF NOT EXISTS keeps it idempotent.
+--
+
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA public;
+CREATE EXTENSION IF NOT EXISTS btree_gist WITH SCHEMA public;
+CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public;
+
+
+--
 -- Name: SCHEMA public; Type: COMMENT; Schema: -; Owner: -
 --
 
