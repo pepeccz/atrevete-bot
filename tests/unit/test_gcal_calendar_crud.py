@@ -495,9 +495,12 @@ from api.routes.google_oauth import (
 # ---------------------------------------------------------------------------
 
 
-def _fake_user() -> dict:
-    """Minimal JWT payload — just needs 'sub'."""
-    return {"sub": "admin-test-user"}
+def _fake_user() -> MagicMock:
+    """Minimal AdminUser mock — needs .username (used in endpoint log statements)."""
+    user = MagicMock()
+    user.username = "admin-test-user"
+    user.sub = "admin-test-user"
+    return user
 
 
 def _make_async_session_ctx(session: AsyncMock) -> MagicMock:

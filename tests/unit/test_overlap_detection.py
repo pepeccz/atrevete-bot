@@ -587,13 +587,13 @@ class TestCreateAppointmentEndpoint:
             async def mock_execute(stmt):
                 mock_result = MagicMock()
                 # First query: customer
-                if "Customer" in str(stmt):
+                if "customers" in str(stmt):
                     mock_result.scalar_one_or_none.return_value = mock_customer
                 # Second query: stylist
-                elif "Stylist" in str(stmt):
+                elif "stylists" in str(stmt):
                     mock_result.scalar_one_or_none.return_value = mock_stylist
                 # Third query: services
-                elif "Service" in str(stmt):
+                elif "services" in str(stmt):
                     mock_result.scalars.return_value.all.return_value = [mock_service]
                 return mock_result
 
@@ -664,11 +664,11 @@ class TestCreateAppointmentEndpoint:
 
             async def mock_execute(stmt):
                 mock_result = MagicMock()
-                if "Customer" in str(stmt):
+                if "customers" in str(stmt):
                     mock_result.scalar_one_or_none.return_value = mock_customer
-                elif "Stylist" in str(stmt):
+                elif "stylists" in str(stmt):
                     mock_result.scalar_one_or_none.return_value = mock_stylist
-                elif "Service" in str(stmt):
+                elif "services" in str(stmt):
                     mock_result.scalars.return_value.all.return_value = [mock_service]
                 return mock_result
 
@@ -741,11 +741,11 @@ class TestCreateAppointmentEndpoint:
 
             async def mock_execute(stmt):
                 mock_result = MagicMock()
-                if "Customer" in str(stmt):
+                if "customers" in str(stmt):
                     mock_result.scalar_one_or_none.return_value = mock_customer
-                elif "Stylist" in str(stmt):
+                elif "stylists" in str(stmt):
                     mock_result.scalar_one_or_none.return_value = mock_stylist
-                elif "Service" in str(stmt):
+                elif "services" in str(stmt):
                     mock_result.scalars.return_value.all.return_value = [mock_service]
                 return mock_result
 
@@ -835,9 +835,9 @@ class TestCreateAppointmentEndpoint:
 
             async def mock_execute(stmt):
                 mock_result = MagicMock()
-                if "Customer" in str(stmt):
+                if "customers" in str(stmt):
                     mock_result.scalar_one_or_none.return_value = mock_customer
-                elif "Stylist" in str(stmt):
+                elif "stylists" in str(stmt):
                     mock_result.scalar_one_or_none.return_value = mock_stylist
                 return mock_result
 

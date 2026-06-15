@@ -294,12 +294,14 @@ class TestGoogleOAuthServiceGenerateAuthUrl:
             "unused-state",
         )
 
+        mock_flow.code_verifier = "fake-code-verifier"
+
         with (
             patch.object(_oauth_module, "get_settings", return_value=fake_settings),
             patch.object(_oauth_module.Flow, "from_client_config", return_value=mock_flow),
         ):
             service = GoogleOAuthService()
-            url, state = service.generate_auth_url()
+            url, state, _code_verifier = service.generate_auth_url()
 
         assert isinstance(url, str)
         assert url.startswith("https://accounts.google.com")
@@ -316,6 +318,7 @@ class TestGoogleOAuthServiceGenerateAuthUrl:
         custom_state = "my-csrf-token-abc123"
 
         mock_flow = MagicMock()
+        mock_flow.code_verifier = "fake-code-verifier"
         mock_flow.authorization_url.return_value = (
             "https://accounts.google.com/o/oauth2/auth?state=" + custom_state,
             custom_state,
@@ -326,7 +329,7 @@ class TestGoogleOAuthServiceGenerateAuthUrl:
             patch.object(_oauth_module.Flow, "from_client_config", return_value=mock_flow),
         ):
             service = GoogleOAuthService()
-            url, returned_state = service.generate_auth_url(state=custom_state)
+            url, returned_state, _code_verifier = service.generate_auth_url(state=custom_state)
 
         assert returned_state == custom_state
         # Check that our custom state was passed to authorization_url
