@@ -10,7 +10,9 @@ CRITICAL TESTS:
 - test_monday_is_closed(): Verifies Monday (day=0) is closed
 """
 
+import contextlib
 from datetime import datetime
+from unittest.mock import AsyncMock, MagicMock
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -24,6 +26,89 @@ from shared.business_hours_validator import (
 )
 
 MADRID_TZ = ZoneInfo("Europe/Madrid")
+
+# ---------------------------------------------------------------------------
+# Business hours reference data (matches production salon config):
+#   Mon (0) = closed, Tue–Fri (1–4) = open 10–20,
+#   Sat (5) = open 9–14, Sun (6) = closed
+# ---------------------------------------------------------------------------
+_BH_DATA = {
+    0: {"is_closed": True, "start_hour": None, "end_hour": None},
+    1: {"is_closed": False, "start_hour": 10, "end_hour": 20},
+    2: {"is_closed": False, "start_hour": 10, "end_hour": 20},
+    3: {"is_closed": False, "start_hour": 10, "end_hour": 20},
+    4: {"is_closed": False, "start_hour": 10, "end_hour": 20},
+    5: {"is_closed": False, "start_hour": 9, "end_hour": 14},
+    6: {"is_closed": True, "start_hour": None, "end_hour": None},
+}
+
+
+def _make_bh_row(day_of_week: int) -> MagicMock:
+    data = _BH_DATA[day_of_week]
+    row = MagicMock()
+    row.is_closed = data["is_closed"]
+    row.start_hour = data["start_hour"]
+    row.end_hour = data["end_hour"]
+    row.day_of_week = day_of_week
+    return row
+
+
+
+def _extract_day_from_stmt(stmt) -> int | None:
+    """Extract day_of_week integer from a SQLAlchemy WHERE clause.
+
+    Handles: BusinessHours.day_of_week == <int> (BinaryExpression).
+    """
+    try:
+        # Access the WHERE criteria directly
+        criteria = getattr(stmt, "_where_criteria", None) or []
+        for clause in criteria:
+            # BinaryExpression: left=Column, right=BindParameter
+            right = getattr(clause, "right", None)
+            if right is not None:
+                val = getattr(right, "value", None)
+                if isinstance(val, int) and 0 <= val <= 6:
+                    return val
+    except Exception:
+        pass
+    return None
+
+
+@pytest.fixture(autouse=True)
+def patch_bh_db():
+    """Autouse fixture: patches business_hours_validator.get_async_session for all tests.
+
+    The mock session returns the appropriate seeded BusinessHours data based
+    on the day_of_week bound parameter in the WHERE clause.
+    """
+    from unittest.mock import patch
+
+    def _session_factory():
+        session = AsyncMock()
+
+        async def fake_execute(stmt):
+            result = MagicMock()
+            day = _extract_day_from_stmt(stmt)
+
+            if day is None:
+                result.first.return_value = (True,)
+                result.scalar_one_or_none.return_value = None
+                return result
+
+            row = _make_bh_row(day)
+            result.first.return_value = (row.is_closed,)
+            result.scalar_one_or_none.return_value = row
+            return result
+
+        session.execute = fake_execute
+        return session
+
+    @contextlib.asynccontextmanager
+    async def _cm():
+        yield _session_factory()
+
+    with patch("shared.business_hours_validator.get_async_session", side_effect=lambda: _cm()):
+        yield
 
 
 class TestIsDayClosed:
