@@ -554,10 +554,16 @@ class TestCreateAppointmentEndpoint:
     @pytest.mark.asyncio
     async def test_create_appointment_no_overlap(self):
         """Test creating appointment when slot is free."""
+        from datetime import UTC
+
+        mock_settings_svc = AsyncMock()
+        mock_settings_svc.get = AsyncMock(return_value="test_template")
+
         with patch("api.routes.admin.get_async_session") as mock_session_ctx, \
              patch("api.routes.admin.find_overlapping_appointments") as mock_find, \
              patch("api.routes.admin._safe_send_admin_appointment_template") as mock_notify, \
-             patch("shared.gcal_push_service.push_appointment_to_gcal", new_callable=AsyncMock, return_value=None):
+             patch("shared.gcal_push_service.push_appointment_to_gcal", new_callable=AsyncMock, return_value=None), \
+             patch("api.routes.admin.get_settings_service", new_callable=AsyncMock, return_value=mock_settings_svc):
 
             mock_session = AsyncMock()
             mock_session_ctx.return_value.__aenter__.return_value = mock_session
@@ -571,13 +577,14 @@ class TestCreateAppointmentEndpoint:
             mock_customer.id = customer_id
             mock_customer.phone = "+34600123456"
             mock_customer.first_name = "John"
-            mock_session.execute.return_value.scalar_one_or_none.return_value = mock_customer
+            mock_customer.chatwoot_conversation_id = None
 
             # Mock stylist exists and active
             mock_stylist = MagicMock(spec=Stylist)
             mock_stylist.id = stylist_id
             mock_stylist.is_active = True
             mock_stylist.google_calendar_id = "test_calendar"
+            mock_stylist.name = "Maria"
 
             # Mock service exists
             mock_service = MagicMock(spec=Service)
@@ -604,13 +611,18 @@ class TestCreateAppointmentEndpoint:
             # No overlaps
             mock_find.return_value = []
 
-            # Mock the created appointment
-            mock_appt = MagicMock(spec=Appointment)
-            mock_appt.id = uuid4()
-            mock_appt.first_name = "John"
             mock_session.add = MagicMock()
             mock_session.commit = AsyncMock()
-            mock_session.refresh = AsyncMock()
+
+            # refresh populates timestamps so the return dict can call .isoformat()
+            _now = datetime.now(UTC)
+
+            async def _mock_refresh(obj):
+                obj.id = uuid4()
+                obj.created_at = _now
+                obj.updated_at = _now
+
+            mock_session.refresh = _mock_refresh
 
             from api.routes.admin import CreateAppointmentRequest, create_appointment
 
@@ -713,10 +725,16 @@ class TestCreateAppointmentEndpoint:
     @pytest.mark.asyncio
     async def test_create_appointment_with_overlap_allowed(self):
         """Test creating appointment succeeds when overlaps exist and allow_overlap=true."""
+        from datetime import UTC
+
+        mock_settings_svc = AsyncMock()
+        mock_settings_svc.get = AsyncMock(return_value="test_template")
+
         with patch("api.routes.admin.get_async_session") as mock_session_ctx, \
              patch("api.routes.admin.find_overlapping_appointments") as mock_find, \
              patch("api.routes.admin._safe_send_admin_appointment_template") as mock_notify, \
-             patch("shared.gcal_push_service.push_appointment_to_gcal", new_callable=AsyncMock, return_value=None):
+             patch("shared.gcal_push_service.push_appointment_to_gcal", new_callable=AsyncMock, return_value=None), \
+             patch("api.routes.admin.get_settings_service", new_callable=AsyncMock, return_value=mock_settings_svc):
 
             mock_session = AsyncMock()
             mock_session_ctx.return_value.__aenter__.return_value = mock_session
@@ -730,12 +748,14 @@ class TestCreateAppointmentEndpoint:
             mock_customer.id = customer_id
             mock_customer.phone = "+34600123456"
             mock_customer.first_name = "John"
+            mock_customer.chatwoot_conversation_id = None
 
             # Mock stylist exists and active
             mock_stylist = MagicMock(spec=Stylist)
             mock_stylist.id = stylist_id
             mock_stylist.is_active = True
             mock_stylist.google_calendar_id = "test_calendar"
+            mock_stylist.name = "Maria"
 
             # Mock service exists
             mock_service = MagicMock(spec=Service)
@@ -766,6 +786,18 @@ class TestCreateAppointmentEndpoint:
             mock_overlap_appt.service_ids = [service_id]
 
             mock_find.return_value = [mock_overlap_appt]
+
+            mock_session.add = MagicMock()
+            mock_session.commit = AsyncMock()
+
+            _now = datetime.now(UTC)
+
+            async def _mock_refresh(obj):
+                obj.id = uuid4()
+                obj.created_at = _now
+                obj.updated_at = _now
+
+            mock_session.refresh = _mock_refresh
 
             from api.routes.admin import CreateAppointmentRequest, create_appointment
 
