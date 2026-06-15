@@ -27,6 +27,38 @@ from database.models import (  # Pack removed - packs functionality eliminated
 from database.seeds.stylists import seed_stylists
 
 
+@pytest.fixture(scope="module", autouse=True)
+def restore_migration_schema_after_module():
+    """
+    Module-scoped sync fixture: restores the full migration schema AFTER all tests
+    in this module have run.
+
+    This module's `setup_database` fixture does a destructive drop_all/create_all
+    (models-only schema). Without this restore, subsequent test modules see a broken
+    schema missing migration-only objects: customer_consents table, excl_no_overlap
+    GIST constraint, conditional/partial indexes added by alembic migrations.
+
+    Uses subprocess (sync) to avoid event-loop scope conflicts with pytest-asyncio.
+    """
+    import os
+    import subprocess
+
+    yield  # all tests in this module run here
+
+    # CRITICAL: Restore full migration schema so subsequent test modules do not see a
+    # broken schema (missing customer_consents, excl_no_overlap, partial indexes, etc.).
+    database_url = os.environ.get("DATABASE_URL", "")
+    subprocess.run(
+        ["alembic", "upgrade", "head"],
+        cwd="/app",
+        env={**os.environ, "DATABASE_URL": database_url},
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+
+
 @pytest.fixture(scope="function", autouse=True)
 async def setup_database():
     """
