@@ -186,7 +186,7 @@ async def test_check_availability_no_slots_returns_ok_with_empty_slots():
             return_value=[FAKE_STYLIST_ID],
         ),
         patch(
-            "agent.tools.check_availability.is_date_closed",
+            "shared.business_hours_validator.is_date_closed",
             new_callable=AsyncMock,
             return_value=False,
         ),
@@ -518,7 +518,7 @@ def _patch_db_calls(
             return_value=slots,
         ),
         _patch(
-            "agent.tools.check_availability.is_date_closed",
+            "shared.business_hours_validator.is_date_closed",
             new_callable=AsyncMock,
             return_value=False,
         ),
@@ -784,7 +784,7 @@ async def test_requested_date_label_matches_date_iso():
             return_value=[FAKE_STYLIST_ID],
         ),
         patch(
-            "agent.tools.check_availability.is_date_closed",
+            "shared.business_hours_validator.is_date_closed",
             new_callable=AsyncMock,
             return_value=False,
         ),

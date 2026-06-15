@@ -391,30 +391,33 @@ class TestDatabaseConstraintIntegrity:
     def test_unique_constraint_on_google_calendar_id(self):
         """Verify that the database schema enforces uniqueness on google_calendar_id.
 
-        The uniqueness is implemented as a partial UniqueConstraint in __table_args__
-        (unique where google_calendar_id IS NOT NULL), not as a column-level unique=True.
+        The uniqueness is implemented as a partial unique Index in __table_args__
+        (unique where google_calendar_id IS NOT NULL), named
+        'uq_stylists_google_calendar_id_notnull'. This allows multiple NULL values
+        while enforcing uniqueness on non-null calendar IDs.
         """
         from database.models import Stylist
-        from sqlalchemy import UniqueConstraint
+        from sqlalchemy import Index
 
         table = Stylist.__table__
 
         # Column must exist
         assert "google_calendar_id" in table.c, "google_calendar_id column must exist"
-        calendar_col = table.c.google_calendar_id
-        assert calendar_col is not None
 
-        # Uniqueness is enforced via a partial UniqueConstraint in __table_args__,
-        # not via column-level unique=True (which would reject NULL duplicates too).
-        unique_constraints = [
-            c for c in table.constraints if isinstance(c, UniqueConstraint)
-        ]
-        calendar_unique = any(
-            "google_calendar_id" in [col.name for col in uc.columns]
-            for uc in unique_constraints
+        # Uniqueness is enforced via a partial unique Index (not column-level unique=True).
+        # SQLAlchemy registers Indexes on the table's indexes set.
+        calendar_unique_index = next(
+            (
+                idx for idx in table.indexes
+                if idx.unique and any(
+                    col.name == "google_calendar_id" for col in idx.columns
+                )
+            ),
+            None,
         )
-        assert calendar_unique, (
-            "google_calendar_id must be covered by a UniqueConstraint in __table_args__"
+        assert calendar_unique_index is not None, (
+            "A unique Index covering google_calendar_id must exist in __table_args__ "
+            "(expected 'uq_stylists_google_calendar_id_notnull' partial index)"
         )
 
     def test_model_requires_calendar_id(self):

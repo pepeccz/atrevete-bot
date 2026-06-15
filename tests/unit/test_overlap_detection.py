@@ -581,6 +581,7 @@ class TestCreateAppointmentEndpoint:
             # Mock service exists
             mock_service = MagicMock(spec=Service)
             mock_service.id = service_id
+            mock_service.name = "Corte"
             mock_service.duration_minutes = 60
 
             # Setup sequential query results
@@ -737,6 +738,7 @@ class TestCreateAppointmentEndpoint:
             # Mock service exists
             mock_service = MagicMock(spec=Service)
             mock_service.id = service_id
+            mock_service.name = "Corte"
             mock_service.duration_minutes = 60
 
             async def mock_execute(stmt):
