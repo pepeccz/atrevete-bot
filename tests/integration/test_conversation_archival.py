@@ -29,6 +29,34 @@ from database.models import ConversationHistory, ConversationMessage, Customer
 TIMEZONE = ZoneInfo("Europe/Madrid")
 
 
+def _make_checkpoint_key(conversation_id: str) -> str:
+    """
+    Build a Redis checkpoint key in the format expected by the archiver.
+
+    Real format (from AsyncRedisSaver + archiver scan pattern):
+        checkpoint:{thread_id}:{checkpoint_ns}:{checkpoint_id}
+    where thread_id = "v2:{conversation_id}".
+
+    The archiver scans "checkpoint:*" and extracts thread_id via
+    ``inner.rsplit(":", 2)[0]``, then strips the "v2:" prefix.
+    """
+    checkpoint_ns = "__empty__"
+    checkpoint_id = str(uuid4()).replace("-", "")
+    return f"checkpoint:v2:{conversation_id}:{checkpoint_ns}:{checkpoint_id}"
+
+
+def _set_checkpoint_with_ttl(redis_client, key: str, data: dict, ttl_seconds: int) -> None:
+    """Store JSON-serialized checkpoint data with an explicit TTL.
+
+    The archiver uses ``redis.ttl(key)`` to compute checkpoint age:
+        checkpoint_age = 24h - remaining_ttl
+        expired if checkpoint_age > 23h  →  ttl < 3600
+
+    So to simulate an old checkpoint, use a small TTL (e.g. 0 remaining ≈ 1).
+    """
+    redis_client.setex(key, ttl_seconds, json.dumps(data))
+
+
 @pytest.fixture
 async def test_customer():
     """Create a test customer for use in tests."""
@@ -36,9 +64,7 @@ async def test_customer():
 
     async with get_async_session() as session:
         # Remove any stale customer with the same phone from prior test runs
-        await session.execute(
-            delete(Customer).where(Customer.phone == "+34612345678")
-        )
+        await session.execute(delete(Customer).where(Customer.phone == "+34612345678"))
         await session.commit()
 
     async with get_async_session() as session:
@@ -56,9 +82,7 @@ async def test_customer():
 
     # Clean up
     async with get_async_session() as session:
-        await session.execute(
-            delete(Customer).where(Customer.id == customer_id)
-        )
+        await session.execute(delete(Customer).where(Customer.id == customer_id))
         await session.commit()
 
 
@@ -67,10 +91,15 @@ async def clean_test_data():
     """Clean Redis and PostgreSQL test data before and after tests."""
     redis_client = get_sync_redis_client()
 
+    def _delete_test_checkpoint_keys():
+        # Archiver scans "checkpoint:*" (no langgraph: prefix).
+        # Test keys follow "checkpoint:v2:test-conv-*" format.
+        test_keys = list(redis_client.scan_iter(match="checkpoint:v2:test-conv-*"))
+        if test_keys:
+            redis_client.delete(*test_keys)
+
     # Clean before test
-    test_keys = redis_client.keys("langgraph:checkpoint:test-*")
-    if test_keys:
-        redis_client.delete(*test_keys)
+    _delete_test_checkpoint_keys()
 
     async with get_async_session() as session:
         # Delete test conversation history
@@ -84,9 +113,7 @@ async def clean_test_data():
     yield
 
     # Clean after test
-    test_keys = redis_client.keys("langgraph:checkpoint:test-*")
-    if test_keys:
-        redis_client.delete(*test_keys)
+    _delete_test_checkpoint_keys()
 
     async with get_async_session() as session:
         await session.execute(
@@ -116,9 +143,10 @@ async def test_full_archival_workflow_with_json_serialization(clean_test_data, t
     conversation_id = "test-conv-001"
     customer_id = test_customer  # Use test customer fixture
 
-    # Create checkpoint with timestamp 23.5 hours ago
-    old_timestamp = int((datetime.now(TIMEZONE) - timedelta(hours=23.5)).timestamp())
-    key = f"langgraph:checkpoint:{conversation_id}:{old_timestamp}"
+    # Use the real checkpoint key format (archiver scans "checkpoint:*", no langgraph: prefix).
+    # TTL=1800 → remaining=1800s → age = 24h - 1800s = 22.5h > 23h threshold:
+    #   checkpoint_time = now - (86400 - 1800) = now - 84600 ≈ 23.5h ago → expired.
+    key = _make_checkpoint_key(conversation_id)
 
     # Create conversation state with 5 messages
     state = {
@@ -160,15 +188,12 @@ async def test_full_archival_workflow_with_json_serialization(clean_test_data, t
     # Wrap in LangGraph checkpoint structure
     checkpoint = {
         "v": 1,
-        "ts": old_timestamp,
         "data": state,
     }
 
-    # Serialize to JSON
-    serialized_state = json.dumps(checkpoint)
-
-    # Store in Redis (using sync client)
-    redis_client.set(key, serialized_state)
+    # Store in Redis with a low TTL (1800s) to simulate a ~23.5h-old checkpoint.
+    # Archiver age formula: checkpoint_age = 24h - remaining_ttl → 24h - 0.5h = 23.5h > CUTOFF_HOURS (23h).
+    _set_checkpoint_with_ttl(redis_client, key, checkpoint, ttl_seconds=1800)
 
     # Verify checkpoint exists
     assert redis_client.exists(key) == 1
@@ -180,8 +205,9 @@ async def test_full_archival_workflow_with_json_serialization(clean_test_data, t
     async with get_async_session() as session:
         # Query the parent ConversationHistory row
         parent_result = await session.execute(
-            select(ConversationHistory)
-            .where(ConversationHistory.conversation_id == conversation_id)
+            select(ConversationHistory).where(
+                ConversationHistory.conversation_id == conversation_id
+            )
         )
         parent = parent_result.scalar_one_or_none()
 
@@ -237,8 +263,7 @@ async def test_archival_with_conversation_summary(clean_test_data, test_customer
     conversation_id = "test-conv-002"
     customer_id = test_customer  # Use test customer fixture
 
-    old_timestamp = int((datetime.now(TIMEZONE) - timedelta(hours=23.5)).timestamp())
-    key = f"langgraph:checkpoint:{conversation_id}:{old_timestamp}"
+    key = _make_checkpoint_key(conversation_id)
 
     state = {
         "conversation_id": conversation_id,
@@ -253,8 +278,8 @@ async def test_archival_with_conversation_summary(clean_test_data, test_customer
         "conversation_summary": "Customer requested booking for tomorrow at 10am. Confirmed appointment.",
     }
 
-    checkpoint = {"v": 1, "ts": old_timestamp, "data": state}
-    redis_client.set(key, json.dumps(checkpoint))
+    checkpoint = {"v": 1, "data": state}
+    _set_checkpoint_with_ttl(redis_client, key, checkpoint, ttl_seconds=1800)
 
     # Run archival
     await archive_expired_conversations()
@@ -262,8 +287,9 @@ async def test_archival_with_conversation_summary(clean_test_data, test_customer
     # Verify summary stored on the parent ConversationHistory row
     async with get_async_session() as session:
         result = await session.execute(
-            select(ConversationHistory)
-            .where(ConversationHistory.conversation_id == conversation_id)
+            select(ConversationHistory).where(
+                ConversationHistory.conversation_id == conversation_id
+            )
         )
         parent = result.scalar_one_or_none()
 
@@ -283,11 +309,10 @@ async def test_archival_skips_malformed_checkpoint(clean_test_data):
 
     # Create checkpoint with invalid data
     conversation_id = "test-conv-003"
-    old_timestamp = int((datetime.now(TIMEZONE) - timedelta(hours=23.5)).timestamp())
-    key = f"langgraph:checkpoint:{conversation_id}:{old_timestamp}"
+    key = _make_checkpoint_key(conversation_id)
 
-    # Store invalid JSON
-    redis_client.set(key, b"INVALID_JSON_DATA")
+    # Store invalid JSON with a low TTL to make it appear expired to the archiver
+    redis_client.setex(key, 1800, b"INVALID_JSON_DATA")
 
     # Run archival (should not crash)
     await archive_expired_conversations()
@@ -320,8 +345,7 @@ async def test_archival_handles_missing_customer_id(clean_test_data):
 
     # Create checkpoint without customer_id
     conversation_id = "test-conv-004"
-    old_timestamp = int((datetime.now(TIMEZONE) - timedelta(hours=23.5)).timestamp())
-    key = f"langgraph:checkpoint:{conversation_id}:{old_timestamp}"
+    key = _make_checkpoint_key(conversation_id)
 
     state = {
         "conversation_id": conversation_id,
@@ -335,8 +359,8 @@ async def test_archival_handles_missing_customer_id(clean_test_data):
         ],
     }
 
-    checkpoint = {"v": 1, "ts": old_timestamp, "data": state}
-    redis_client.set(key, json.dumps(checkpoint))
+    checkpoint = {"v": 1, "data": state}
+    _set_checkpoint_with_ttl(redis_client, key, checkpoint, ttl_seconds=1800)
 
     # Run archival
     await archive_expired_conversations()
@@ -375,23 +399,22 @@ async def test_find_expired_checkpoints_filters_correctly(clean_test_data):
     """
     redis_client = get_sync_redis_client()
 
-    # Create checkpoints with different ages
-    now = datetime.now(TIMEZONE)
+    # Create checkpoints with different ages using the correct key format.
+    # Archiver age formula: checkpoint_age = 24h - remaining_ttl.
+    # Expired when checkpoint_age > CUTOFF_HOURS (23h), i.e. TTL < 3600s.
+    dummy_data = json.dumps({"data": {"conversation_id": "placeholder", "messages": []}})
 
-    # 24h old (expired)
-    old_24h_ts = int((now - timedelta(hours=24)).timestamp())
-    key_24h = f"langgraph:checkpoint:test-conv-24h:{old_24h_ts}"
-    redis_client.set(key_24h, json.dumps({"data": {"conversation_id": "test-conv-24h", "messages": []}}))
+    # 24h old (expired): TTL ≈ 1s — nearly zero remaining
+    key_24h = _make_checkpoint_key("test-conv-24h")
+    redis_client.setex(key_24h, 1, dummy_data)
 
-    # 23.5h old (expired)
-    old_23_5h_ts = int((now - timedelta(hours=23.5)).timestamp())
-    key_23_5h = f"langgraph:checkpoint:test-conv-23.5h:{old_23_5h_ts}"
-    redis_client.set(key_23_5h, json.dumps({"data": {"conversation_id": "test-conv-23.5h", "messages": []}}))
+    # 23.5h old (expired): TTL = 1800s (0.5h remaining of 24h = 23.5h age)
+    key_23_5h = _make_checkpoint_key("test-conv-23.5h")
+    redis_client.setex(key_23_5h, 1800, dummy_data)
 
-    # 1h old (NOT expired)
-    recent_1h_ts = int((now - timedelta(hours=1)).timestamp())
-    key_1h = f"langgraph:checkpoint:test-conv-1h:{recent_1h_ts}"
-    redis_client.set(key_1h, json.dumps({"data": {"conversation_id": "test-conv-1h", "messages": []}}))
+    # 1h old (NOT expired): TTL = 82800s (23h remaining of 24h = 1h age)
+    key_1h = _make_checkpoint_key("test-conv-1h")
+    redis_client.setex(key_1h, 82800, dummy_data)
 
     # Find expired checkpoints
     expired_keys = await find_expired_checkpoints(redis_client)
@@ -416,15 +439,17 @@ async def test_retrieve_and_parse_checkpoint_handles_pickle(clean_test_data):
     redis_client = get_sync_redis_client()
 
     conversation_id = "test-conv-pickle"
-    key = f"langgraph:checkpoint:{conversation_id}:123456789"
+    key = _make_checkpoint_key(conversation_id)
 
     # Create state with pickle serialization
     state = {
         "conversation_id": conversation_id,
-        "messages": [{"role": "user", "content": "Test", "timestamp": datetime.now(TIMEZONE).isoformat()}],
+        "messages": [
+            {"role": "user", "content": "Test", "timestamp": datetime.now(TIMEZONE).isoformat()}
+        ],
     }
 
-    checkpoint = {"v": 1, "ts": 123456789, "data": state}
+    checkpoint = {"v": 1, "data": state}
     serialized = pickle.dumps(checkpoint)
 
     redis_client.set(key, serialized)
@@ -434,8 +459,8 @@ async def test_retrieve_and_parse_checkpoint_handles_pickle(clean_test_data):
 
     # Verify parsed correctly
     assert parsed_state is not None
-    assert parsed_state['conversation_id'] == conversation_id
-    assert len(parsed_state['messages']) == 1
+    assert parsed_state["conversation_id"] == conversation_id
+    assert len(parsed_state["messages"]) == 1
 
 
 @pytest.mark.asyncio
@@ -452,8 +477,7 @@ async def test_archive_checkpoint_with_retry_logic(clean_test_data, test_custome
     redis_client = get_sync_redis_client()
 
     conversation_id = "test-conv-retry"
-    old_timestamp = int((datetime.now(TIMEZONE) - timedelta(hours=23.5)).timestamp())
-    key = f"langgraph:checkpoint:{conversation_id}:{old_timestamp}"
+    key = _make_checkpoint_key(conversation_id)
 
     state = {
         "conversation_id": conversation_id,
@@ -467,13 +491,13 @@ async def test_archive_checkpoint_with_retry_logic(clean_test_data, test_custome
         ],
     }
 
-    checkpoint = {"v": 1, "ts": old_timestamp, "data": state}
-    redis_client.set(key, json.dumps(checkpoint))
+    checkpoint = {"v": 1, "data": state}
+    _set_checkpoint_with_ttl(redis_client, key, checkpoint, ttl_seconds=1800)
 
     # Run archival
     result = await archive_checkpoint(redis_client, key, conversation_id)
 
     # Verify success
-    assert result['success'] is True
-    assert result['messages_archived'] == 1
-    assert result['error'] is None
+    assert result["success"] is True
+    assert result["messages_archived"] == 1
+    assert result["error"] is None
