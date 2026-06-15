@@ -45,19 +45,28 @@ def _bypass_rate_limiter():
 
 @pytest.fixture
 def client():
-    """Provide a TestClient for the FastAPI app."""
-    return TestClient(app, raise_server_exceptions=False)
+    """Provide a TestClient for the FastAPI app.
+
+    Includes an Origin header so the OriginCheckMiddleware passes for mutating
+    requests (POST/PATCH/DELETE) to billing endpoints.
+    """
+    return TestClient(
+        app, raise_server_exceptions=False, headers={"Origin": "http://localhost:3000"}
+    )
 
 
 @pytest.fixture
 def mock_auth():
-    """Override get_current_user to bypass JWT authentication."""
-    fake_user = {
-        "sub": "admin",
-        "jti": str(uuid4()),
-        "exp": 9999999999,
-        "type": "admin",
-    }
+    """Override get_current_user to bypass JWT authentication.
+
+    Returns an AdminUser-like MagicMock with .role = "admin" so that
+    require_permission() in api/dependencies/auth.py can call current_user.role
+    without AttributeError (the previous dict-based fake lacked .role).
+    """
+    fake_user = MagicMock()
+    fake_user.role = "admin"
+    fake_user.is_active = True
+    fake_user.username = "admin"
     app.dependency_overrides[get_current_user] = lambda: fake_user
     yield fake_user
     app.dependency_overrides.pop(get_current_user, None)
@@ -89,6 +98,13 @@ def _make_invoice(
     inv.due_date = date(year, month, 15)
     inv.pdf_path = None
     inv.stripe_payment_intent_id = None
+    # Fields accessed by InvoiceResponse.from_invoice() but not in previous mock:
+    inv.stripe_invoice_id = None
+    inv.invoice_pdf_url = None
+    inv.subtotal_eur = None
+    inv.tax_rate_pct = None
+    inv.tax_amount_eur = None
+    inv.gross_amount_eur = None
     inv.notes = None
     inv.payments = []
     inv.created_at = datetime(year, month, 1, tzinfo=UTC)
@@ -327,6 +343,10 @@ class TestCurrentEstimate:
             "maintenance_amount_eur": "99.00",
             "token_amount_eur": "12.50",
             "total_amount_eur": "111.50",
+            # Required fields added to satisfy CurrentEstimateResponse model:
+            "subtotal_eur": "111.50",
+            "tax_amount_eur": "0.00",
+            "gross_amount_eur": "111.50",
             "input_tokens": 500_000,
             "output_tokens": 200_000,
             "total_requests": 150,
@@ -462,11 +482,14 @@ class TestStripeWebhook:
 
     def test_stripe_webhook_valid_returns_200(self, client):
         """GIVEN valid Stripe event, WHEN POST webhook, THEN returns 200 with received=True."""
-        fake_event = {
-            "type": "checkout.session.completed",
-            "id": "evt_test_123",
-            "data": {"object": {"id": "cs_test_123"}},
-        }
+        # Production code accesses event.type / event.data.object (attribute access, not dict).
+        # Use MagicMock with explicit attributes to match the Stripe SDK Event interface.
+        fake_event = MagicMock()
+        fake_event.type = "checkout.session.completed"
+        fake_event.id = "evt_test_123"
+        fake_event.data = MagicMock()
+        fake_event.data.object = MagicMock()
+        fake_event.data.object.id = "cs_test_123"
 
         mock_session = AsyncMock()
         with patch("api.routes.billing.StripeService") as MockStripeService:
@@ -481,7 +504,7 @@ class TestStripeWebhook:
             ):
                 response = client.post(
                     "/api/billing/stripe/webhook",
-                    content=json.dumps(fake_event).encode(),
+                    content=b'{"type": "checkout.session.completed", "id": "evt_test_123"}',
                     headers={"stripe-signature": "valid_sig"},
                 )
 
@@ -490,11 +513,12 @@ class TestStripeWebhook:
 
     def test_stripe_webhook_unhandled_event_returns_200(self, client):
         """GIVEN unhandled event type, WHEN POST webhook, THEN still returns 200."""
-        fake_event = {
-            "type": "customer.created",
-            "id": "evt_test_456",
-            "data": {"object": {}},
-        }
+        # Production code accesses event.type / event.data.object (attribute access, not dict).
+        fake_event = MagicMock()
+        fake_event.type = "customer.created"
+        fake_event.id = "evt_test_456"
+        fake_event.data = MagicMock()
+        fake_event.data.object = MagicMock()
 
         mock_session = AsyncMock()
         with patch("api.routes.billing.StripeService") as MockStripeService:
@@ -508,7 +532,7 @@ class TestStripeWebhook:
             ):
                 response = client.post(
                     "/api/billing/stripe/webhook",
-                    content=json.dumps(fake_event).encode(),
+                    content=b'{"type": "customer.created", "id": "evt_test_456"}',
                     headers={"stripe-signature": "valid_sig"},
                 )
 
@@ -518,11 +542,13 @@ class TestStripeWebhook:
     def test_stripe_webhook_payment_succeeded_marks_paid(self, client):
         """GIVEN payment_intent.succeeded event, WHEN POST webhook, THEN returns 200."""
         pi_id = "pi_test_789"
-        fake_event = {
-            "type": "payment_intent.succeeded",
-            "id": "evt_test_789",
-            "data": {"object": {"id": pi_id}},
-        }
+        # Production code accesses event.type / event.data.object (attribute access, not dict).
+        fake_event = MagicMock()
+        fake_event.type = "payment_intent.succeeded"
+        fake_event.id = "evt_test_789"
+        fake_event.data = MagicMock()
+        fake_event.data.object = MagicMock()
+        fake_event.data.object.id = pi_id
 
         # Mock payment and invoice found in DB
         mock_payment = MagicMock()
@@ -554,7 +580,7 @@ class TestStripeWebhook:
             ):
                 response = client.post(
                     "/api/billing/stripe/webhook",
-                    content=json.dumps(fake_event).encode(),
+                    content=b'{"type": "payment_intent.succeeded", "id": "evt_test_789"}',
                     headers={"stripe-signature": "valid_sig"},
                 )
 
