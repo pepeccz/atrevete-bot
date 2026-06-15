@@ -556,7 +556,8 @@ class TestCreateAppointmentEndpoint:
         """Test creating appointment when slot is free."""
         with patch("api.routes.admin.get_async_session") as mock_session_ctx, \
              patch("api.routes.admin.find_overlapping_appointments") as mock_find, \
-             patch("api.routes.admin._safe_send_admin_appointment_template") as mock_notify:
+             patch("api.routes.admin._safe_send_admin_appointment_template") as mock_notify, \
+             patch("shared.gcal_push_service.push_appointment_to_gcal", new_callable=AsyncMock, return_value=None):
 
             mock_session = AsyncMock()
             mock_session_ctx.return_value.__aenter__.return_value = mock_session
@@ -714,7 +715,8 @@ class TestCreateAppointmentEndpoint:
         """Test creating appointment succeeds when overlaps exist and allow_overlap=true."""
         with patch("api.routes.admin.get_async_session") as mock_session_ctx, \
              patch("api.routes.admin.find_overlapping_appointments") as mock_find, \
-             patch("api.routes.admin._safe_send_admin_appointment_template") as mock_notify:
+             patch("api.routes.admin._safe_send_admin_appointment_template") as mock_notify, \
+             patch("shared.gcal_push_service.push_appointment_to_gcal", new_callable=AsyncMock, return_value=None):
 
             mock_session = AsyncMock()
             mock_session_ctx.return_value.__aenter__.return_value = mock_session
