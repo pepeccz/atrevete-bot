@@ -48,12 +48,12 @@ def _assembled_prompt() -> str:
 
     Invalidates the lru_cache before each call so file edits are visible.
     """
-    import importlib
-
     import agent.prompts.loader as loader_mod
 
-    # Re-import to pick up any in-process edits; also bust cache.
-    importlib.reload(loader_mod)
+    # Bust the lru_cache to re-assemble. Do NOT importlib.reload(loader_mod) —
+    # reloading recreates the module-level _TtlCache class and pollutes later
+    # full-suite tests (e.g. test_business_hours_cache identity check).
+    loader_mod.load_system_prompt.cache_clear()
     return loader_mod.load_system_prompt()
 
 
