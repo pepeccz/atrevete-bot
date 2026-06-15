@@ -79,6 +79,11 @@ def _make_common_mocks(strict_mock: AsyncMock):
     fake_cm.__aenter__ = AsyncMock(return_value=fake_session)
     fake_cm.__aexit__ = AsyncMock(return_value=False)
 
+    ok_fk = MagicMock()
+    ok_fk.ok = True
+    ok_fk.missing_ids = []
+    ok_fk.payload = {}
+
     return {
         "agent.tools._booking_helpers._resolve_service_ids": AsyncMock(
             return_value=([str(FAKE_SERVICE_ID)], [])
@@ -98,6 +103,9 @@ def _make_common_mocks(strict_mock: AsyncMock):
         "agent.tools._booking_helpers._validate_full_name": MagicMock(return_value=None),
         "database.connection.get_async_session": MagicMock(return_value=fake_cm),
         "agent.tools._booking_validators.is_date_closed": AsyncMock(return_value=False),
+        "agent.tools.update_booking.validate_service_ids_exist": AsyncMock(return_value=ok_fk),
+        "agent.tools.update_booking.validate_stylist_id_exists": AsyncMock(return_value=ok_fk),
+        "agent.tools.update_booking._load_lead_time_min_days": AsyncMock(return_value=3),
     }
 
 
@@ -239,6 +247,9 @@ async def test_variant_resolved_true_bypasses_variant_gate():
             "agent.tools._booking_validators.is_date_closed",
             mocks["agent.tools._booking_validators.is_date_closed"],
         ),
+        patch("agent.tools.update_booking.validate_service_ids_exist", mocks["agent.tools.update_booking.validate_service_ids_exist"]),
+        patch("agent.tools.update_booking.validate_stylist_id_exists", mocks["agent.tools.update_booking.validate_stylist_id_exists"]),
+        patch("agent.tools.update_booking._load_lead_time_min_days", mocks["agent.tools.update_booking._load_lead_time_min_days"]),
     ):
         raw = await _update_booking_impl(
             services=["Tinte"],
@@ -389,6 +400,9 @@ async def test_pre_resolved_service_ids_param_accepted():
             "agent.tools._booking_validators.is_date_closed",
             mocks["agent.tools._booking_validators.is_date_closed"],
         ),
+        patch("agent.tools.update_booking.validate_service_ids_exist", mocks["agent.tools.update_booking.validate_service_ids_exist"]),
+        patch("agent.tools.update_booking.validate_stylist_id_exists", mocks["agent.tools.update_booking.validate_stylist_id_exists"]),
+        patch("agent.tools.update_booking._load_lead_time_min_days", mocks["agent.tools.update_booking._load_lead_time_min_days"]),
     ):
         # Must not raise TypeError for unknown kwarg
         raw = await _update_booking_impl(
