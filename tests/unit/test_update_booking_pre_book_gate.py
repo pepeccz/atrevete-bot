@@ -19,6 +19,14 @@ FAKE_STYLIST_ID = str(uuid4())
 FAKE_DATE = (date.today() + timedelta(days=5)).isoformat()
 
 
+def _make_ok_fk():
+    r = MagicMock()
+    r.ok = True
+    r.missing_ids = []
+    r.payload = {}
+    return r
+
+
 def _base_patches(
     resolved_ids=None,
     stylist_id=None,
@@ -49,6 +57,10 @@ def _base_patches(
             return_value=("Juan", "García")
         ),
         "shared.business_hours_validator.is_date_closed": AsyncMock(return_value=is_closed),
+        "agent.tools._booking_validators.is_date_closed": AsyncMock(return_value=is_closed),
+        "agent.tools.update_booking.validate_service_ids_exist": AsyncMock(return_value=_make_ok_fk()),
+        "agent.tools.update_booking.validate_stylist_id_exists": AsyncMock(return_value=_make_ok_fk()),
+        "agent.tools.update_booking._load_lead_time_min_days": AsyncMock(return_value=3),
     }
 
 
@@ -93,7 +105,7 @@ async def test_booking_ready_blocked_without_pre_book_validation():
     """notes_asked=True but no check_availability ToolMessage → pre_book_validation_required."""
     from agent.tools.update_booking import _update_booking_impl
 
-    patches = _base_patches()
+    patches = _base_patches(stylist_id=FAKE_STYLIST_ID)
     ctx = _make_session_ctx()
 
     with (
@@ -134,7 +146,15 @@ async def test_booking_ready_blocked_without_pre_book_validation():
             patches["shared.business_hours_validator.is_date_closed"],
         ),
         patch("database.connection.get_async_session", return_value=ctx),
+        patch("agent.tools._booking_validators.is_date_closed", patches["agent.tools._booking_validators.is_date_closed"]),
+        patch("agent.tools.update_booking.validate_service_ids_exist", patches["agent.tools.update_booking.validate_service_ids_exist"]),
+        patch("agent.tools.update_booking.validate_stylist_id_exists", patches["agent.tools.update_booking.validate_stylist_id_exists"]),
+        patch("agent.tools.update_booking._load_lead_time_min_days", patches["agent.tools.update_booking._load_lead_time_min_days"]),
     ):
+        _slot_iso = f"{FAKE_DATE}T10:00:00+02:00"
+        from datetime import UTC, datetime, timedelta
+        _expires = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+        _offered = [{"start_iso": _slot_iso, "stylist_id": FAKE_STYLIST_ID, "expires_at": _expires, "turn_index": 0}]
         result_json = await _update_booking_impl(
             services=["corte"],
             stylist_name="Marta",
@@ -147,8 +167,10 @@ async def test_booking_ready_blocked_without_pre_book_validation():
             extras_asked=True,
             notes_asked=True,
             customer_known=True,
-            slot_iso=f"{FAKE_DATE}T10:00:00+02:00",  # slot_iso activates the gate
+            slot_iso=_slot_iso,  # slot_iso activates the gate
+            recently_offered_slots=_offered,
             messages=[],  # No recent messages → no check_availability ToolMessage
+            policy_accepted=True,
         )
 
     result = json.loads(result_json)
@@ -210,7 +232,14 @@ async def test_booking_ready_unblocked_with_matching_validation():
             patches["shared.business_hours_validator.is_date_closed"],
         ),
         patch("database.connection.get_async_session", return_value=ctx),
+        patch("agent.tools._booking_validators.is_date_closed", patches["agent.tools._booking_validators.is_date_closed"]),
+        patch("agent.tools.update_booking.validate_service_ids_exist", patches["agent.tools.update_booking.validate_service_ids_exist"]),
+        patch("agent.tools.update_booking.validate_stylist_id_exists", patches["agent.tools.update_booking.validate_stylist_id_exists"]),
+        patch("agent.tools.update_booking._load_lead_time_min_days", patches["agent.tools.update_booking._load_lead_time_min_days"]),
     ):
+        from datetime import UTC, datetime, timedelta
+        _expires = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+        _offered = [{"start_iso": slot_dt, "stylist_id": stylist_uuid, "expires_at": _expires, "turn_index": 0}]
         result_json = await _update_booking_impl(
             services=["corte"],
             stylist_name="Marta",
@@ -224,7 +253,9 @@ async def test_booking_ready_unblocked_with_matching_validation():
             notes_asked=True,
             customer_known=True,
             slot_iso=slot_dt,
+            recently_offered_slots=_offered,
             messages=[tool_msg],  # Matching ToolMessage present
+            policy_accepted=True,
         )
 
     result = json.loads(result_json)
@@ -288,7 +319,15 @@ async def test_booking_ready_blocked_mismatched_slot():
             patches["shared.business_hours_validator.is_date_closed"],
         ),
         patch("database.connection.get_async_session", return_value=ctx),
+        patch("agent.tools._booking_validators.is_date_closed", patches["agent.tools._booking_validators.is_date_closed"]),
+        patch("agent.tools.update_booking.validate_service_ids_exist", patches["agent.tools.update_booking.validate_service_ids_exist"]),
+        patch("agent.tools.update_booking.validate_stylist_id_exists", patches["agent.tools.update_booking.validate_stylist_id_exists"]),
+        patch("agent.tools.update_booking._load_lead_time_min_days", patches["agent.tools.update_booking._load_lead_time_min_days"]),
     ):
+        from datetime import UTC, datetime, timedelta
+        _expires = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
+        # Offer different_slot_dt so J3 guard passes — the CA mismatch is what we test
+        _offered = [{"start_iso": different_slot_dt, "stylist_id": stylist_uuid, "expires_at": _expires, "turn_index": 0}]
         result_json = await _update_booking_impl(
             services=["corte"],
             stylist_name="Marta",
@@ -302,7 +341,9 @@ async def test_booking_ready_blocked_mismatched_slot():
             notes_asked=True,
             customer_known=True,
             slot_iso=different_slot_dt,  # different from tool_msg
+            recently_offered_slots=_offered,
             messages=[tool_msg],
+            policy_accepted=True,
         )
 
     result = json.loads(result_json)
