@@ -202,7 +202,7 @@ class TestEscalationFK:
                     "(id, conversation_id, customer_phone, reason, source, status, "
                     " is_technical_error, triggered_at, resolved_by_user_id) "
                     "VALUES (:id, 'conv-001', '+34600000099', 'test reason', "
-                    " 'keyword_trigger', 'triggered', FALSE, now(), NULL)"
+                    " 'manual', 'triggered', FALSE, now(), NULL)"
                 ),
                 {"id": str(uuid4())},
             )
@@ -249,7 +249,7 @@ class TestEscalationFK:
                     "(id, conversation_id, customer_phone, reason, source, status, "
                     " is_technical_error, triggered_at, resolved_by_user_id) "
                     "VALUES (:esc_id, 'conv-002', '+34600000098', 'test reason', "
-                    " 'keyword_trigger', 'triggered', FALSE, now(), :user_id)"
+                    " 'manual', 'triggered', FALSE, now(), :user_id)"
                 ),
                 {"esc_id": escalation_id, "user_id": user_id},
             )
