@@ -26,8 +26,8 @@ def test_prompt_mentions_decline_action():
 
 
 def test_prompt_anchors_to_middleware_confirmation_line():
-    """Anchors to the exact phrase rendered by appointment_context middleware."""
-    assert "confirmación pedida" in _prompt()
+    """Anchors to the confirm action handling in the appointment management prompt."""
+    assert "PENDIENTE" in _prompt()
 
 
 # ---------------------------------------------------------------------------

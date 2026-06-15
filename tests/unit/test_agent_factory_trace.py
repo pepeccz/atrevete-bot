@@ -40,10 +40,10 @@ def _build_and_capture_middleware(trace_enabled: bool) -> list:
 
 
 def test_middleware_count_with_trace_enabled():
-    """build_conversation_agent() with trace on → middleware list has 8 entries."""
+    """build_conversation_agent() with trace on → middleware list has 9 entries."""
     mw_list = _build_and_capture_middleware(trace_enabled=True)
-    assert len(mw_list) == 8, (
-        f"Expected 8 middleware entries with trace enabled, got {len(mw_list)}: "
+    assert len(mw_list) == 9, (
+        f"Expected 9 middleware entries with trace enabled, got {len(mw_list)}: "
         f"{[type(m).__name__ for m in mw_list]}"
     )
 
@@ -60,10 +60,10 @@ def test_llm_trace_middleware_is_first():
 
 
 def test_middleware_count_with_trace_disabled():
-    """build_conversation_agent() with trace off → middleware list has 7 entries (LLMTraceMiddleware absent)."""
+    """build_conversation_agent() with trace off → middleware list has 8 entries (LLMTraceMiddleware absent)."""
     mw_list = _build_and_capture_middleware(trace_enabled=False)
-    assert len(mw_list) == 7, (
-        f"Expected 7 middleware entries with trace disabled, got {len(mw_list)}: "
+    assert len(mw_list) == 8, (
+        f"Expected 8 middleware entries with trace disabled, got {len(mw_list)}: "
         f"{[type(m).__name__ for m in mw_list]}"
     )
     mw_types = [type(m).__name__ for m in mw_list]

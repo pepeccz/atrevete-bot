@@ -101,6 +101,7 @@ async def test_create_stylist(session):
     """Test creating a stylist with all fields."""
     stylist = Stylist(
         name="Test Stylist",
+        slug="test-stylist",
         category=ServiceCategory.HAIRDRESSING,
         google_calendar_id="test@atrevete.com",
         is_active=True,
@@ -125,6 +126,7 @@ async def test_stylist_unique_calendar_id(session):
     """Test that google_calendar_id must be unique."""
     stylist1 = Stylist(
         name="Stylist 1",
+        slug="stylist-1",
         category=ServiceCategory.HAIRDRESSING,
         google_calendar_id="duplicate@atrevete.com",
     )
@@ -134,6 +136,7 @@ async def test_stylist_unique_calendar_id(session):
     # Try to create another stylist with same calendar ID
     stylist2 = Stylist(
         name="Stylist 2",
+        slug="stylist-2",
         category=ServiceCategory.AESTHETICS,
         google_calendar_id="duplicate@atrevete.com",
     )
@@ -154,6 +157,7 @@ async def test_create_customer_with_stylist(session):
     # First create a stylist
     stylist = Stylist(
         name="Preferred Stylist",
+        slug="preferred-stylist",
         category=ServiceCategory.BOTH,
         google_calendar_id="preferred@atrevete.com",
     )
@@ -212,6 +216,7 @@ async def test_customer_stylist_on_delete_set_null(session):
     """Test that deleting a stylist sets preferred_stylist_id to NULL."""
     stylist = Stylist(
         name="Temp Stylist",
+        slug="temp-stylist",
         category=ServiceCategory.HAIRDRESSING,
         google_calendar_id="temp@atrevete.com",
     )
@@ -302,15 +307,15 @@ async def test_seed_stylists():
         assert "Pilar" in stylist_names
         assert "Marta" in stylist_names
         assert "Rosa" in stylist_names
-        assert "Harol" in stylist_names
-        assert "Víctor" in stylist_names
+        assert "Harolyn" in stylist_names
+        assert "Victor" in stylist_names
 
         # Verify categories
         pilar = next(s for s in stylists if s.name == "Pilar")
         assert pilar.category == ServiceCategory.HAIRDRESSING
 
         marta = next(s for s in stylists if s.name == "Marta")
-        assert marta.category == ServiceCategory.BOTH
+        assert marta.category == ServiceCategory.HAIRDRESSING
 
 
 @pytest.mark.asyncio

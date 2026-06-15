@@ -55,8 +55,17 @@ async def test_customer_resolve_emits_xml_tag():
         return _FakeModelResponse()
 
     with patch(
+        "agent.middleware.customer_resolve._get_cached_customer",
+        new=AsyncMock(return_value=None),
+    ), patch(
         "agent.middleware.customer_resolve._lookup_customer",
         new=AsyncMock(return_value=customer_data),
+    ), patch(
+        "agent.middleware.customer_resolve._set_cached_customer",
+        new=AsyncMock(return_value=None),
+    ), patch(
+        "agent.middleware.customer_resolve.read_customer_memories",
+        new=AsyncMock(return_value=None),
     ):
         mw = CustomerResolveMiddleware()
         await mw.awrap_model_call(req, fake_handler)

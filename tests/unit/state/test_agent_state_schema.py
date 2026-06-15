@@ -31,6 +31,8 @@ BASELINE_FIELDS = frozenset(
         "_slot_business_hours",
         "_slot_availability",
         "_slot_catalog",
+        # Added by availability context middleware (next-slot offer tracking):
+        "recently_offered_slots",
     }
 )
 

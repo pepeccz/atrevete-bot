@@ -220,30 +220,53 @@ class TestReschedule3DayRule:
         )
         return elig
 
+    @staticmethod
+    def _mock_idor_ok():
+        """IDOR guard result that passes (ownership verified)."""
+        r = MagicMock()
+        r.ok = True
+        return r
+
     @pytest.mark.asyncio
     async def test_reschedule_3_day_rule_violation(self):
-        """validate_3_day_rule returns invalid → MINIMUM_DAYS_RULE error, no execute."""
-        parsed = datetime(2026, 4, 14, 10, 0, tzinfo=self.MADRID_TZ)
-        three_day_result = {
-            "valid": False,
-            "error_message": "Las citas deben reservarse con al menos 3 días de antelación.",
-            "days_until_appointment": 1,
-        }
+        """validate_booking_date returns advance_policy_violated → error returned, no execute."""
+        from uuid import UUID
+        from agent.tools._booking_validators import DateValidationResult
+
+        customer_uuid = uuid4()
+        date_fail = DateValidationResult(
+            date_iso=None,
+            error_code="advance_policy_violated",
+            error_message="La cita debe reservarse con al menos 3 días de antelación.",
+            payload={"min_date": "2026-04-17"},
+        )
+
+        mock_session = AsyncMock()
+        mock_ctx = MagicMock()
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_ctx.__aexit__ = AsyncMock(return_value=False)
 
         with (
+            patch("agent.tools.manage_appointments_tool.get_async_session", return_value=mock_ctx),
+            patch(
+                "agent.tools.manage_appointments_tool.validate_appointment_belongs_to_customer",
+                new_callable=AsyncMock,
+                return_value=self._mock_idor_ok(),
+            ),
             patch(
                 "agent.services.reschedule_service.validate_reschedule_eligibility",
                 new_callable=AsyncMock,
                 return_value=self._mock_eligibility(),
             ),
             patch(
-                "agent.utils.date_parser.parse_natural_date",
-                return_value=parsed,
+                "agent.tools.manage_appointments_tool._load_lead_time_min_days",
+                new_callable=AsyncMock,
+                return_value=3,
             ),
             patch(
-                "agent.transactions.validators.transaction_validators.validate_3_day_rule",
+                "agent.tools.manage_appointments_tool.validate_booking_date",
                 new_callable=AsyncMock,
-                return_value=three_day_result,
+                return_value=date_fail,
             ),
             patch(
                 "agent.services.reschedule_service.execute_reschedule",
@@ -258,18 +281,25 @@ class TestReschedule3DayRule:
                 new_date="mañana",
                 new_time="10:00",
                 reason=None,
+                customer_id=customer_uuid,
             )
 
         assert result["success"] is False
-        assert result["error_code"] == "MINIMUM_DAYS_RULE"
+        assert result["error_code"] == "advance_policy_violated"
         assert "3 días" in result["message"]
         mock_execute.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_reschedule_3_day_rule_passes(self):
-        """validate_3_day_rule returns valid → flow continues to execute_reschedule."""
-        parsed = datetime(2026, 4, 20, 10, 0, tzinfo=self.MADRID_TZ)
-        three_day_ok = {"valid": True}
+        """validate_booking_date ok → flow continues to execute_reschedule."""
+        from agent.tools._booking_validators import DateValidationResult
+
+        customer_uuid = uuid4()
+        date_ok = DateValidationResult(
+            date_iso="2026-04-20",
+            error_code=None,
+            error_message=None,
+        )
         execute_result = MagicMock()
         execute_result.success = True
         execute_result.old_start_time = datetime(2026, 4, 18, 10, 0, tzinfo=self.MADRID_TZ)
@@ -277,20 +307,32 @@ class TestReschedule3DayRule:
         execute_result.within_window = True
         execute_result.slot_taken = False
 
+        mock_session = AsyncMock()
+        mock_ctx = MagicMock()
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_ctx.__aexit__ = AsyncMock(return_value=False)
+
         with (
+            patch("agent.tools.manage_appointments_tool.get_async_session", return_value=mock_ctx),
+            patch(
+                "agent.tools.manage_appointments_tool.validate_appointment_belongs_to_customer",
+                new_callable=AsyncMock,
+                return_value=self._mock_idor_ok(),
+            ),
             patch(
                 "agent.services.reschedule_service.validate_reschedule_eligibility",
                 new_callable=AsyncMock,
                 return_value=self._mock_eligibility(),
             ),
             patch(
-                "agent.utils.date_parser.parse_natural_date",
-                return_value=parsed,
+                "agent.tools.manage_appointments_tool._load_lead_time_min_days",
+                new_callable=AsyncMock,
+                return_value=3,
             ),
             patch(
-                "agent.transactions.validators.transaction_validators.validate_3_day_rule",
+                "agent.tools.manage_appointments_tool.validate_booking_date",
                 new_callable=AsyncMock,
-                return_value=three_day_ok,
+                return_value=date_ok,
             ),
             patch(
                 "agent.services.reschedule_service.execute_reschedule",
@@ -303,9 +345,10 @@ class TestReschedule3DayRule:
             result = await _reschedule_appointment(
                 customer_phone="+5491112345678",
                 appointment_id=self.VALID_UUID,
-                new_date="lunes que viene",
+                new_date="2026-04-20",
                 new_time="10:00",
                 reason=None,
+                customer_id=customer_uuid,
             )
 
         mock_execute.assert_called_once()
