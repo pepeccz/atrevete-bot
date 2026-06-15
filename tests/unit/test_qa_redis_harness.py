@@ -47,7 +47,7 @@ class FakeDeleteSession:
         self.rowcount = rowcount
         self.executed = 0
 
-    async def execute(self, _statement):
+    async def execute(self, _statement, *_args, **_kwargs):
         self.executed += 1
         return FakeDeleteResult(self.rowcount)
 

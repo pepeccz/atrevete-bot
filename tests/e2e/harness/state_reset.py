@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 import redis.asyncio as redis
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from shared.config import get_settings
@@ -130,7 +130,7 @@ class AsyncDatabaseCleaner:
             select(Appointment, Customer, Service, Stylist)
             .join(Customer, Appointment.customer_id == Customer.id)
             .join(Stylist, Appointment.stylist_id == Stylist.id)
-            .join(Service, Service.id.in_(Appointment.service_ids))
+            .join(Service, Service.id == func.any_(Appointment.service_ids))
             .where(Customer.phone == phone)
             .where(Service.name == service_name)
             .where(Stylist.name == stylist_name)

@@ -536,40 +536,51 @@ def extract_options(text: str, context: str = "stylist") -> list[str]:
     Handles:
     - Numbered lists: "1. Maria\n2. Pedro"
     - Inline comma/or separated: "Maria, Pedro o cualquiera"
+    - Multi-word tokens: "Tenemos a Maria, Pedro o cualquiera otro estilista"
     - Includes 'cualquiera' as a valid option
     """
+    # Common Spanish words to skip so they are not mistaken for proper nouns
+    _SKIP_WORDS = {
+        "tenemos", "podés", "elegir", "puede", "atenderte", "querés",
+        "perfecto", "ya", "reviso", "eso", "por", "vos", "si", "te",
+        "que", "la", "el", "un", "una", "en", "de", "del", "al",
+        "con", "para", "por", "sin", "los", "las", "hay", "este",
+        "esta", "esto", "ser", "tiene", "tener",
+    }
+
     # Try numbered list first
     numbered_matches = re.findall(r"^\d+\.\s*(.+)$", text, re.MULTILINE)
     if numbered_matches:
         return [m.strip() for m in numbered_matches]
 
-    # Try inline pattern: "X, Y o Z" or "X o Y o Z"
-    # Also catches 'cualquiera'
-    # Normalize: split by ' o ' or ', '
     results: list[str] = []
+    seen: set[str] = set()
 
-    # Find all "word" candidates (capitalized names or 'cualquiera')
-    # Split on commas, 'o', or newlines
+    # Split on common list separators then scan each segment for candidates
     separators_re = re.compile(r",\s*|\s+o\s+")
-    tokens = separators_re.split(text)
+    segments = separators_re.split(text)
 
-    for token in tokens:
-        token = token.strip()
-        # Remove punctuation at end
-        token = re.sub(r"[.,!?]+$", "", token).strip()
-        if not token:
-            continue
-        # Accept capitalized names (proper nouns) or 'cualquiera'
-        lower = token.lower()
-        if lower == "cualquiera":
-            results.append("cualquiera")
-        elif re.match(r"^[A-ZÁÉÍÓÚÜÑ][a-záéíóúüñA-ZÁÉÍÓÚÜÑ]+$", token):
-            results.append(token)
-        # Also accept all-lowercase short words for service variants
-        elif len(token) <= 12 and re.match(r"^[a-záéíóúüñ]+$", token):
-            results.append(token)
+    for segment in segments:
+        # Scan individual words within each segment
+        words = re.split(r"\s+", segment.strip())
+        for raw_word in words:
+            # Strip punctuation
+            word = re.sub(r"[.,!?;:]+$", "", raw_word).strip()
+            if not word:
+                continue
+            lower = word.lower()
+            if lower == "cualquiera":
+                if "cualquiera" not in seen:
+                    results.append("cualquiera")
+                    seen.add("cualquiera")
+            elif (
+                re.match(r"^[A-ZÁÉÍÓÚÜÑ][a-záéíóúüñA-ZÁÉÍÓÚÜÑ]+$", word)
+                and lower not in _SKIP_WORDS
+            ):
+                if word not in seen:
+                    results.append(word)
+                    seen.add(word)
 
-    # Preserve original case for 'cualquiera' but keep proper nouns as-is
     return results
 
 
@@ -765,16 +776,6 @@ class RedisTestHarness:
             customer_name=identity.sender_name,
         )
 
-        # Also record the injection in outgoing stream for test assertions
-        await self.redis.xadd(
-            f"qa_outgoing:{identity.conversation_id}",
-            {
-                "bot_reply": "",
-                "turn_index": str(turn_number),
-                "user_message": user_message,
-            },
-        )
-
         # Capture response
         timed_out = False
         agent_response: str | None = None
@@ -794,7 +795,7 @@ class RedisTestHarness:
             latency = (timestamp_received - timestamp_sent).total_seconds() * 1000
             response_latency_ms = int(latency)
 
-            # Update outgoing stream with actual bot reply
+            # Record turn in outgoing stream with actual bot reply
             await self.redis.xadd(
                 f"qa_outgoing:{identity.conversation_id}",
                 {

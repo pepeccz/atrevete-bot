@@ -19,23 +19,27 @@ def _read(filename: str) -> str:
 def test_critical_rules_contains_r25_category_rule():
     """critical_rules.md must contain rule R-25 about category restriction."""
     content = _read("critical_rules.md")
-    # Expect a line starting with 25. followed by something about category
     import re
 
-    has_r25 = bool(re.search(r"^25\.", content, re.MULTILINE))
+    # Accept both "[R25]" (current bracket format) and legacy "25." prefix format
+    has_r25 = bool(re.search(r"^\[R25\]|^25\.", content, re.MULTILINE))
     assert has_r25, (
-        "critical_rules.md must contain rule 25. (R-25) about one-category-per-appointment"
+        "critical_rules.md must contain rule R-25 about one-category-per-appointment"
     )
 
 
 def test_booking_flow_contains_category_mix_required_step():
-    """booking_flow.md must contain Paso 1.5 and category_mix_required."""
+    """booking_flow.md must contain a category-mix step and category_mix_required."""
     content = _read("booking_flow.md")
     assert "category_mix_required" in content, (
         "booking_flow.md must document the category_mix_required next_step"
     )
-    assert "Paso 1.5" in content or "1.5" in content, (
-        "booking_flow.md must contain Paso 1.5 section about category mix"
+    # Accept "Paso 1.5", "Paso 2.5", or any "Paso N.5" variant for the category-mix step
+    import re
+
+    has_category_paso = bool(re.search(r"Paso \d+\.5", content))
+    assert has_category_paso, (
+        "booking_flow.md must contain a Paso N.5 section about category mix"
     )
 
 

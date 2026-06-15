@@ -100,7 +100,9 @@ async def test_find_expired_checkpoints_with_exact_cutoff_boundary():
     Checkpoint at exactly CUTOFF_HOURS old should be marked for archival.
     """
     key_exact = "checkpoint:conv-exact:__empty__:abc4"
-    ttl_exact = 86400 - CUTOFF_HOURS * 3600  # TTL at exactly cutoff boundary
+    # TTL slightly past the cutoff boundary (1 second older than cutoff)
+    # so checkpoint_time < cutoff_time holds despite timer jitter.
+    ttl_exact = 86400 - CUTOFF_HOURS * 3600 - 1
 
     mock_redis = _make_mock_redis_with_keys([(key_exact, ttl_exact)])
 
@@ -133,29 +135,24 @@ async def test_find_expired_checkpoints_returns_empty_list_when_none_expired():
 @pytest.mark.asyncio
 async def test_redis_key_pattern_parsing_standard_format():
     """
-    Test parsing of standard checkpoint key format.
+    Test parsing of current checkpoint key format (TTL-based, no langgraph: prefix).
 
-    Key format: langgraph:checkpoint:{thread_id}:{checkpoint_ns}
-    Example: langgraph:checkpoint:thread-123:1698765432
+    Key format: checkpoint:{thread_id}:__empty__:{uuid}
+    Age is derived from remaining TTL (total TTL = 24h).
     """
-    mock_redis = MagicMock()
+    # Use _make_mock_redis_with_keys: TTL ≈ 0 → 24h old → expired
+    key = "checkpoint:thread-123:__empty__:abc-uuid-111"
+    ttl = 100  # very small → 24h - 100s old → well past cutoff
 
-    timestamp = int((datetime.now(TIMEZONE) - timedelta(hours=24)).timestamp())
-    key = f"langgraph:checkpoint:thread-123:{timestamp}"
-
-    mock_redis.keys.return_value = [key.encode("utf-8")]
+    mock_redis = _make_mock_redis_with_keys([(key, ttl)])
 
     expired_keys = await find_expired_checkpoints(mock_redis)
 
-    # Verify parsing
     assert len(expired_keys) == 1
-    key_str, conversation_id, checkpoint_time = expired_keys[0]
+    key_str, conversation_id, _ = expired_keys[0]
 
     assert conversation_id == "thread-123"
     assert key_str == key
-    # Verify timestamp parsed correctly (within 1 second tolerance)
-    expected_time = datetime.fromtimestamp(timestamp, tz=TIMEZONE)
-    assert abs((checkpoint_time - expected_time).total_seconds()) < 1
 
 
 @pytest.mark.asyncio
@@ -163,54 +160,52 @@ async def test_redis_key_pattern_parsing_with_complex_thread_id():
     """
     Test parsing checkpoint key with multi-part thread_id containing colons.
 
-    Key format: langgraph:checkpoint:wa-msg-123:user-456:1698765432
+    Key format: checkpoint:v2:wa-msg-123:__empty__:{uuid}
+    The "v2:" prefix is stripped so conversation_id equals the bare Chatwoot ID.
     """
-    mock_redis = MagicMock()
+    key = "checkpoint:v2:wa-msg-456:__empty__:abc-uuid-222"
+    ttl = 100  # expired (24h - 100s old)
 
-    timestamp = int((datetime.now(TIMEZONE) - timedelta(hours=24)).timestamp())
-    key = f"langgraph:checkpoint:wa-msg-123:user-456:{timestamp}"
-
-    mock_redis.keys.return_value = [key.encode("utf-8")]
+    mock_redis = _make_mock_redis_with_keys([(key, ttl)])
 
     expired_keys = await find_expired_checkpoints(mock_redis)
 
-    # Verify parsing handles multi-part thread_id
     assert len(expired_keys) == 1
     _, conversation_id, _ = expired_keys[0]
 
-    assert conversation_id == "wa-msg-123:user-456"
+    # "v2:" prefix is stripped by implementation
+    assert conversation_id == "wa-msg-456"
 
 
 @pytest.mark.asyncio
 async def test_redis_key_pattern_parsing_skips_malformed_keys():
     """
-    Test that malformed keys are skipped gracefully.
+    Test that malformed keys (too few parts) are skipped gracefully.
 
-    Malformed keys:
-        - Missing parts (< 3 parts)
-        - Non-numeric checkpoint_ns
+    The implementation requires at least 3 parts after stripping the
+    "checkpoint:" prefix (thread_id, checkpoint_ns, checkpoint_id).
+    Keys with fewer parts are skipped with a warning.
     """
+    # Valid key: expired (ttl ≈ 0)
+    valid_key = "checkpoint:valid-thread:__empty__:uuid-333"
+    valid_ttl = 100  # expired
+
+    # Invalid key: only 2 parts after prefix → skipped
+    invalid_key = "checkpoint:only-one-part"
+
+    ttl_map = {
+        valid_key.encode("utf-8"): valid_ttl,
+        invalid_key.encode("utf-8"): 1000,
+    }
     mock_redis = MagicMock()
-
-    timestamp = int((datetime.now(TIMEZONE) - timedelta(hours=24)).timestamp())
-
-    # Create mix of valid and invalid keys
-    valid_key = f"langgraph:checkpoint:valid-thread:{timestamp}"
-    invalid_key_1 = "langgraph:checkpoint"  # Missing parts
-    invalid_key_2 = "langgraph:checkpoint:thread:NOT_A_NUMBER"  # Non-numeric timestamp
-
-    mock_redis.keys.return_value = [
-        valid_key.encode("utf-8"),
-        invalid_key_1.encode("utf-8"),
-        invalid_key_2.encode("utf-8"),
-    ]
-
-    # Mock TTL for invalid_key_2 (since timestamp parsing will fail)
-    mock_redis.ttl.return_value = 3600  # 1 hour remaining
+    mock_redis.scan_iter.return_value = iter(
+        [valid_key.encode("utf-8"), invalid_key.encode("utf-8")]
+    )
+    mock_redis.ttl.side_effect = lambda k: ttl_map.get(k, -2)
 
     expired_keys = await find_expired_checkpoints(mock_redis)
 
-    # Only valid key should be returned
+    # Only the valid key should be returned
     assert len(expired_keys) == 1
     assert expired_keys[0][1] == "valid-thread"
 

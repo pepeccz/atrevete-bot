@@ -88,7 +88,13 @@ async def test_send_success_calls_template_with_correct_params(monkeypatch):
     class DummySettings:
         WHATSAPP_TEMPLATE_REMINDER_24H = "atrevete_reminder_24h"
 
+    class DummySettingsService:
+        async def get(self, key: str, default: str = "") -> str:
+            return default
+
     monkeypatch.setattr(reminder_24h, "get_settings", lambda: DummySettings())
+    # Patch the name as imported in reminder_24h (not in the source module)
+    monkeypatch.setattr(reminder_24h, "get_settings_service", AsyncMock(return_value=DummySettingsService()))
 
     appt = SimpleNamespace(
         id=uuid4(),
@@ -116,7 +122,14 @@ async def test_send_returns_false_when_template_unset(monkeypatch):
     class DummySettings:
         WHATSAPP_TEMPLATE_REMINDER_24H = ""
 
+    class DummySettingsService:
+        async def get(self, key: str, default: str = "") -> str:
+            # Return the default value (which is "")
+            return default
+
     monkeypatch.setattr(reminder_24h, "get_settings", lambda: DummySettings())
+    # Patch the name as imported in reminder_24h (not in the source module)
+    monkeypatch.setattr(reminder_24h, "get_settings_service", AsyncMock(return_value=DummySettingsService()))
     appt = SimpleNamespace(
         id=uuid4(),
         first_name="Ana",

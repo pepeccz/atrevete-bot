@@ -14,7 +14,7 @@ def _reload_loader():
 def test_examples_appears_after_critical_rules() -> None:
     m = _reload_loader()
     prompt = m.load_system_prompt()
-    idx_rules = prompt.find("9b-trigger")  # unique string in critical_rules
+    idx_rules = prompt.find("[R9b]")  # unique string in critical_rules
     idx_examples = prompt.find("### Ejemplo 1")  # unique string in examples
     assert idx_rules != -1, "critical_rules content not found in assembled prompt"
     assert idx_examples != -1, "examples.md content not found in assembled prompt"
@@ -26,9 +26,8 @@ def test_examples_appears_after_critical_rules() -> None:
 def test_tools_contract_appears_after_booking_flow() -> None:
     m = _reload_loader()
     prompt = m.load_system_prompt()
-    # Anchor updated: "Paso 7" was removed; use "Paso 0" which is present after
-    # SDD change prompt-audience-regression-fix-generic.
-    idx_flow = prompt.find("Paso 0")  # unique string in booking_flow (Paso 0 section)
+    # Anchor: "Paso 1 — Servicios" is a reliable unique string in booking_flow.md
+    idx_flow = prompt.find("Paso 1 — Servicios")  # unique string in booking_flow
     # Use a more unique string from tools_contract
     idx_tools = prompt.find("Nunca llamar")  # unique to tools_contract
     assert idx_flow != -1, "booking_flow content not found in assembled prompt"

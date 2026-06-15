@@ -98,7 +98,11 @@ def test_booking_flow_references_payload_stylists():
 
 
 def test_critical_rules_token_budget():
-    """critical_rules.md must stay within 1550 tokens after R-23 and R-24 additions."""
+    """critical_rules.md must stay within the token budget.
+
+    Budget updated to 4200 after rules R-25 through R-35 were added in the
+    catalog-axis-classification-audit and subsequent SDD changes.
+    """
     try:
         import tiktoken
 
@@ -108,7 +112,6 @@ def test_critical_rules_token_budget():
 
     content = _read("critical_rules.md")
     count = len(enc.encode(content))
-    # Budget: 2400 (updated for availability-context-injection: +200 for R-28/R-29)
-    assert count <= 2400, (
-        f"critical_rules.md exceeds token budget: {count} tokens > 2400 allowed"
+    assert count <= 4200, (
+        f"critical_rules.md exceeds token budget: {count} tokens > 4200 allowed"
     )

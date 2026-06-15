@@ -109,10 +109,15 @@ except Exception:  # pragma: no cover
 _SERVICE_TYPE_ORDER = {"principal": 0, "variant": 1, "addon": 2}
 
 _AUDIENCE_SUFFIX_REPLACEMENTS: tuple[tuple[str, str], ...] = (
+    # Bare-suffix forms (legacy): "Corte Dama" → "corte de mujer"
     (r"\s+dama$", " de mujer"),
     (r"\s+caballero$", " de caballero"),
-    (r"\s+niña$", " de niña"),
-    (r"\s+niño$", " de niño"),
+    # "de hombre" → "de caballero" (normalise masculine label)
+    (r"\s+de\s+hombre$", " de caballero"),
+    # Bare "niña"/"niño" suffixes without preceding "de": "Corte Niña" → "corte de niña"
+    # Use negative lookbehind to avoid matching when "de" is already present
+    (r"(?<!de)\s+niña$", " de niña"),
+    (r"(?<!de)\s+niño$", " de niño"),
 )
 
 # ---------------------------------------------------------------------------
