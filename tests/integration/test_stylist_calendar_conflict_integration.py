@@ -396,8 +396,8 @@ class TestDatabaseConstraintIntegrity:
         'uq_stylists_google_calendar_id_notnull'. This allows multiple NULL values
         while enforcing uniqueness on non-null calendar IDs.
         """
+
         from database.models import Stylist
-        from sqlalchemy import Index
 
         table = Stylist.__table__
 

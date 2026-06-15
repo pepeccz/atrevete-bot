@@ -230,7 +230,6 @@ class TestReschedule3DayRule:
     @pytest.mark.asyncio
     async def test_reschedule_3_day_rule_violation(self):
         """validate_booking_date returns advance_policy_violated → error returned, no execute."""
-        from uuid import UUID
         from agent.tools._booking_validators import DateValidationResult
 
         customer_uuid = uuid4()

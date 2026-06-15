@@ -43,8 +43,9 @@ def _make_session_with_service(service_id="svc-uuid-001", service_name="corte da
 @pytest.fixture
 def mock_helpers():
     """Patch all DB helpers so update_booking runs without a real DB."""
-    from database.models import ServiceCategory
     from unittest.mock import MagicMock as _MagicMock
+
+    from database.models import ServiceCategory
 
     ok_fk = _MagicMock()
     ok_fk.ok = True

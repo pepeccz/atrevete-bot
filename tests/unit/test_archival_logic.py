@@ -7,7 +7,7 @@ with mocked Redis and database dependencies.
 
 import json
 import pickle
-from datetime import datetime, timedelta
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 

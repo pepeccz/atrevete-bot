@@ -544,7 +544,7 @@ def extract_options(text: str, context: str = "stylist") -> list[str]:
         "tenemos", "podés", "elegir", "puede", "atenderte", "querés",
         "perfecto", "ya", "reviso", "eso", "por", "vos", "si", "te",
         "que", "la", "el", "un", "una", "en", "de", "del", "al",
-        "con", "para", "por", "sin", "los", "las", "hay", "este",
+        "con", "para", "sin", "los", "las", "hay", "este",
         "esta", "esto", "ser", "tiene", "tener",
     }
 

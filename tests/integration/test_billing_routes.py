@@ -15,7 +15,6 @@ Follows the same pattern as tests/integration/test_token_usage_api.py:
 - Patching BillingService / StripeService at the route module level
 """
 
-import json
 from datetime import UTC, date, datetime
 from decimal import Decimal
 from unittest.mock import AsyncMock, MagicMock, patch
