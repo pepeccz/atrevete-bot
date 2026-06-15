@@ -46,14 +46,23 @@ class TestAvailabilityServiceShim:
         """Forward shim must delegate to agent implementation objects."""
         import sys
 
-        for k in list(sys.modules.keys()):
-            if "availability_service" in k:
-                del sys.modules[k]
-        shim = importlib.import_module("shared.availability_service")
-        canonical = importlib.import_module("agent.services.availability_service")
-        assert shim.get_available_slots is canonical.get_available_slots
-        assert shim.is_holiday is canonical.is_holiday
-        assert shim.get_calendar_events_for_range is canonical.get_calendar_events_for_range
+        # Snapshot/restore the full module table: deleting + re-importing recreates
+        # module objects (and transitively recreates module-level caches like
+        # agent.prompts.business_hours._hours_cache), which pollutes later tests in
+        # full-suite order. Restoring the original objects keeps identity stable.
+        _saved = dict(sys.modules)
+        try:
+            for k in list(sys.modules.keys()):
+                if "availability_service" in k:
+                    del sys.modules[k]
+            shim = importlib.import_module("shared.availability_service")
+            canonical = importlib.import_module("agent.services.availability_service")
+            assert shim.get_available_slots is canonical.get_available_slots
+            assert shim.is_holiday is canonical.is_holiday
+            assert shim.get_calendar_events_for_range is canonical.get_calendar_events_for_range
+        finally:
+            sys.modules.clear()
+            sys.modules.update(_saved)
 
 
 # ---------------------------------------------------------------------------
@@ -182,12 +191,19 @@ class TestCatalogBuilderShim:
     def test_shared_catalog_builder_symbol_is_same_object_as_agent(self):
         import sys
 
-        for k in list(sys.modules.keys()):
-            if "catalog_builder" in k:
-                del sys.modules[k]
-        shim = importlib.import_module("shared.catalog_builder")
-        canonical = importlib.import_module("agent.prompts.catalog_builder")
-        assert shim.invalidate_catalog_cache is canonical.invalidate_catalog_cache
+        # Snapshot/restore the full module table (see availability shim test above) —
+        # avoids recreating module objects that pollute later full-suite tests.
+        _saved = dict(sys.modules)
+        try:
+            for k in list(sys.modules.keys()):
+                if "catalog_builder" in k:
+                    del sys.modules[k]
+            shim = importlib.import_module("shared.catalog_builder")
+            canonical = importlib.import_module("agent.prompts.catalog_builder")
+            assert shim.invalidate_catalog_cache is canonical.invalidate_catalog_cache
+        finally:
+            sys.modules.clear()
+            sys.modules.update(_saved)
 
 
 # ---------------------------------------------------------------------------
