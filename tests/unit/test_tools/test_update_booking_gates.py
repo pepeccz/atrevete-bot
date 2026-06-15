@@ -45,11 +45,20 @@ async def _call_with_mocks(resolved_ids=None, unknown=None, audience_kind="none"
 
     from database.models import ServiceCategory
 
+    ok_fk = MagicMock()
+    ok_fk.ok = True
+    ok_fk.missing_ids = []
+    ok_fk.payload = {}
+
     with (
         patch("database.connection.get_async_session", return_value=ctx),
         patch(
             "agent.tools._booking_helpers._resolve_service_ids",
             new=AsyncMock(return_value=(resolved_ids, unknown)),
+        ),
+        patch(
+            "agent.tools._booking_helpers._resolve_service_ids_strict",
+            new=AsyncMock(return_value=(resolved_ids, unknown, [], [])),
         ),
         patch(
             "agent.tools._booking_helpers._resolve_audience_variants",
@@ -67,11 +76,36 @@ async def _call_with_mocks(resolved_ids=None, unknown=None, audience_kind="none"
             "agent.tools._booking_helpers._resolve_stylist",
             new=AsyncMock(return_value="stylist-uuid-1"),
         ),
+        patch(
+            "agent.tools._booking_helpers._resolve_active_stylists",
+            new=AsyncMock(return_value=[{"id": "stylist-uuid-1", "name": "Marta Test"}]),
+        ),
+        patch(
+            "agent.tools._booking_helpers._validate_full_name",
+            new=MagicMock(side_effect=lambda name: (name.split()[0], " ".join(name.split()[1:])) if name and len(name.split()) >= 2 else None),
+        ),
         # Patch is_date_closed so tests don't hit the DB and always assume an open day.
         # Tests that need closed-day behaviour should use test_update_booking.py.
         patch(
             "shared.business_hours_validator.is_date_closed",
             new=AsyncMock(return_value=False),
+        ),
+        patch(
+            "agent.tools._booking_validators.is_date_closed",
+            new=AsyncMock(return_value=False),
+        ),
+        # FK existence guards
+        patch(
+            "agent.tools.update_booking.validate_service_ids_exist",
+            new=AsyncMock(return_value=ok_fk),
+        ),
+        patch(
+            "agent.tools.update_booking.validate_stylist_id_exists",
+            new=AsyncMock(return_value=ok_fk),
+        ),
+        patch(
+            "agent.tools.update_booking._load_lead_time_min_days",
+            new=AsyncMock(return_value=3),
         ),
     ):
         return await _call_update_booking(**booking_kwargs)
@@ -132,7 +166,7 @@ async def test_name_required_fires_when_customer_unknown():
         no_more_services=True,
         extras_asked=True,
         stylist_name="Marta",
-        date_iso="2026-05-10",
+        date_iso="2026-08-10",
         customer_full_name=None,
         customer_known=False,
     )
@@ -148,7 +182,7 @@ async def test_name_required_skipped_when_customer_known():
         no_more_services=True,
         extras_asked=True,
         stylist_name="Marta",
-        date_iso="2026-05-10",
+        date_iso="2026-08-10",
         customer_full_name=None,
         customer_known=True,
     )
@@ -164,7 +198,7 @@ async def test_name_required_skipped_when_full_name_provided():
         no_more_services=True,
         extras_asked=True,
         stylist_name="Marta",
-        date_iso="2026-05-10",
+        date_iso="2026-08-10",
         customer_full_name="Ana García",
         customer_known=False,
     )
@@ -185,7 +219,7 @@ async def test_notes_optional_fires_once():
         no_more_services=True,
         extras_asked=True,
         stylist_name="Marta",
-        date_iso="2026-05-10",
+        date_iso="2026-08-10",
         customer_full_name="Ana García",
         customer_known=False,
         notes_asked=False,
@@ -203,7 +237,7 @@ async def test_notes_optional_self_clears():
         no_more_services=True,
         extras_asked=True,
         stylist_name="Marta",
-        date_iso="2026-05-10",
+        date_iso="2026-08-10",
         customer_full_name="Ana García",
         customer_known=False,
         notes_asked=True,
@@ -219,19 +253,23 @@ async def test_notes_optional_self_clears():
 
 @pytest.mark.asyncio
 async def test_booking_ready_only_when_all_gates_pass():
-    """All guards satisfied → booking_ready."""
+    """All guards satisfied with date_iso but no slot_iso → pre_book_validation_required.
+
+    booking_ready requires slot_iso; date_iso alone advances to pre_book_validation_required.
+    This test verifies that all pre-slot gates (extras, name, notes) pass cleanly.
+    """
     data = await _call_with_mocks(
         services=["Corte de Mujer"],
         no_more_services=True,
         extras_asked=True,
         stylist_name="Marta",
-        date_iso="2026-05-10",
+        date_iso="2026-08-10",
         customer_full_name="Ana García",
         customer_known=False,
         notes_asked=True,
     )
 
-    assert data["next_step"] == "booking_ready"
+    assert data["next_step"] == "pre_book_validation_required"
 
 
 # ---------------------------------------------------------------------------
