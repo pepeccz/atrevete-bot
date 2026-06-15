@@ -65,7 +65,7 @@ async def test_cancel_rejects_wrong_owner():
     appt = _make_appointment_mock(owner_phone=OWNER_PHONE)
     ctx = _make_session_ctx(appointment=appt)
 
-    with patch("database.connection.get_async_session", return_value=ctx):
+    with patch("agent.services.cancellation_service.get_async_session", return_value=ctx):
         result = await execute_cancellation(
             appointment_id=APPT_ID,
             customer_phone=OTHER_PHONE,  # wrong owner
@@ -91,7 +91,7 @@ async def test_cancel_accepts_correct_owner():
     ctx = _make_session_ctx(appointment=appt)
 
     with (
-        patch("database.connection.get_async_session", return_value=ctx),
+        patch("agent.services.cancellation_service.get_async_session", return_value=ctx),
         patch(
             "agent.services.cancellation_service.check_cancellation_allowed",
             new=AsyncMock(return_value=(True, 48.0)),
