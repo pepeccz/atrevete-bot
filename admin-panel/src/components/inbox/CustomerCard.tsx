@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   User,
   Phone,
@@ -21,6 +21,7 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { formatDate } from "@/components/shared/format-utils";
+import { FetchError } from "@/components/shared/fetch-error";
 import { formatAppointmentStatus } from "@/lib/category-labels";
 import api from "@/lib/api";
 import { useNotes } from "@/hooks/useNotes";
@@ -71,6 +72,7 @@ export function CustomerCard({
   const [customer, setCustomer] = useState<CustomerDetail | null>(null);
   const [appointments, setAppointments] = useState<CustomerAppointment[]>([]);
   const [loading, setLoading] = useState(false);
+  const [fetchError, setFetchError] = useState(false);
 
   // Notes panel state (PR-2)
   const [notesOpen, setNotesOpen] = useState(false);
@@ -82,34 +84,37 @@ export function CustomerCard({
     notesOpen ? conversationId : null
   );
   const newNoteRef = useRef<HTMLTextAreaElement>(null);
+  const reqId = useRef(0);
 
-  useEffect(() => {
+  const loadCustomer = useCallback(async () => {
     if (!customerId) {
       setCustomer(null);
       setAppointments([]);
       return;
     }
-    let cancelled = false;
+    const myReq = ++reqId.current;
     setLoading(true);
-    Promise.all([
-      api.getCustomerDetail(customerId),
-      api.getCustomerAppointments(customerId, 1, 3),
-    ])
-      .then(([cust, appts]) => {
-        if (cancelled) return;
-        setCustomer(cust);
-        setAppointments(appts.items);
-      })
-      .catch(() => {
-        // Graceful degradation — card is informational only
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
+    setFetchError(false);
+    try {
+      const [cust, appts] = await Promise.all([
+        api.getCustomerDetail(customerId),
+        api.getCustomerAppointments(customerId, 1, 3),
+      ]);
+      if (myReq !== reqId.current) return; // stale response — a newer request is in flight
+      setCustomer(cust);
+      setAppointments(appts.items);
+    } catch (err) {
+      if (myReq !== reqId.current) return;
+      console.error("[CustomerCard] loadCustomer failed:", err);
+      setFetchError(true);
+    } finally {
+      if (myReq === reqId.current) setLoading(false);
+    }
   }, [customerId]);
+
+  useEffect(() => {
+    loadCustomer();
+  }, [loadCustomer]);
 
   const waName = whatsappContact?.name?.trim() || null;
   const waPhone = whatsappContact?.phone?.trim() || null;
@@ -245,10 +250,16 @@ export function CustomerCard({
     return (
       <div className="flex flex-col h-full border-l border-gold/40 bg-gold-soft/10">
         <CardToggleHeader onToggleCollapsed={onToggleCollapsed} />
-        <div className="flex flex-1 flex-col items-center justify-center text-sm text-muted-foreground gap-2 p-4">
-          <User className="h-8 w-8 opacity-30" />
-          <span>Error al cargar cliente</span>
-        </div>
+        {fetchError ? (
+          <div className="flex flex-1 items-center justify-center">
+            <FetchError onRetry={loadCustomer} />
+          </div>
+        ) : (
+          <div className="flex flex-1 flex-col items-center justify-center text-sm text-muted-foreground gap-2 p-4">
+            <User className="h-8 w-8 opacity-30" />
+            <span>Error al cargar cliente</span>
+          </div>
+        )}
       </div>
     );
   }

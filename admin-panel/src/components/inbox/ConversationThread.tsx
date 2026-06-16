@@ -26,6 +26,7 @@ import { Composer } from "./Composer";
 import { BotToggle } from "./BotToggle";
 import { AttachmentLightbox } from "./AttachmentLightbox";
 import { formatDate } from "@/components/shared/format-utils";
+import { FetchError } from "@/components/shared/fetch-error";
 import { useConversationPolling } from "@/hooks/useConversationPolling";
 import { useLightbox } from "@/hooks/useLightbox";
 import api from "@/lib/api";
@@ -226,9 +227,11 @@ interface ConversationThreadProps {
 export function ConversationThread({ conversationId, onDeleted }: ConversationThreadProps) {
   const [conversation, setConversation] = useState<ConversationHistory | null>(null);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const hadErrorRef = useRef(false);
 
   const inbox = conversation as unknown as ConversationHistoryInbox | null;
   const botEnabled =
@@ -240,11 +243,18 @@ export function ConversationThread({ conversationId, onDeleted }: ConversationTh
   }, []);
 
   const fetchThread = useCallback(async () => {
+    setFetchError(false);
     try {
       const data = await api.getConversation(conversationId);
+      hadErrorRef.current = false;
       setConversation(data);
-    } catch {
-      // Graceful degradation — thread errors are shown as empty state
+    } catch (err) {
+      console.error("[ConversationThread] fetchThread failed:", err);
+      setFetchError(true);
+      if (!hadErrorRef.current) {
+        toast.error("No se pudo cargar el hilo de mensajes");
+        hadErrorRef.current = true;
+      }
     } finally {
       setLoading(false);
     }
@@ -405,6 +415,10 @@ export function ConversationThread({ conversationId, onDeleted }: ConversationTh
       {loading ? (
         <div className="flex-1 flex items-center justify-center">
           <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        </div>
+      ) : fetchError && !conversation ? (
+        <div className="flex-1 flex items-center justify-center">
+          <FetchError onRetry={fetchThread} />
         </div>
       ) : (
         <ScrollArea className="flex-1">
