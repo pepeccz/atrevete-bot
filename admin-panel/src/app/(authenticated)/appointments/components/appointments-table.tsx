@@ -201,11 +201,18 @@ export function AppointmentsTable({
           <StatusBadge status={row.getValue("status") as AppointmentStatus} />
         ),
       },
-      {
-        id: "gcal_status",
-        header: "GCal",
-        cell: ({ row }) => <GcalFailedCell appointment={row.original} />,
-      },
+      // J-6: hidden when there are no GCal failures; renamed header for clarity.
+      ...(gcalFailedCount > 0
+        ? [
+            {
+              id: "gcal_status",
+              header: "Sincronización",
+              cell: ({ row }: { row: { original: Appointment } }) => (
+                <GcalFailedCell appointment={row.original} />
+              ),
+            } as ColumnDef<Appointment>,
+          ]
+        : []),
       {
         id: "actions",
         cell: ({ row }) => {
@@ -242,7 +249,7 @@ export function AppointmentsTable({
         },
       },
     ],
-    [router, stylistMap, serviceMap, onDeleteRequest]
+    [router, stylistMap, serviceMap, onDeleteRequest, gcalFailedCount]
   );
 
   return (
