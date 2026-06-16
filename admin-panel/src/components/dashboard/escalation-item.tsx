@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { AlertCircle } from "lucide-react";
+import { AlertCircle, CheckCircle } from "lucide-react";
 
 interface EscalationItemProps {
   customerName: string;
@@ -8,6 +8,12 @@ interface EscalationItemProps {
   isLast?: boolean;
   /** When provided, wraps the item in a Next.js Link for navigation. */
   href?: string;
+  /** Whether the current user can resolve escalations. When false, the resolve button is absent. */
+  canResolve?: boolean;
+  /** W5: true while a resolve request is in-flight — disables the button to prevent double-submit. */
+  resolving?: boolean;
+  /** Called when the user clicks the resolve button. Must be provided alongside canResolve. */
+  onResolve?: (e: React.MouseEvent) => void;
 }
 
 export function EscalationItem({
@@ -16,6 +22,9 @@ export function EscalationItem({
   relativeTime,
   isLast = false,
   href,
+  canResolve = false,
+  resolving = false,
+  onResolve,
 }: EscalationItemProps) {
   const containerClass = `flex items-start gap-[10px] px-[18px] py-3 ${!isLast ? "border-b border-[hsl(var(--line-soft))]" : ""}`;
   const interactiveClass =
@@ -43,6 +52,24 @@ export function EscalationItem({
         </div>
         <div className="mt-1 text-[11px] text-ink-mute">{relativeTime}</div>
       </div>
+
+      {/* Resolve button — rendered absent when user lacks permission */}
+      {canResolve && onResolve && (
+        <button
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onResolve(e);
+          }}
+          disabled={resolving}
+          className="shrink-0 flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium text-[hsl(var(--status-confirm))] hover:bg-[hsl(var(--status-confirm-bg))] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          aria-label="Resolver escalación"
+          title="Resolver escalación"
+        >
+          <CheckCircle className="h-[13px] w-[13px]" />
+          {resolving ? "Resolviendo…" : "Resolver"}
+        </button>
+      )}
     </>
   );
 

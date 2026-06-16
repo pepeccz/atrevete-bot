@@ -77,10 +77,12 @@ function NotificationItem({
   notification,
   onRead,
   onClick,
+  onDelete,
 }: {
   notification: Notification;
   onRead: (id: string) => void;
   onClick: (notification: Notification) => void;
+  onDelete: (id: string) => void;
 }) {
   const Icon = notificationIcons[notification.type] || Bell;
   const colorClass = notificationColors[notification.type] || "text-gray-500";
@@ -132,6 +134,18 @@ function NotificationItem({
           <Check className="h-3 w-3 text-muted-foreground" />
         </button>
       )}
+      {/* Per-notification dismiss (T2.5) */}
+      <button
+        onClick={(e) => {
+          e.stopPropagation();
+          onDelete(notification.id);
+        }}
+        className="p-1 hover:bg-background rounded"
+        title="Eliminar notificación"
+        aria-label="Eliminar notificación"
+      >
+        <X className="h-3 w-3 text-muted-foreground" />
+      </button>
     </div>
   );
 }
@@ -226,10 +240,42 @@ export function NotificationCenter() {
       await handleMarkRead(notification.id);
     }
 
-    // Navigate to entity
+    // Navigate to entity based on type (T2.4)
     if (notification.entity_type === "appointment" && notification.entity_id) {
       setOpen(false);
       router.push(`/appointments?highlight=${notification.entity_id}`);
+    } else if (notification.entity_type === "conversation") {
+      // Escalation notifications always have entity_id=None (escalation_service.py:213).
+      // The entity_id branch is dead code — backend never populates it for escalations.
+      // TODO: deep-link to a specific conversation when the backend starts populating entity_id.
+      setOpen(false);
+      router.push("/conversations?filter=escalated");
+    } else if (notification.entity_type === "conversation_history" && notification.entity_id) {
+      setOpen(false);
+      router.push(`/conversations?conversation_id=${notification.entity_id}`);
+    }
+    // default: mark-read only, no navigation
+  };
+
+  const handleDelete = async (id: string) => {
+    // Optimistic removal (T2.5).
+    // W3/W4: read is_read from CURRENT state inside the updater to avoid stale-closure
+    // double-decrement when the row was clicked (marked read) then immediately dismissed.
+    setData((prev) => {
+      if (!prev) return prev;
+      const wasUnread = prev.items.find((n) => n.id === id)?.is_read === false;
+      return {
+        ...prev,
+        items: prev.items.filter((n) => n.id !== id),
+        unread_count: wasUnread ? Math.max(0, prev.unread_count - 1) : prev.unread_count,
+      };
+    });
+    try {
+      await api.deleteNotification(id);
+    } catch (error) {
+      console.error("Failed to delete notification:", error);
+      // Restore truth from server
+      fetchNotifications();
     }
   };
 
@@ -291,6 +337,7 @@ export function NotificationCenter() {
                   notification={notification}
                   onRead={handleMarkRead}
                   onClick={handleClick}
+                  onDelete={handleDelete}
                 />
               ))}
             </div>

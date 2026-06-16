@@ -58,8 +58,16 @@ export function AgendaRow({
       {/* Status pill */}
       <StatusPill status={status} />
 
-      {/* Overflow menu */}
-      <MoreHorizontal className="h-4 w-4 shrink-0 text-ink-mute" aria-label="Opciones" />
+      {/* Overflow menu — stopPropagation prevents row navigation when clicking this icon.
+          Actual options menu is a follow-up (out of scope). */}
+      <button
+        onClick={(e) => e.stopPropagation()}
+        className="p-0.5 rounded hover:bg-accent"
+        aria-label="Opciones"
+        tabIndex={-1}
+      >
+        <MoreHorizontal className="h-4 w-4 shrink-0 text-ink-mute" />
+      </button>
     </div>
   );
 }
