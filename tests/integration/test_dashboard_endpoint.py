@@ -440,3 +440,133 @@ class TestTodayAgendaEndpoint:
         """
         response = client.get("/api/admin/dashboard/kpis")
         assert response.status_code in (401, 403, 422)
+
+
+# =============================================================================
+# Regression test — AsyncSession concurrency bug (asyncio.gather shared session)
+# =============================================================================
+
+# Module-level flag used by the instrumented KPI fakes below.
+# Each fake asserts it is False on entry (no concurrent overlap), sets it True,
+# yields control via asyncio.sleep(0) so gather() can interleave, then clears it.
+# With asyncio.gather the second coroutine enters while the flag is still True →
+# AssertionError (RED).  With sequential awaits they never overlap → all clear (GREEN).
+_kpi_in_flight: bool = False
+
+
+async def _fake_confirmation_rate(session, today):
+    global _kpi_in_flight
+    assert not _kpi_in_flight, (
+        "AsyncSession concurrency hazard: _fake_confirmation_rate entered while "
+        "another KPI coroutine was still in progress"
+    )
+    _kpi_in_flight = True
+    import asyncio as _asyncio
+    await _asyncio.sleep(0)  # yield → gather() will interleave the next coroutine
+    _kpi_in_flight = False
+    return 0.6
+
+
+async def _fake_appointments_count(session, today):
+    global _kpi_in_flight
+    assert not _kpi_in_flight, (
+        "AsyncSession concurrency hazard: _fake_appointments_count entered while "
+        "another KPI coroutine was still in progress"
+    )
+    _kpi_in_flight = True
+    import asyncio as _asyncio
+    await _asyncio.sleep(0)
+    _kpi_in_flight = False
+    return 5
+
+
+async def _fake_occupation(session, today):
+    global _kpi_in_flight
+    assert not _kpi_in_flight, (
+        "AsyncSession concurrency hazard: _fake_occupation entered while "
+        "another KPI coroutine was still in progress"
+    )
+    _kpi_in_flight = True
+    import asyncio as _asyncio
+    await _asyncio.sleep(0)
+    _kpi_in_flight = False
+    return 0.72
+
+
+async def _fake_new_customers(session, now):
+    global _kpi_in_flight
+    assert not _kpi_in_flight, (
+        "AsyncSession concurrency hazard: _fake_new_customers entered while "
+        "another KPI coroutine was still in progress"
+    )
+    _kpi_in_flight = True
+    import asyncio as _asyncio
+    await _asyncio.sleep(0)
+    _kpi_in_flight = False
+    return 3
+
+
+class TestDashboardKpisNoSessionConcurrency:
+    """Regression guard for asyncio.gather shared-session concurrency bug.
+
+    Root cause: get_dashboard_kpis ran 4 KPI helpers concurrently via
+    asyncio.gather() sharing a single AsyncSession.  AsyncSession/asyncpg is NOT
+    concurrency-safe: concurrent use raises IllegalStateChangeError and corrupts
+    the connection pool, causing 503s on this endpoint AND collateral 503s on
+    other endpoints (e.g. PATCH /escalations/{id}/resolve).
+
+    Fix: replace asyncio.gather with sequential awaits on the shared session.
+
+    How the test works:
+      - Each instrumented fake asserts a module-level _in_flight flag is False,
+        sets it True, then yields via asyncio.sleep(0) before clearing it.
+      - With asyncio.gather the event loop resumes the next coroutine while the
+        flag is still True → AssertionError → test FAILS (RED).
+      - With sequential awaits each coroutine finishes before the next starts →
+        flag is always False on entry → test PASSES (GREEN).
+    """
+
+    def setup_method(self):
+        """Reset the in-flight flag before each test."""
+        global _kpi_in_flight
+        _kpi_in_flight = False
+
+    def test_dashboard_kpis_no_concurrent_session_use(self, client, mock_auth):
+        """
+        GIVEN the 4 KPI helpers are replaced with concurrency-detecting fakes
+        WHEN GET /api/admin/dashboard/kpis
+        THEN no two helpers overlap on the shared session (flag never True on entry)
+        AND response is HTTP 200 with the canned KPI values
+        """
+        mock_session = AsyncMock()
+        mock_ctx = AsyncMock()
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_ctx.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("api.routes.admin.get_async_session", return_value=mock_ctx),
+            patch(
+                "api.routes.admin._confirmation_rate_today",
+                side_effect=_fake_confirmation_rate,
+            ),
+            patch(
+                "api.routes.admin._appointments_count_today",
+                side_effect=_fake_appointments_count,
+            ),
+            patch(
+                "api.routes.admin._occupation_today",
+                side_effect=_fake_occupation,
+            ),
+            patch(
+                "api.routes.admin._new_customers_last_7d",
+                side_effect=_fake_new_customers,
+            ),
+        ):
+            response = client.get("/api/admin/dashboard/kpis")
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["confirmation_rate_today"] == round(0.6, 4)
+        assert data["appointments_today"] == 5
+        assert data["occupation_today"] == round(0.72, 4)
+        assert data["new_customers_this_week"] == 3
