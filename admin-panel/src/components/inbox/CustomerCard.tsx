@@ -84,6 +84,7 @@ export function CustomerCard({
     notesOpen ? conversationId : null
   );
   const newNoteRef = useRef<HTMLTextAreaElement>(null);
+  const reqId = useRef(0);
 
   const loadCustomer = useCallback(async () => {
     if (!customerId) {
@@ -91,6 +92,7 @@ export function CustomerCard({
       setAppointments([]);
       return;
     }
+    const myReq = ++reqId.current;
     setLoading(true);
     setFetchError(false);
     try {
@@ -98,13 +100,15 @@ export function CustomerCard({
         api.getCustomerDetail(customerId),
         api.getCustomerAppointments(customerId, 1, 3),
       ]);
+      if (myReq !== reqId.current) return; // stale response — a newer request is in flight
       setCustomer(cust);
       setAppointments(appts.items);
     } catch (err) {
+      if (myReq !== reqId.current) return;
       console.error("[CustomerCard] loadCustomer failed:", err);
       setFetchError(true);
     } finally {
-      setLoading(false);
+      if (myReq === reqId.current) setLoading(false);
     }
   }, [customerId]);
 

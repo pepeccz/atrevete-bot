@@ -231,6 +231,7 @@ export function ConversationThread({ conversationId, onDeleted }: ConversationTh
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const hadErrorRef = useRef(false);
 
   const inbox = conversation as unknown as ConversationHistoryInbox | null;
   const botEnabled =
@@ -245,11 +246,15 @@ export function ConversationThread({ conversationId, onDeleted }: ConversationTh
     setFetchError(false);
     try {
       const data = await api.getConversation(conversationId);
+      hadErrorRef.current = false;
       setConversation(data);
     } catch (err) {
       console.error("[ConversationThread] fetchThread failed:", err);
       setFetchError(true);
-      toast.error("No se pudo cargar el hilo de mensajes");
+      if (!hadErrorRef.current) {
+        toast.error("No se pudo cargar el hilo de mensajes");
+        hadErrorRef.current = true;
+      }
     } finally {
       setLoading(false);
     }

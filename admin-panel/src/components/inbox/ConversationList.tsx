@@ -160,6 +160,7 @@ export function ConversationList({
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState(false);
+  const hadErrorRef = useRef(false);
 
   // PR-2: search state
   const [searchQuery, setSearchQuery] = useState("");
@@ -189,12 +190,16 @@ export function ConversationList({
     setFetchError(false);
     try {
       const res = await api.list<ConversationHistory>("conversations", { page_size: 100 });
+      hadErrorRef.current = false;
       setConversations(res.items);
       if (res.counts) setCounts(res.counts);
     } catch (err) {
       console.error("[ConversationList] fetchList failed:", err);
       setFetchError(true);
-      toast.error("No se pudo cargar la lista de conversaciones");
+      if (!hadErrorRef.current) {
+        toast.error("No se pudo cargar la lista de conversaciones");
+        hadErrorRef.current = true;
+      }
     } finally {
       setLoading(false);
     }
