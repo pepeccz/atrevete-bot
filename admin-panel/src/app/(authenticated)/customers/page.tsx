@@ -400,6 +400,7 @@ export default function CustomersPage() {
                 variant="ghost"
                 size="icon"
                 className="h-8 w-8"
+                aria-label={`Editar cliente ${`${customer.first_name ?? ""} ${customer.last_name ?? ""}`.trim() || customer.phone}`}
                 onClick={() => handleEdit(customer)}
               >
                 <Edit className="h-4 w-4" />

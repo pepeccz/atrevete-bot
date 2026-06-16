@@ -287,7 +287,12 @@ export function NotificationCenter() {
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button variant="ghost" size="icon" className="relative">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="relative"
+          aria-label={unreadCount > 0 ? `Notificaciones, ${unreadCount} sin leer` : "Notificaciones"}
+        >
           <Bell className="h-5 w-5" />
           {unreadCount > 0 && (
             <span className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-primary text-[10px] text-primary-foreground">
@@ -348,11 +353,9 @@ export function NotificationCenter() {
         </ScrollArea>
 
         <div className="border-t p-2">
-          <Link href="/settings/notifications" className="block">
-            <Button variant="ghost" className="w-full text-sm text-muted-foreground">
-              Ver todas las notificaciones
-            </Button>
-          </Link>
+          <Button asChild variant="ghost" className="w-full text-sm text-muted-foreground">
+            <Link href="/settings/notifications">Ver todas las notificaciones</Link>
+          </Button>
         </div>
       </PopoverContent>
     </Popover>
