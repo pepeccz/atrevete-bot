@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { Plus } from "lucide-react";
@@ -143,6 +143,11 @@ export default function DashboardPage() {
   const [wizardCustomers, setWizardCustomers] = useState<Customer[]>([]);
   const [wizardDataLoaded, setWizardDataLoaded] = useState(false);
 
+  // W5: in-flight guard — tracks escalation ids currently being resolved
+  // ref for the skip-check (no re-render needed), state for disabling the button
+  const resolvingIds = useRef<Set<string>>(new Set());
+  const [resolvingSet, setResolvingSet] = useState<Set<string>>(new Set());
+
   // Fetch KPIs
   useEffect(() => {
     api
@@ -206,18 +211,27 @@ export default function DashboardPage() {
         api.list<Service>("services", { page_size: 200 }),
         api.list<Stylist>("stylists", { page_size: 100 }),
         api.list<Customer>("customers", { page_size: 500 }),
-      ]).then(([s, st, c]) => {
-        setWizardServices(s.items);
-        setWizardStylists(st.items);
-        setWizardCustomers(c.items);
-        setWizardDataLoaded(true);
-      });
+      ])
+        .then(([s, st, c]) => {
+          setWizardServices(s.items);
+          setWizardStylists(st.items);
+          setWizardCustomers(c.items);
+          setWizardDataLoaded(true);
+        })
+        // W2: handle fetch failure so the user knows and can retry by reopening the wizard
+        .catch(() => {
+          toast.error("No se pudieron cargar los datos del formulario");
+          // Keep wizardDataLoaded=false so reopening triggers a fresh attempt
+        });
     }
   }, [wizardOpen, wizardDataLoaded]);
 
   const refreshWizardCustomers = useCallback(async () => {
-    const r = await api.list<Customer>("customers", { page_size: 500 });
-    setWizardCustomers(r.items);
+    await api
+      .list<Customer>("customers", { page_size: 500 })
+      .then((r) => setWizardCustomers(r.items))
+      // S7: suppress unhandled-promise rejection; failure here is non-critical
+      .catch(() => {});
   }, []);
 
   // Re-fetch agenda + KPIs after a wizard booking succeeds (T2.3)
@@ -238,6 +252,11 @@ export default function DashboardPage() {
   // Resolve escalation with optimistic update (T2.2)
   const handleResolve = useCallback(
     async (id: string) => {
+      // W5: skip if this id is already being resolved (rapid double-click guard)
+      if (resolvingIds.current.has(id)) return;
+      resolvingIds.current.add(id);
+      setResolvingSet((prev) => new Set(prev).add(id));
+
       // Optimistic removal — counter auto-decrements via derived state
       setEscalations((prev) => (prev ? prev.filter((e) => e.id !== id) : prev));
       try {
@@ -246,6 +265,13 @@ export default function DashboardPage() {
         toast.error("Error al resolver la escalación");
         // Restore truth from server
         fetchEscalations();
+      } finally {
+        resolvingIds.current.delete(id);
+        setResolvingSet((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
       }
     },
     [fetchEscalations]
@@ -415,6 +441,7 @@ export default function DashboardPage() {
                       })}
                       isLast={idx === escalations.length - 1}
                       canResolve={canResolve}
+                      resolving={resolvingSet.has(esc.id)}
                       onResolve={() => handleResolve(esc.id)}
                     />
                   ))}

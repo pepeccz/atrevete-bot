@@ -82,7 +82,7 @@ function NotificationItem({
   notification: Notification;
   onRead: (id: string) => void;
   onClick: (notification: Notification) => void;
-  onDelete: (id: string, isUnread: boolean) => void;
+  onDelete: (id: string) => void;
 }) {
   const Icon = notificationIcons[notification.type] || Bell;
   const colorClass = notificationColors[notification.type] || "text-gray-500";
@@ -138,7 +138,7 @@ function NotificationItem({
       <button
         onClick={(e) => {
           e.stopPropagation();
-          onDelete(notification.id, !notification.is_read);
+          onDelete(notification.id);
         }}
         className="p-1 hover:bg-background rounded"
         title="Eliminar notificación"
@@ -244,12 +244,10 @@ export function NotificationCenter() {
     if (notification.entity_type === "appointment" && notification.entity_id) {
       setOpen(false);
       router.push(`/appointments?highlight=${notification.entity_id}`);
-    } else if (notification.entity_type === "conversation" && notification.entity_id) {
-      // Escalation notifications: entity_type="conversation", entity_id=conversation uuid
-      setOpen(false);
-      router.push(`/conversations?filter=escalated&conversation_id=${notification.entity_id}`);
     } else if (notification.entity_type === "conversation") {
-      // Escalation without a specific entity_id — route to escalated filter
+      // Escalation notifications always have entity_id=None (escalation_service.py:213).
+      // The entity_id branch is dead code — backend never populates it for escalations.
+      // TODO: deep-link to a specific conversation when the backend starts populating entity_id.
       setOpen(false);
       router.push("/conversations?filter=escalated");
     } else if (notification.entity_type === "conversation_history" && notification.entity_id) {
@@ -259,14 +257,17 @@ export function NotificationCenter() {
     // default: mark-read only, no navigation
   };
 
-  const handleDelete = async (id: string, isUnread: boolean) => {
-    // Optimistic removal (T2.5)
+  const handleDelete = async (id: string) => {
+    // Optimistic removal (T2.5).
+    // W3/W4: read is_read from CURRENT state inside the updater to avoid stale-closure
+    // double-decrement when the row was clicked (marked read) then immediately dismissed.
     setData((prev) => {
       if (!prev) return prev;
+      const wasUnread = prev.items.find((n) => n.id === id)?.is_read === false;
       return {
         ...prev,
         items: prev.items.filter((n) => n.id !== id),
-        unread_count: isUnread ? Math.max(0, prev.unread_count - 1) : prev.unread_count,
+        unread_count: wasUnread ? Math.max(0, prev.unread_count - 1) : prev.unread_count,
       };
     });
     try {

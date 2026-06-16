@@ -10,6 +10,8 @@ interface EscalationItemProps {
   href?: string;
   /** Whether the current user can resolve escalations. When false, the resolve button is absent. */
   canResolve?: boolean;
+  /** W5: true while a resolve request is in-flight — disables the button to prevent double-submit. */
+  resolving?: boolean;
   /** Called when the user clicks the resolve button. Must be provided alongside canResolve. */
   onResolve?: (e: React.MouseEvent) => void;
 }
@@ -21,6 +23,7 @@ export function EscalationItem({
   isLast = false,
   href,
   canResolve = false,
+  resolving = false,
   onResolve,
 }: EscalationItemProps) {
   const containerClass = `flex items-start gap-[10px] px-[18px] py-3 ${!isLast ? "border-b border-[hsl(var(--line-soft))]" : ""}`;
@@ -58,12 +61,13 @@ export function EscalationItem({
             e.stopPropagation();
             onResolve(e);
           }}
-          className="shrink-0 flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium text-[hsl(var(--status-confirm))] hover:bg-[hsl(var(--status-confirm-bg))] transition-colors"
+          disabled={resolving}
+          className="shrink-0 flex items-center gap-1 rounded px-2 py-1 text-[11px] font-medium text-[hsl(var(--status-confirm))] hover:bg-[hsl(var(--status-confirm-bg))] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           aria-label="Resolver escalación"
           title="Resolver escalación"
         >
           <CheckCircle className="h-[13px] w-[13px]" />
-          Resolver
+          {resolving ? "Resolviendo…" : "Resolver"}
         </button>
       )}
     </>
