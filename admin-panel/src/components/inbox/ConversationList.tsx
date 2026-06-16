@@ -404,7 +404,18 @@ export function ConversationList({
               key={conv.id}
               conv={conv}
               isActive={conv.id === activeConversationId}
-              onClick={() => onSelectConversation(conv.id)}
+              onClick={() => {
+                // A-3 (I-3): optimistically zero unread count before the server
+                // markRead response arrives — badge clears immediately on select.
+                setConversations((prev) =>
+                  prev.map((c) =>
+                    c.id === conv.id
+                      ? ({ ...c, unread_message_count: 0 } as unknown as ConversationHistory)
+                      : c
+                  )
+                );
+                onSelectConversation(conv.id);
+              }}
             />
           ))
         )}
