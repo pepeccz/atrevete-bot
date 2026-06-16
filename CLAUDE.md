@@ -784,9 +784,11 @@ Rollback: `alembic downgrade -1` + revert image. Existing rows lose the columns;
 
 ### Deploy Runbook (inbox-reliability)
 
-Pure frontend/config change: escalations redirect moved from `route.ts` to `next.config.ts` (fixes localhost leak behind reverse proxy); `ConversationList` loading hardened (`setLoading(true)` at fetch start, logged catch, `useMemo` on unreadCount); `EscalationItem` now clickable deep-links into the inbox; `use-api-query` abort-guard on `setIsLoading` removed. **No DB migration. No checkpoint flush. No API/agent restart required — admin-panel only.**
+Pure frontend/config change: escalations redirect moved from `route.ts` to `next.config.ts` (fixes localhost leak behind reverse proxy); `EscalationItem` now clickable deep-links into the inbox; `useConversationPolling` now does one **unconditional initial fetch on mount** (so the inbox loads even when opened in a hidden/background tab); `ConversationList` loading hygiene (`setLoading(true)` at fetch start, logged catch, `useMemo` on unreadCount, spinner gated on first load only); `use-api-query` abort-guard on `setIsLoading` removed. **No DB migration. No checkpoint flush. No API/agent restart required — admin-panel only.**
 
-**OVERRIDE FOOTGUN WARNING**: Running plain `docker compose up` on the server auto-merges `docker-compose.override.yml`, which swaps to `Dockerfile.admin-panel.dev` and activates React StrictMode (dev build). This re-introduces the P0 infinite spinner. ALWAYS use `docker compose -f docker-compose.yml` on the server to prevent the override from being applied.
+> NOTE: an earlier draft framed the inbox "infinite Cargando…" as a P0 fixed by switching to the prod build. That symptom was a **test-harness artifact** (automation tab ran as `document.hidden=true`, and polling skipped the initial fetch when hidden). The real inbox works for visible tabs; the only genuine fix here is the unconditional initial fetch for the hidden-tab edge case. The prod-build switch below is still recommended for **production parity**, not as a P0 fix.
+
+**OVERRIDE FOOTGUN WARNING**: Running plain `docker compose up` on the server auto-merges `docker-compose.override.yml`, which swaps to `Dockerfile.admin-panel.dev` (`next dev`, hot-reload, source-mounted, React StrictMode double-invokes effects). That is developer-iteration tooling, not a UAT/production build. ALWAYS use `docker compose -f docker-compose.yml` on the server so the override is excluded and the optimized production build (`node server.js`, `NODE_ENV=production`) is served.
 
 ```bash
 # On pepe@server, in /home/pepe/Proyectos/atrevete-bot
@@ -802,8 +804,8 @@ docker compose -f docker-compose.yml exec admin-panel printenv NEXT_PUBLIC_API_U
 
 UAT smoke checks (run after deploy, on the public host):
 
-1. Navigate to `/conversations` — list renders without permanent "Cargando…"; throttle network / force API 500 → browser console shows `[ConversationList] fetchList failed:` and empty state appears (no infinite spinner).
-2. Navigate to `/escalations` — server responds 308 and browser lands on `/conversations?filter=escalated` with no `localhost` in the Location header.
+1. Navigate to `/conversations` (visible tab) — list renders with conversations + tab counters; throttle network / force API 500 → browser console shows `[ConversationList] fetchList failed:` and the empty state appears (no infinite spinner).
+2. Navigate to `/escalations` — server responds 308 and browser lands on `/conversations?filter=escalated` with no `localhost` in the Location header. **Caveat**: the OLD route emitted a 308 *permanent* redirect to `localhost:3000`; browsers that hit it cached it hard. Test with a fresh profile or a cache-busting query (`/escalations?cb=1`) — a stale browser may still short-circuit to the cached localhost target until its cache is cleared.
 3. Dashboard "Necesitan atención" section — click any item → browser navigates to `/conversations?conversation_id=<uuid>&filter=escalated` with that conversation pre-selected in the thread panel.
 4. No unexpected console errors on any of the above pages.
 

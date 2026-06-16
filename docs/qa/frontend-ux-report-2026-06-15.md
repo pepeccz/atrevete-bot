@@ -15,24 +15,14 @@
 
 ---
 
-## P0 — BLOCKER
+## ~~P0 — BLOCKER~~ → RETRACTED (false alarm — test-harness artifact)
 
-### 1. Conversaciones inbox stuck forever on "Cargando…"
-- **Surface**: `/conversations` (the flagship inbox).
-- **Symptom**: the conversation list never renders; it stays on "Cargando…" indefinitely. Tab filters (Todas/Bot ON/Bot OFF/Escaladas/Sin leer) show no counters.
-- **Evidence**: `GET https://api.zonavix.com/api/admin/conversations?page_size=100` returns **HTTP 200** with a valid body `{"items":[{conversation_id, customer_name:"Sara Bautista", message_count:6, source:"redis", atencion_automatica, paused_at, unread_message_count}, …]}`. Data arrives fine; the UI never consumes it. No console error thrown. Two duplicate requests fire (StrictMode double-invoke), both 200, loading state never clears.
-- **Impact**: the entire messaging operation is unusable — takeover/pause/resume, templates, window-status, customer card enrichment, escalated filter — ALL blocked because no conversation can be selected. For a stylist this is the single most important screen and it does not work.
-- **Files**:
-  - `admin-panel/src/components/inbox/ConversationList.tsx` — owns the `loading` state; `fetchList` at lines ~184-194 with a **silent `catch {}`** (no logging) at ~188-190 and `finally { setLoading(false) }` at ~191-193; loading gate at ~372-394.
-  - `admin-panel/src/hooks/useConversationPolling.ts` — polls `fetchFn`; `getInterval`/`getBaseInterval` depend on `unreadCount`, which is recomputed un-memoized in `ConversationList` (~198-200), making the polling effect re-run on every list change.
-  - `admin-panel/src/hooks/use-api-query.ts:66` — **separate latent StrictMode bug**: `finally { if (!signal.aborted) setIsLoading(false) }` never clears loading when the first mount's request is aborted by StrictMode cleanup. Currently **dead code (unused)**, but fix it before anyone wires it up.
-  - Page: `admin-panel/src/app/(authenticated)/conversations/page.tsx`.
-- **Root cause (not 100% pinned by static analysis)**: live evidence rules out a network hang (the request returns 200, twice). On paper `finally{setLoading(false)}` should always fire, so the strongest hypothesis is a **dev/StrictMode double-mount race / remount** that resets `loading=true` on the surviving instance while the resolved fetch cleared it on the discarded one — amplified by the dev deploy. The silent catch hides any real error.
-- **Concrete fixes / next step**:
-  1. **Deploy the production build** and re-test — if it works there, it's StrictMode-only and this is the fix.
-  2. **Add diagnostics** to surface the real cause: `catch (err) { console.error("[ConversationList] fetchList failed:", err); }`.
-  3. `useMemo` the `unreadCount` computation in `ConversationList` to stop the polling effect from thrashing on every render.
-  4. Drop the abort guard in `use-api-query.ts:66` (`finally { setIsLoading(false) }` unconditionally).
+### 1. Conversaciones inbox "stuck on Cargando…" — NOT a real production bug
+- **Original (incorrect) finding**: the inbox list never rendered, sitting on "Cargando…" forever; reported as a P0 blocker.
+- **Correction (verified live on the production build)**: the inbox works for real users. The "stuck" state was an artifact of the **browser-automation tab running as `document.hidden=true` / `visibilityState="hidden"`**. `useConversationPolling.poll()` (`admin-panel/src/hooks/useConversationPolling.ts:86`) skips `fetchFn()` while `document.hidden`, and there was **no unconditional initial fetch** — so the initial `loading=true` never cleared in a hidden tab. Overriding `visibilityState='visible'` + dispatching `visibilitychange` made the list render immediately: **87 conversations + working tab counters ("Todas 87", "Bot ON 87")**. A stylist with a visible tab is unaffected. The earlier "dev/StrictMode" hypothesis was also wrong.
+- **Remaining REAL (minor) latent bug**: opening `/conversations` in a hidden/background tab (middle-click, session restore) shows "Cargando…" until the tab is focused (then `visibilitychange` → `poll()` fires). **Fixed** in this change: the mount now does one **unconditional initial fetch** regardless of `document.hidden` (`useConversationPolling.ts`); subsequent scheduled polls still respect visibility.
+- **Other related fixes shipped (harmless improvements, not P0 fixes)**: `ConversationList.tsx` — log the previously-silent `catch`, `useMemo` the `unreadCount` (stabilizes polling deps), gate the spinner on first load only (`loading && conversations.length===0`) to avoid poll flicker. `use-api-query.ts:66` — drop the abort guard on `setIsLoading(false)` (latent trap; dead code today).
+- **Process note**: this finding was overstated because the whole walkthrough ran through a backgrounded automation tab. UX testing of polling/visibility-gated views must confirm `document.visibilityState` before trusting a "stuck loading" symptom.
 
 ---
 
