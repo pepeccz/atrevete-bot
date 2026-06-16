@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { ColumnDef } from "@tanstack/react-table";
@@ -242,11 +242,24 @@ export default function CustomersPage() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [customerToDelete, setCustomerToDelete] = useState<string | null>(null);
 
-  const loadData = useCallback(async () => {
+  // T7: backend-driven search
+  const [search, setSearch] = useState("");
+  // T8: pagination
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const loadData = useCallback(async (currentPage: number, currentSearch: string) => {
     setLoading(true);
     try {
-      const res = await api.list<Customer>("customers", { page_size: 200 });
+      const params: Record<string, string | number | boolean> = {
+        page: currentPage,
+        page_size: 50,
+      };
+      if (currentSearch) params.search = currentSearch;
+      const res = await api.list<Customer>("customers", params);
       setCustomers(res.items);
+      setHasMore(res.has_more);
     } catch (error) {
       toast.error("Error al cargar los clientes");
       console.error(error);
@@ -255,9 +268,24 @@ export default function CustomersPage() {
     }
   }, []);
 
+  // Initial load and reload on page changes
   useEffect(() => {
-    loadData();
-  }, [loadData]);
+    loadData(page, search);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [page]);
+
+  // Debounced search: reset page to 1 and reload
+  useEffect(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(() => {
+      setPage(1);
+      loadData(1, search);
+    }, 300);
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [search]);
 
   const handleEdit = useCallback((customer: Customer) => {
     setEditingCustomer(customer);
@@ -275,7 +303,7 @@ export default function CustomersPage() {
     try {
       await api.delete("customers", customerToDelete);
       toast.success("Cliente eliminado");
-      loadData();
+      loadData(page, search);
     } catch (error) {
       toast.error("Error al eliminar el cliente");
       console.error(error);
@@ -401,6 +429,16 @@ export default function CustomersPage() {
       <div className="flex-1 p-4 md:p-6">
         <Card>
           <CardContent className="pt-6">
+            {/* T7: controlled search input */}
+            <div className="mb-4">
+              <Input
+                placeholder="Buscar por nombre o teléfono..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="max-w-sm"
+              />
+            </div>
+
             {!loading && customers.length === 0 ? (
               <EmptyState
                 icon={Users}
@@ -413,9 +451,34 @@ export default function CustomersPage() {
                 columns={columns}
                 data={customers}
                 isLoading={loading}
-                searchKey="first_name"
-                searchPlaceholder="Buscar por nombre..."
               />
+            )}
+
+            {/* T8: pagination footer */}
+            {!loading && customers.length > 0 && (
+              <div className="flex items-center justify-between pt-4">
+                <span className="text-sm text-muted-foreground">
+                  Mostrando {customers.length} clientes{hasMore ? " · hay más" : ""}
+                </span>
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={page === 1}
+                    onClick={() => setPage((p) => p - 1)}
+                  >
+                    Anterior
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={!hasMore}
+                    onClick={() => setPage((p) => p + 1)}
+                  >
+                    Siguiente
+                  </Button>
+                </div>
+              </div>
             )}
           </CardContent>
         </Card>
@@ -425,7 +488,7 @@ export default function CustomersPage() {
       <CustomerModal
         open={modalOpen}
         onOpenChange={setModalOpen}
-        onSuccess={loadData}
+        onSuccess={() => loadData(page, search)}
         customer={editingCustomer}
       />
 
