@@ -310,6 +310,8 @@ export default function UsersPage() {
 
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(true);
+  // T11: client-side multi-field search
+  const [userSearch, setUserSearch] = useState("");
 
   // Modals
   const [formOpen, setFormOpen] = useState(false);
@@ -491,6 +493,17 @@ export default function UsersPage() {
     [currentUser, handleEdit, handleResetPassword, handleDeactivate, handleReactivate]
   );
 
+  // T11: client-side filter on all loaded users
+  const filteredUsers = useMemo(() => {
+    if (!userSearch) return users;
+    const query = userSearch.toLowerCase();
+    return users.filter(
+      (u) =>
+        u.username.toLowerCase().includes(query) ||
+        (u.display_name ?? "").toLowerCase().includes(query)
+    );
+  }, [users, userSearch]);
+
   // Don't render content for non-admin users (redirect in progress)
   if (!canManageUsers) {
     return null;
@@ -512,6 +525,16 @@ export default function UsersPage() {
       <div className="flex-1 p-4 md:p-6">
         <Card>
           <CardContent className="pt-6">
+            {/* T11: controlled multi-field search */}
+            <div className="mb-4">
+              <Input
+                placeholder="Buscar por usuario, nombre o email..."
+                value={userSearch}
+                onChange={(e) => setUserSearch(e.target.value)}
+                className="max-w-sm"
+              />
+            </div>
+
             {!loading && users.length === 0 ? (
               <EmptyState
                 icon={Lock}
@@ -522,10 +545,8 @@ export default function UsersPage() {
             ) : (
               <DataTable
                 columns={columns}
-                data={users}
+                data={filteredUsers}
                 isLoading={loading}
-                searchKey="username"
-                searchPlaceholder="Buscar por usuario..."
               />
             )}
           </CardContent>
