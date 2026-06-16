@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { Plus, CalendarOff } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Card, CardContent } from "@/components/ui/card";
@@ -33,38 +33,62 @@ export default function AppointmentsPage() {
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [appointmentToDelete, setAppointmentToDelete] = useState<string | null>(null);
-  const [filters, setFilters] = useState({ stylist_id: "", status: "" });
+  const [filters, setFilters] = useState({
+    stylist_id: "",
+    status: "",
+    startDate: "",
+    endDate: "",
+  });
   // R6: client-side GCal-failed toggle (no server param needed — data already loaded)
   const [gcalFailedOnly, setGcalFailedOnly] = useState(false);
+  // T9: pagination
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
+  // W2: stale-response guard
+  const reqIdRef = useRef(0);
 
   const stylistMap = Object.fromEntries(stylists.map((s) => [s.id, s.name]));
   const serviceMap = Object.fromEntries(services.map((s) => [s.id, s.name]));
 
-  const loadData = useCallback(async () => {
+  // C1: derive displayed count for the footer — mirrors the client-side filter in AppointmentsTable
+  const displayedCount = gcalFailedOnly
+    ? appointments.filter((a) => a.gcal_sync_status === "failed").length
+    : appointments.length;
+
+  const loadData = useCallback(async (currentPage: number = page) => {
+    const reqId = ++reqIdRef.current;
     setLoading(true);
     try {
+      const appointmentParams: Record<string, string | number | boolean> = {
+        page: currentPage,
+        page_size: 50,
+        ...(filters.stylist_id && { stylist_id: filters.stylist_id }),
+        ...(filters.status && { status: filters.status }),
+        ...(filters.startDate && { start_date: filters.startDate }),
+        ...(filters.endDate && { end_date: filters.endDate }),
+      };
       const [appointmentsRes, stylistsRes, servicesRes, customersRes] =
         await Promise.all([
-          api.list<Appointment>("appointments", {
-            page_size: 100,
-            ...(filters.stylist_id && { stylist_id: filters.stylist_id }),
-            ...(filters.status && { status: filters.status }),
-          }),
+          api.list<Appointment>("appointments", appointmentParams),
           api.list<Stylist>("stylists", { page_size: 100 }),
           api.list<Service>("services", { page_size: 200 }),
           api.list<Customer>("customers", { page_size: 500 }),
         ]);
+      // W2: discard stale responses
+      if (reqId !== reqIdRef.current) return;
       setAppointments(appointmentsRes.items);
+      setHasMore(appointmentsRes.has_more);
       setStylists(stylistsRes.items);
       setServices(servicesRes.items);
       setCustomers(customersRes.items);
     } catch (error) {
+      if (reqId !== reqIdRef.current) return;
       toast.error("Error al cargar los datos");
       console.error(error);
     } finally {
-      setLoading(false);
+      if (reqId === reqIdRef.current) setLoading(false);
     }
-  }, [filters]);
+  }, [filters, page]);
 
   const loadCustomers = useCallback(async () => {
     try {
@@ -76,22 +100,28 @@ export default function AppointmentsPage() {
   }, []);
 
   useEffect(() => {
-    loadData();
+    loadData(page);
   }, [loadData]);
 
   // Refresh when the global Sync GCal button completes a sync.
   useEffect(() => {
-    const handler = () => loadData();
+    const handler = () => loadData(page);
     window.addEventListener("atrevete:gcal-synced", handler);
     return () => window.removeEventListener("atrevete:gcal-synced", handler);
-  }, [loadData]);
+  }, [loadData, page]);
 
   const handleDelete = async () => {
     if (!appointmentToDelete) return;
     try {
       await api.delete("appointments", appointmentToDelete);
       toast.success("Cita eliminada");
-      loadData();
+      // S3: if this was the last row on page >1, go back one page
+      const remainingOnPage = appointments.length - 1;
+      if (remainingOnPage === 0 && page > 1) {
+        setPage((p) => p - 1);
+      } else {
+        loadData(page);
+      }
     } catch (error) {
       toast.error("Error al eliminar la cita");
       console.error(error);
@@ -123,12 +153,24 @@ export default function AppointmentsPage() {
               stylists={stylists}
               stylistId={filters.stylist_id}
               status={filters.status}
-              onStylistChange={(value) =>
-                setFilters((prev) => ({ ...prev, stylist_id: value }))
-              }
-              onStatusChange={(value) =>
-                setFilters((prev) => ({ ...prev, status: value }))
-              }
+              onStylistChange={(value) => {
+                setPage(1);
+                setFilters((prev) => ({ ...prev, stylist_id: value }));
+              }}
+              onStatusChange={(value) => {
+                setPage(1);
+                setFilters((prev) => ({ ...prev, status: value }));
+              }}
+              startDate={filters.startDate}
+              endDate={filters.endDate}
+              onStartDateChange={(value) => {
+                setPage(1);
+                setFilters((prev) => ({ ...prev, startDate: value }));
+              }}
+              onEndDateChange={(value) => {
+                setPage(1);
+                setFilters((prev) => ({ ...prev, endDate: value }));
+              }}
             />
             {!loading && appointments.length === 0 ? (
               <EmptyState
@@ -151,6 +193,36 @@ export default function AppointmentsPage() {
                 onGcalFailedToggle={() => setGcalFailedOnly((prev) => !prev)}
               />
             )}
+
+            {/* T9 + C1: pagination footer */}
+            {!loading && appointments.length > 0 && (
+              <div className="flex items-center justify-between pt-4">
+                <span className="text-sm text-muted-foreground">
+                  {gcalFailedOnly
+                    ? `Mostrando ${displayedCount} con error de sincronización`
+                    : `Mostrando ${displayedCount} citas${hasMore ? " · hay más" : ""}`}
+                </span>
+                {/* C1: disable server pagination while a client-only filter is active */}
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={page === 1 || gcalFailedOnly}
+                    onClick={() => setPage((p) => p - 1)}
+                  >
+                    Anterior
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={!hasMore || gcalFailedOnly}
+                    onClick={() => setPage((p) => p + 1)}
+                  >
+                    Siguiente
+                  </Button>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -158,7 +230,7 @@ export default function AppointmentsPage() {
       <AppointmentWizard
         open={createModalOpen}
         onOpenChange={setCreateModalOpen}
-        onSuccess={loadData}
+        onSuccess={() => loadData(page)}
         services={services}
         stylists={stylists}
         customers={customers}

@@ -348,6 +348,8 @@ export default function ServicesPage() {
     category: "",
     is_active: "",
   });
+  // T12: client-side audience filter
+  const [audienceFilter, setAudienceFilter] = useState<string>("ALL");
 
   const loadData = useCallback(async () => {
     setLoading(true);
@@ -369,6 +371,12 @@ export default function ServicesPage() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // T12: client-side audience filter over fully-loaded services
+  const filteredServices = useMemo(() => {
+    if (audienceFilter === "ALL") return services;
+    return services.filter((s) => s.audience === audienceFilter);
+  }, [services, audienceFilter]);
 
   const handleEdit = useCallback((service: Service) => {
     setEditingService(service);
@@ -538,6 +546,23 @@ export default function ServicesPage() {
                   </SelectContent>
                 </Select>
               </div>
+              {/* T12: audience filter */}
+              <div className="w-full sm:w-[200px]">
+                <Select
+                  value={audienceFilter}
+                  onValueChange={(value) => setAudienceFilter(value)}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Filtrar por público" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="ALL">Ambos</SelectItem>
+                    <SelectItem value="adult_female">Mujer</SelectItem>
+                    <SelectItem value="adult_male">Hombre</SelectItem>
+                    <SelectItem value="child">Niño/a</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
 
             {!loading && services.length === 0 ? (
@@ -550,7 +575,7 @@ export default function ServicesPage() {
             ) : (
               <DataTable
                 columns={columns}
-                data={services}
+                data={filteredServices}
                 isLoading={loading}
                 searchKey="name"
                 searchPlaceholder="Buscar por nombre..."
