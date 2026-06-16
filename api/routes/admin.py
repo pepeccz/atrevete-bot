@@ -1202,24 +1202,26 @@ class StylistPerformancePoint(BaseModel):
 async def get_dashboard_kpis(
     current_user: Annotated[AdminUser, Depends(get_current_user)],
 ):
-    """Get dashboard KPI metrics (today-scoped, parallelized).
+    """Get dashboard KPI metrics (today-scoped, sequential).
 
-    Returns 4 today-scoped KPIs via asyncio.gather for minimum latency.
+    Runs the 4 KPI helpers sequentially on a single AsyncSession.
+    asyncio.gather MUST NOT be used here: AsyncSession/asyncpg is not safe for
+    concurrent use from multiple coroutines sharing the same connection.  Concurrent
+    access raises IllegalStateChangeError, leaves a non-checked-in connection that
+    the GC terminates, and corrupts the pool — causing 503s on this endpoint AND
+    collateral 503s on other endpoints (e.g. PATCH /escalations/{id}/resolve).
+    The 4 aggregate queries are fast enough that sequential execution adds no
+    perceptible latency.
     Legacy monthly-aggregate fields are preserved as None for frontend transition.
     """
     async with get_async_session() as session:
         now = datetime.now(MADRID_TZ)
         today = now.date()
 
-        # Parallelize all 4 KPI queries
-        confirmation_rate, appointments_count, occupation_rate, new_customers = (
-            await asyncio.gather(
-                _confirmation_rate_today(session, today),
-                _appointments_count_today(session, today),
-                _occupation_today(session, today),
-                _new_customers_last_7d(session, now),
-            )
-        )
+        confirmation_rate = await _confirmation_rate_today(session, today)
+        appointments_count = await _appointments_count_today(session, today)
+        occupation_rate = await _occupation_today(session, today)
+        new_customers = await _new_customers_last_7d(session, now)
 
         return DashboardKPIs(
             confirmation_rate_today=round(float(confirmation_rate), 4),
