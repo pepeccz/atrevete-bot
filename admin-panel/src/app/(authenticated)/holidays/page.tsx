@@ -187,7 +187,7 @@ export default function HolidaysPage() {
                 </Select>
                 <Button onClick={handleOpenCreateDialog}>
                   <Plus className="mr-2 h-4 w-4" />
-                  Agregar Festivo
+                  Añadir Festivo
                 </Button>
               </div>
             </div>
@@ -210,7 +210,7 @@ export default function HolidaysPage() {
                   onClick={handleOpenCreateDialog}
                 >
                   <Plus className="mr-2 h-4 w-4" />
-                  Agregar el primer festivo
+                  Añadir el primer festivo
                 </Button>
               </div>
             ) : (
@@ -257,7 +257,7 @@ export default function HolidaysPage() {
       }}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Agregar Festivo</DialogTitle>
+            <DialogTitle>Añadir Festivo</DialogTitle>
             <DialogDescription>
               Configura un día festivo donde el salón permanecerá cerrado
             </DialogDescription>

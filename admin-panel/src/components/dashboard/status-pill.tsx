@@ -31,9 +31,9 @@ const STATUS_CONFIG: Record<
   },
   no_show: {
     label: "No asistió",
-    dotBg: "bg-[hsl(var(--status-done))]",
-    pillBg: "bg-[hsl(var(--status-done-bg))]",
-    textColor: "text-[hsl(var(--status-done))]",
+    dotBg: "bg-[hsl(var(--status-cancel))]",
+    pillBg: "bg-[hsl(var(--status-cancel-bg))]",
+    textColor: "text-[hsl(var(--status-cancel))]",
   },
 };
 

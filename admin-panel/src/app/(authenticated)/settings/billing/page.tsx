@@ -2,6 +2,8 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useSearchParams } from "next/navigation";
+import Link from "next/link";
+import { ArrowLeft } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { billingApi } from "@/lib/billing-api";
@@ -63,6 +65,9 @@ export default function BillingPage() {
   return (
     <div className="flex-1 overflow-auto">
       <Header title="Facturación" />
+      <Link href="/settings" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground px-4 md:px-6 pt-4">
+        <ArrowLeft className="h-4 w-4" /> Ajustes
+      </Link>
       <div className="space-y-6 p-6">
         {error && (
           <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
