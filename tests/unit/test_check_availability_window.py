@@ -5,10 +5,24 @@ Covers AS15 (preferred_window in schema), AS16 (afternoon filter), E3 (glossary 
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
+from zoneinfo import ZoneInfo
 
 import pytest
+
+_MADRID_TZ = ZoneInfo("Europe/Madrid")
+
+
+def _future_date_iso(days_ahead: int = 2) -> str:
+    """A date safely in the future (Madrid time) so check_availability never rejects it as past.
+
+    Hardcoding a date here is a time-bomb: the test passes only until that date elapses, then
+    check_availability's past-date guard (target_date < today → rejected) silently empties the
+    payload. Computing the date relative to *now* keeps the test deterministic forever.
+    """
+    return (datetime.now(_MADRID_TZ).date() + timedelta(days=days_ahead)).isoformat()
 
 PROMPTS_DIR = Path(__file__).parents[2] / "agent" / "prompts" / "shared"
 GLOSSARY = PROMPTS_DIR / "glossary.md"
@@ -45,10 +59,18 @@ def test_preferred_window_field_in_schema():
 # ---------------------------------------------------------------------------
 
 
-def _make_slot(time_str: str, stylist_id: str = "aaaa-bbbb") -> dict:
-    """Build a minimal slot dict with a Madrid-time ISO datetime."""
+def _make_slot(time_str: str, date_iso: str, stylist_id: str = "aaaa-bbbb") -> dict:
+    """Build a minimal slot dict with a Madrid-time ISO datetime on the given date.
+
+    The datetime is constructed via zoneinfo so the UTC offset (DST-aware: +02:00 summer /
+    +01:00 winter) always matches the date — _madrid_hour() then recovers the wall-clock hour
+    regardless of season.
+    """
+    hh, mm = (int(p) for p in time_str.split(":"))
+    d = datetime.fromisoformat(date_iso)
+    dt = datetime(d.year, d.month, d.day, hh, mm, tzinfo=_MADRID_TZ)
     return {
-        "full_datetime": f"2026-06-15T{time_str}:00+02:00",  # Europe/Madrid summer (+02:00)
+        "full_datetime": dt.isoformat(),
         "stylist_name": "Marta",
         "stylist_id": stylist_id,
         "adjacent_priority": 1,
@@ -87,12 +109,13 @@ async def test_afternoon_filter_excludes_morning_slots(mock_availability_deps):
     import json
 
     fake_stylist_uuid, fake_service_uuid = mock_availability_deps
+    date_iso = _future_date_iso()
 
     # Slots at 09:00, 14:00, 18:00 Madrid time
     fake_slots = [
-        _make_slot("09:00"),   # morning → should be excluded
-        _make_slot("14:00"),   # afternoon → included
-        _make_slot("18:00"),   # afternoon → included
+        _make_slot("09:00", date_iso),   # morning → should be excluded
+        _make_slot("14:00", date_iso),   # afternoon → included
+        _make_slot("18:00", date_iso),   # afternoon → included
     ]
 
     with patch(
@@ -105,7 +128,7 @@ async def test_afternoon_filter_excludes_morning_slots(mock_availability_deps):
         result_json = await check_availability.coroutine(
             service_ids=[str(fake_service_uuid)],
             stylist_id=None,
-            date_iso="2026-06-15",
+            date_iso=date_iso,
             no_preference=True,
             preferred_window="afternoon",
         )
@@ -125,11 +148,12 @@ async def test_morning_filter_excludes_afternoon_slots(mock_availability_deps):
     import json
 
     fake_stylist_uuid, fake_service_uuid = mock_availability_deps
+    date_iso = _future_date_iso()
 
     fake_slots = [
-        _make_slot("09:00"),   # morning → included
-        _make_slot("11:00"),   # morning → included
-        _make_slot("15:00"),   # afternoon → excluded
+        _make_slot("09:00", date_iso),   # morning → included
+        _make_slot("11:00", date_iso),   # morning → included
+        _make_slot("15:00", date_iso),   # afternoon → excluded
     ]
 
     with patch(
@@ -142,7 +166,7 @@ async def test_morning_filter_excludes_afternoon_slots(mock_availability_deps):
         result_json = await check_availability.coroutine(
             service_ids=[str(fake_service_uuid)],
             stylist_id=None,
-            date_iso="2026-06-15",
+            date_iso=date_iso,
             no_preference=True,
             preferred_window="morning",
         )
@@ -162,11 +186,12 @@ async def test_none_window_returns_all_slots(mock_availability_deps):
     import json
 
     fake_stylist_uuid, fake_service_uuid = mock_availability_deps
+    date_iso = _future_date_iso()
 
     fake_slots = [
-        _make_slot("09:00"),
-        _make_slot("14:00"),
-        _make_slot("18:00"),
+        _make_slot("09:00", date_iso),
+        _make_slot("14:00", date_iso),
+        _make_slot("18:00", date_iso),
     ]
 
     with patch(
@@ -179,7 +204,7 @@ async def test_none_window_returns_all_slots(mock_availability_deps):
         result_json = await check_availability.coroutine(
             service_ids=[str(fake_service_uuid)],
             stylist_id=None,
-            date_iso="2026-06-15",
+            date_iso=date_iso,
             no_preference=True,
             preferred_window=None,
         )
