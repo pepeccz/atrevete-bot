@@ -24,6 +24,7 @@ import { toast } from "sonner";
 import { PausedBanner } from "./PausedBanner";
 import { Composer } from "./Composer";
 import { BotToggle } from "./BotToggle";
+import { TakeoverModal } from "./TakeoverModal";
 import { AttachmentLightbox } from "./AttachmentLightbox";
 import { formatDate } from "@/components/shared/format-utils";
 import { FetchError } from "@/components/shared/fetch-error";
@@ -32,6 +33,9 @@ import { useLightbox } from "@/hooks/useLightbox";
 import api from "@/lib/api";
 import type { Attachment, ConversationHistory, ConversationMessage, ConversationHistoryInbox, InboxWindowStatusResponse } from "@/lib/types";
 import { cn } from "@/lib/utils";
+
+// A-1: threshold (px) below which the user is considered "near bottom"
+const NEAR_BOTTOM_THRESHOLD = 100;
 
 // ─── Attachment helpers ────────────────────────────────────────────────────────
 
@@ -217,6 +221,11 @@ interface ConversationThreadProps {
   conversationId: string;
   /** Called with the deleted conversation's ID after a successful delete. */
   onDeleted?: (conversationId: string) => void;
+  /**
+   * A-4 (I-5): Chatwoot conversation ID for the linked customer, if available.
+   * The "Abrir en Chatwoot" menu item renders only when this is truthy.
+   */
+  chatwootConversationId?: string | null;
 }
 
 /**
@@ -224,7 +233,7 @@ interface ConversationThreadProps {
  * PausedBanner, Composer, and BotToggle in the header.
  * Polls at 3s (focused) / 10s (blurred) cadence (FR-UI-1, FR-UI-6).
  */
-export function ConversationThread({ conversationId, onDeleted }: ConversationThreadProps) {
+export function ConversationThread({ conversationId, onDeleted, chatwootConversationId }: ConversationThreadProps) {
   const [conversation, setConversation] = useState<ConversationHistory | null>(null);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState(false);
@@ -232,6 +241,20 @@ export function ConversationThread({ conversationId, onDeleted }: ConversationTh
   const [deleting, setDeleting] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const hadErrorRef = useRef(false);
+
+  // A-1: refs for near-bottom-gated auto-scroll
+  const scrollRootRef = useRef<HTMLElement | null>(null);
+  const isNearBottomRef = useRef(true);
+  const prevMsgCountRef = useRef(0);
+
+  // A-2: single TakeoverModal lifted up from BotToggle + Composer
+  const [takeover, setTakeover] = useState<{
+    open: boolean;
+    source: "toggle" | "send";
+    pendingText?: string;
+  } | null>(null);
+  // Callback ref so Composer can receive the "confirmed" signal without re-renders
+  const onTakeoverConfirmedForComposerRef = useRef<(() => void) | null>(null);
 
   const inbox = conversation as unknown as ConversationHistoryInbox | null;
   const botEnabled =
@@ -263,6 +286,9 @@ export function ConversationThread({ conversationId, onDeleted }: ConversationTh
   useEffect(() => {
     setLoading(true);
     setConversation(null);
+    // A-1: reset scroll-tracking state on conversation change
+    isNearBottomRef.current = true;
+    prevMsgCountRef.current = 0;
     fetchThread();
     // PR-1: mark all messages read when a conversation is selected (REQ-2, Scenario 2.4)
     api.markRead(conversationId).catch(() => {
@@ -270,9 +296,37 @@ export function ConversationThread({ conversationId, onDeleted }: ConversationTh
     });
   }, [conversationId, fetchThread]);
 
-  // Scroll to bottom when messages are loaded/updated.
+  // A-1: attach onScroll to the Radix ScrollArea viewport once it mounts
   useEffect(() => {
-    scrollToBottom();
+    const scrollArea = document.querySelector<HTMLElement>(
+      "[data-radix-scroll-area-viewport]"
+    );
+    if (!scrollArea) return;
+    scrollRootRef.current = scrollArea;
+
+    const handleScroll = () => {
+      const el = scrollRootRef.current;
+      if (!el) return;
+      isNearBottomRef.current =
+        el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_THRESHOLD;
+    };
+
+    scrollArea.addEventListener("scroll", handleScroll, { passive: true });
+    return () => scrollArea.removeEventListener("scroll", handleScroll);
+  }, [loading]); // re-attach after loading (ScrollArea appears after load)
+
+  // A-1: near-bottom-gated auto-scroll — replaces unconditional scrollToBottom on every poll
+  useEffect(() => {
+    const msgCount = Array.isArray(conversation?.messages)
+      ? conversation!.messages.length
+      : 0;
+    const isFirstLoad = prevMsgCountRef.current === 0;
+    const hasNewMessages = msgCount > prevMsgCountRef.current;
+
+    if (isFirstLoad || (hasNewMessages && isNearBottomRef.current)) {
+      scrollToBottom();
+    }
+    prevMsgCountRef.current = msgCount;
   }, [conversation?.messages, scrollToBottom]);
 
   useConversationPolling({
@@ -304,6 +358,25 @@ export function ConversationThread({ conversationId, onDeleted }: ConversationTh
   const handleBotPaused = () => {
     handleBotToggled(false);
   };
+
+  // A-2: single pause entry-point called by BotToggle and Composer
+  const handleRequestPause = useCallback(
+    (source: "toggle" | "send", pendingText?: string) => {
+      setTakeover({ open: true, source, pendingText });
+    },
+    []
+  );
+
+  // A-2: TakeoverModal confirmed — run pause path then signal Composer if needed
+  const handleTakeoverConfirmed = useCallback(() => {
+    handleBotToggled(false);
+    setTakeover(null);
+    // For source==='send', signal Composer to proceed with the pending send
+    if (onTakeoverConfirmedForComposerRef.current) {
+      onTakeoverConfirmedForComposerRef.current();
+      onTakeoverConfirmedForComposerRef.current = null;
+    }
+  }, []);
 
   const handleDeleteConfirm = async () => {
     setDeleting(true);
@@ -357,6 +430,7 @@ export function ConversationThread({ conversationId, onDeleted }: ConversationTh
               conversationId={conversationId}
               botEnabled={botEnabled}
               onToggled={handleBotToggled}
+              onRequestPause={handleRequestPause}
             />
           )}
           <DropdownMenu>
@@ -367,6 +441,18 @@ export function ConversationThread({ conversationId, onDeleted }: ConversationTh
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
+              {/* A-4 (I-5): Chatwoot link — rendered only when id is resolvable */}
+              {chatwootConversationId && (
+                <DropdownMenuItem asChild>
+                  <a
+                    href={`${process.env.NEXT_PUBLIC_CHATWOOT_URL}/app/accounts/1/conversations/${chatwootConversationId}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    Abrir en Chatwoot
+                  </a>
+                </DropdownMenuItem>
+              )}
               <DropdownMenuItem
                 className="text-destructive focus:text-destructive focus:bg-destructive/10"
                 onClick={() => setDeleteDialogOpen(true)}
@@ -463,9 +549,19 @@ export function ConversationThread({ conversationId, onDeleted }: ConversationTh
             botEnabled={botEnabled}
             onMessageSent={handleMessageSent}
             onBotPaused={handleBotPaused}
+            onRequestPause={handleRequestPause}
+            onTakeoverConfirmedRef={onTakeoverConfirmedForComposerRef}
           />
         </div>
       )}
+
+      {/* A-2: single TakeoverModal instance — owned by ConversationThread */}
+      <TakeoverModal
+        open={takeover?.open ?? false}
+        conversationId={conversationId}
+        onConfirmed={handleTakeoverConfirmed}
+        onCancelled={() => setTakeover(null)}
+      />
     </div>
   );
 }
@@ -509,11 +605,15 @@ function WindowStatusComposer({
   botEnabled,
   onMessageSent,
   onBotPaused,
+  onRequestPause,
+  onTakeoverConfirmedRef,
 }: {
   conversationId: string;
   botEnabled: boolean;
   onMessageSent: () => void;
   onBotPaused: () => void;
+  onRequestPause: (source: "toggle" | "send", pendingText?: string) => void;
+  onTakeoverConfirmedRef: React.MutableRefObject<(() => void) | null>;
 }) {
   const [windowStatus, setWindowStatus] = useState<InboxWindowStatusResponse | null>(null);
   const isFocusedRef = useRef<boolean>(
@@ -599,6 +699,8 @@ function WindowStatusComposer({
         botEnabled={botEnabled}
         onMessageSent={onMessageSent}
         onBotPaused={onBotPaused}
+        onRequestPause={onRequestPause}
+        onTakeoverConfirmedRef={onTakeoverConfirmedRef}
       />
     </div>
   );
