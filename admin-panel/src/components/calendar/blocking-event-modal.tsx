@@ -9,6 +9,7 @@ import { RecurrencePreviewCalendar } from "./recurrence-preview-calendar";
 import { ConflictWarning, type ConflictInfo } from "./conflict-warning";
 import { EVENT_TYPES } from "./event-types";
 import { expandRecurrence } from "@/lib/recurrence-utils";
+import { formatCategory } from "@/lib/category-labels";
 import {
   Dialog,
   DialogContent,
@@ -87,13 +88,7 @@ interface BlockingEventModalProps {
   overwriteExceptions?: boolean;
 }
 
-// Category metadata for grouping the multi-stylist checklist
-const CATEGORY_LABELS: Record<string, string> = {
-  HAIRDRESSING: "Peluquería",
-  AESTHETICS: "Estética",
-  BOTH: "Mixto",
-  __null__: "Sin categoría",
-};
+// Category metadata for grouping the multi-stylist checklist — labels from shared module
 
 // Returns ordered category keys present in a stylist list
 function groupStylistsByCategory(
@@ -113,14 +108,14 @@ function groupStylistsByCategory(
   // Known-order categories first
   for (const k of order) {
     if (buckets[k]) {
-      result.push({ key: k, label: CATEGORY_LABELS[k], list: buckets[k] });
+      result.push({ key: k, label: formatCategory(k), list: buckets[k] });
     }
   }
 
   // Remaining unknown keys (including __null__)
   for (const k of Object.keys(buckets)) {
     if (!order.includes(k)) {
-      result.push({ key: k, label: CATEGORY_LABELS[k] ?? k, list: buckets[k] });
+      result.push({ key: k, label: formatCategory(k), list: buckets[k] });
     }
   }
 
@@ -601,7 +596,7 @@ export function BlockingEventModal({
                           </div>
                         </TooltipTrigger>
                         <TooltipContent>
-                          Para reasignar, eliminá y creá un bloqueo nuevo
+                          Para reasignar, elimina y crea un bloqueo nuevo
                         </TooltipContent>
                       </Tooltip>
                     </TooltipProvider>

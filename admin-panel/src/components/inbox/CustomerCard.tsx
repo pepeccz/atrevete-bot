@@ -21,6 +21,7 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { formatDate } from "@/components/shared/format-utils";
+import { formatAppointmentStatus } from "@/lib/category-labels";
 import api from "@/lib/api";
 import { useNotes } from "@/hooks/useNotes";
 import type {
@@ -371,7 +372,7 @@ export function CustomerCard({
                         }
                         className="text-[10px] px-1 py-0 flex-shrink-0"
                       >
-                        {appt.status}
+                        {formatAppointmentStatus(appt.status)}
                       </Badge>
                     </div>
                     <p className="text-muted-foreground">

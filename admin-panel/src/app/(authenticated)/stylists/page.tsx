@@ -222,8 +222,8 @@ function StylistModal({
           </DialogTitle>
           <DialogDescription>
             {stylist
-              ? "Actualizá la información del estilista"
-              : "Creá un nuevo estilista"}
+              ? "Actualiza la información del estilista"
+              : "Crea un nuevo estilista"}
           </DialogDescription>
         </DialogHeader>
         <Form {...form}>
@@ -286,7 +286,7 @@ function StylistModal({
                           >
                             <FormControl>
                               <SelectTrigger>
-                                <SelectValue placeholder="Seleccioná un calendario..." />
+                                <SelectValue placeholder="Selecciona un calendario..." />
                               </SelectTrigger>
                             </FormControl>
                             <SelectContent>
@@ -328,7 +328,7 @@ function StylistModal({
                             </div>
                           )}
                           <p className="text-xs text-muted-foreground">
-                            Seleccioná el calendario de Google de este estilista.
+                            Selecciona el calendario de Google de este estilista.
                             Los calendarios marcados como &quot;Ocupado&quot; ya están asignados a otro estilista.
                           </p>
                         </>
@@ -426,7 +426,7 @@ function StylistModal({
                         </div>
                       </FormControl>
                       <p className="text-xs text-muted-foreground">
-                        Seleccioná un color o dejá en automático
+                        Selecciona un color o deja en automático
                       </p>
                       <FormMessage />
                     </FormItem>
@@ -520,7 +520,7 @@ export default function StylistsPage() {
       },
       {
         accessorKey: "category",
-        header: "Categoria",
+        header: "Categoría",
         cell: ({ row }) => (
           <CategoryBadge category={row.getValue("category") as ServiceCategory} />
         ),
@@ -536,9 +536,13 @@ export default function StylistsPage() {
         cell: ({ row }) => {
           const calId = row.getValue("google_calendar_id") as string | null;
           if (!calId) {
-            return <span className="text-muted-foreground text-sm">Sin calendario</span>;
+            return <span className="text-muted-foreground text-sm">Sin conectar</span>;
           }
-          return calId.length > 30 ? calId.substring(0, 30) + "..." : calId;
+          return (
+            <span title={calId} className="text-sm">
+              Conectado
+            </span>
+          );
         },
       },
       {

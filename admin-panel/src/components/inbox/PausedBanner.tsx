@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { usePermission } from "@/hooks/use-permission";
 import { toast } from "sonner";
 import api from "@/lib/api";
+import { formatEscalationReason } from "@/lib/category-labels";
 
 interface PausedBannerProps {
   conversationId: string;
@@ -109,7 +110,7 @@ export function PausedBanner({
           </span>
           {escalationReason && escalationSource !== "manual" && (
             <span className="text-xs text-amber-600">
-              · {escalationReason}
+              · {formatEscalationReason(escalationReason)}
             </span>
           )}
         </div>

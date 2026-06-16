@@ -62,6 +62,7 @@ import {
 } from "@/components/ui/tooltip";
 import { toast } from "sonner";
 import api, { ApiRequestError } from "@/lib/api";
+import { formatScope, formatAccessRole } from "@/lib/category-labels";
 import type { GoogleCalendar } from "@/lib/types";
 
 // Common European timezones for the selector
@@ -285,7 +286,7 @@ function EditCalendarDialog({
           <DialogHeader>
             <DialogTitle>Editar calendario</DialogTitle>
             <DialogDescription>
-              Modificá el nombre o la descripción del calendario.
+              Modifica el nombre o la descripción del calendario.
             </DialogDescription>
           </DialogHeader>
 
@@ -424,7 +425,7 @@ function DeleteCalendarDialog({
           <AlertDialogDescription asChild>
             <div className="space-y-3">
               <p>
-                ¿Estás seguro que querés eliminar el calendario{" "}
+                ¿Estás seguro de que quieres eliminar el calendario{" "}
                 <span className="font-semibold text-foreground">
                   &ldquo;{calendar?.summary}&rdquo;
                 </span>
@@ -529,9 +530,9 @@ export default function GoogleCalendarSettingsPage() {
     } else if (error) {
       const messages: Record<string, string> = {
         state_mismatch: "Error de seguridad: el estado de la solicitud no coincide",
-        missing_code: "No se recibio el codigo de autorización de Google",
-        token_exchange_failed: "No se pudo intercambiar el codigo por un token",
-        missing_state: "Error de seguridad: falta el parametro de estado",
+        missing_code: "No se recibió el código de autorización de Google",
+        token_exchange_failed: "No se pudo intercambiar el código por un token",
+        missing_state: "Error de seguridad: falta el parámetro de estado",
       };
       toast.error(messages[error] ?? `Error al conectar Google Calendar: ${error}`);
     }
@@ -672,7 +673,7 @@ export default function GoogleCalendarSettingsPage() {
                       )}
                       {status.scopes.length > 0 && (
                         <p className="text-xs text-muted-foreground">
-                          Permisos: {status.scopes.join(", ")}
+                          Permisos: {status.scopes.map(formatScope).join(", ")}
                         </p>
                       )}
                     </div>
@@ -698,7 +699,7 @@ export default function GoogleCalendarSettingsPage() {
                   </div>
                   <p className="text-sm text-muted-foreground">
                     Conecta tu cuenta de Google para poder seleccionar calendarios al crear o editar estilistas.
-                    Sin esta conexion, deberas introducir los IDs de calendario manualmente.
+                    Sin esta conexión, deberás introducir los IDs de calendario manualmente.
                   </p>
                   <Button
                     onClick={handleConnect}
@@ -790,7 +791,7 @@ export default function GoogleCalendarSettingsPage() {
                             </code>
                           </TableCell>
                           <TableCell>
-                            <Badge variant="outline">{calendar.access_role}</Badge>
+                            <Badge variant="outline">{formatAccessRole(calendar.access_role)}</Badge>
                           </TableCell>
                           <TableCell>
                             {calendar.background_color ? (
@@ -801,9 +802,10 @@ export default function GoogleCalendarSettingsPage() {
                                     backgroundColor: calendar.background_color,
                                   }}
                                 />
-                                <span className="text-xs text-muted-foreground">
-                                  {calendar.background_color}
-                                </span>
+                                <span
+                                  className="sr-only"
+                                  aria-label={calendar.background_color ?? undefined}
+                                />
                               </div>
                             ) : (
                               <span className="text-muted-foreground text-xs">—</span>
@@ -868,8 +870,8 @@ export default function GoogleCalendarSettingsPage() {
             <AlertDialogHeader>
               <AlertDialogTitle>Desconectar Google Calendar</AlertDialogTitle>
               <AlertDialogDescription>
-                Se eliminara la conexion con tu cuenta de Google. Los calendarios
-                ya asignados a los estilistas no se veran afectados, pero no podras
+                Se eliminará la conexión con tu cuenta de Google. Los calendarios
+                ya asignados a los estilistas no se verán afectados, pero no podrás
                 seleccionar nuevos calendarios desde el desplegable hasta volver a conectar.
               </AlertDialogDescription>
             </AlertDialogHeader>

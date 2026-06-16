@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 
 import { Header } from "@/components/layout/header";
+import { formatCategory } from "@/lib/category-labels";
 import { DatePicker } from "@/components/shared/date-picker";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PageSkeleton } from "@/components/shared/loading-skeleton";
@@ -205,7 +206,7 @@ export default function AppointmentDetailPage() {
         <Header title="Cita no encontrada" />
         <main className="flex-1 p-4 md:p-6 flex items-center justify-center">
           <div className="text-center">
-            <p className="text-muted-foreground mb-4">No se encontro la cita</p>
+            <p className="text-muted-foreground mb-4">No se encontró la cita</p>
             <Button onClick={() => router.push("/appointments")}>
               <ArrowLeft className="h-4 w-4 mr-2" />
               Volver a citas
@@ -288,7 +289,7 @@ export default function AppointmentDetailPage() {
                   <SelectContent>
                     {stylists.map((stylist) => (
                       <SelectItem key={stylist.id} value={stylist.id}>
-                        {stylist.name} ({stylist.category})
+                        {stylist.name} ({formatCategory(stylist.category)})
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -308,7 +309,7 @@ export default function AppointmentDetailPage() {
                         setSelectedDate("");
                       }
                     }}
-                    placeholder="Seleccioná fecha"
+                    placeholder="Selecciona fecha"
                   />
                 </div>
                 <div className="space-y-2">

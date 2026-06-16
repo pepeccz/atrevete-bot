@@ -18,6 +18,7 @@ import { DashboardGreeting } from "@/components/dashboard/dashboard-greeting";
 import { KpiCard } from "@/components/dashboard/kpi-card";
 import { AgendaRow } from "@/components/dashboard/agenda-row";
 import { EscalationItem } from "@/components/dashboard/escalation-item";
+import { formatEscalationReason } from "@/lib/category-labels";
 import { ServiceBar } from "@/components/dashboard/service-bar";
 import { StylistActivityRow } from "@/components/dashboard/stylist-activity-row";
 
@@ -332,7 +333,7 @@ export default function DashboardPage() {
                       key={esc.id}
                       href={`/conversations?conversation_id=${esc.conversation_id}&filter=escalated`}
                       customerName={esc.customer_name ?? esc.customer_phone}
-                      reason={esc.reason}
+                      reason={formatEscalationReason(esc.reason)}
                       relativeTime={formatDistanceToNow(new Date(esc.triggered_at), {
                         addSuffix: true,
                         locale: es,
