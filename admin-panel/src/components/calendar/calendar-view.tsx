@@ -1378,11 +1378,15 @@ export const CalendarView = forwardRef<CalendarViewRef, CalendarViewProps>(funct
             hour12: false,
           }}
           dayHeaderContent={(arg) => {
-            // Stacked header per handoff: small uppercase weekday + large day number.
             const weekday = arg.date
               .toLocaleDateString("es-ES", { weekday: "short" })
               .replace(".", "")
               .toUpperCase();
+            // Month view: plain weekday name only (no day number in column headers).
+            if (arg.view.type === "dayGridMonth") {
+              return weekday;
+            }
+            // Week/day views: stacked layout — small weekday + large day number.
             return {
               html: `<div class="flex flex-col items-center gap-1 leading-none">
                 <span class="text-[11px] font-semibold uppercase tracking-widest text-ink-mute">${weekday}</span>

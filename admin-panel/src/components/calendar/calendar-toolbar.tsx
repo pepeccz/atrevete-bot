@@ -85,6 +85,7 @@ export function CalendarToolbar({
   rightPill,
 }: CalendarToolbarProps) {
   const dateParts = formatDateRange(currentDate, view);
+  const navUnit = view === "day" ? "Día" : view === "month" ? "Mes" : "Semana";
 
   return (
     <div className="flex flex-wrap items-center gap-3 px-4 py-3 border-b border-line bg-white rounded-t-[14px]">
@@ -95,7 +96,7 @@ export function CalendarToolbar({
           size="icon"
           className="h-8 w-8"
           onClick={() => onNav("prev")}
-          aria-label="Semana anterior"
+          aria-label={`${navUnit} anterior`}
         >
           <ChevronLeft className="h-4 w-4" />
         </Button>
@@ -104,7 +105,7 @@ export function CalendarToolbar({
           size="icon"
           className="h-8 w-8"
           onClick={() => onNav("next")}
-          aria-label="Semana siguiente"
+          aria-label={`${navUnit} siguiente`}
         >
           <ChevronRight className="h-4 w-4" />
         </Button>
@@ -174,38 +175,42 @@ export function CalendarToolbar({
         ))}
       </div>
 
-      {/* Divider 2 */}
-      <span className="w-px h-6 bg-line flex-shrink-0" />
+      {/* Zone 4 — Zoom cluster (hidden in month view: slot duration is inert there) */}
+      {view !== "month" && (
+        <>
+          {/* Divider 2 */}
+          <span className="w-px h-6 bg-line flex-shrink-0" />
 
-      {/* Zone 4 — Zoom cluster */}
-      <div className="flex items-center gap-0.5 border border-line rounded-[10px] px-2 py-1">
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-5 w-5"
-          onClick={() => onZoomChange(zoomDown(zoomLevel))}
-          disabled={zoomLevel === ZOOM_LEVELS[0]}
-          aria-label="Reducir zoom"
-        >
-          <Minus className="h-3 w-3" />
-        </Button>
-        <span className="text-xs font-mono text-ink-mute w-10 text-center select-none">
-          {zoomLevel}
-        </span>
-        <Button
-          variant="ghost"
-          size="icon"
-          className="h-5 w-5"
-          onClick={() => onZoomChange(zoomUp(zoomLevel))}
-          disabled={zoomLevel === ZOOM_LEVELS[ZOOM_LEVELS.length - 1]}
-          aria-label="Aumentar zoom"
-        >
-          <Plus className="h-3 w-3" />
-        </Button>
-      </div>
+          <div className="flex items-center gap-0.5 border border-line rounded-[10px] px-2 py-1">
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-5 w-5"
+              onClick={() => onZoomChange(zoomDown(zoomLevel))}
+              disabled={zoomLevel === ZOOM_LEVELS[0]}
+              aria-label="Reducir zoom"
+            >
+              <Minus className="h-3 w-3" />
+            </Button>
+            <span className="text-xs font-mono text-ink-mute w-10 text-center select-none">
+              {zoomLevel}
+            </span>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-5 w-5"
+              onClick={() => onZoomChange(zoomUp(zoomLevel))}
+              disabled={zoomLevel === ZOOM_LEVELS[ZOOM_LEVELS.length - 1]}
+              aria-label="Aumentar zoom"
+            >
+              <Plus className="h-3 w-3" />
+            </Button>
+          </div>
 
-      {/* Divider 3 */}
-      <span className="w-px h-6 bg-line flex-shrink-0" />
+          {/* Divider 3 */}
+          <span className="w-px h-6 bg-line flex-shrink-0" />
+        </>
+      )}
 
       {/* Zone 5 — Actions */}
       <div className="flex items-center gap-2">
