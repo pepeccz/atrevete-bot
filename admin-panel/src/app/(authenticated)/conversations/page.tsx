@@ -29,7 +29,7 @@ import { CustomerCard } from "@/components/inbox/CustomerCard";
 import { usePermission } from "@/hooks/use-permission";
 import api from "@/lib/api";
 import { cn } from "@/lib/utils";
-import type { InboxFilter, ConversationHistory, ConversationHistoryInbox, CustomerDetail } from "@/lib/types";
+import type { InboxFilter, ConversationHistory, ConversationHistoryInbox } from "@/lib/types";
 
 // ─── Permission gate ───────────────────────────────────────────────────────────
 
@@ -72,8 +72,6 @@ export default function ConversationsPage() {
   const [activeFilter, setActiveFilter] = useState<InboxFilter>(filterParam);
   const [activeConversationId, setActiveConversationId] = useState<string | null>(convIdParam);
   const [activeCustomerId, setActiveCustomerId] = useState<string | null>(null);
-  // A-4 (I-5): Chatwoot conversation id from the linked customer, for the "Abrir en Chatwoot" menu item
-  const [chatwootConversationId, setChatwootConversationId] = useState<string | null>(null);
   const [listRefreshKey, setListRefreshKey] = useState(0);
   const [activeWhatsappContact, setActiveWhatsappContact] = useState<
     import("@/lib/types").WhatsappContact | null
@@ -123,12 +121,10 @@ export default function ConversationsPage() {
   // Fetch customer_id + whatsapp_contact for the active conversation to
   // populate CustomerCard. whatsapp_contact is the fallback contact info
   // shown when no Customer row is linked yet.
-  // A-4 (I-5): also fetches chatwoot_conversation_id from the linked customer.
   useEffect(() => {
     if (!activeConversationId) {
       setActiveCustomerId(null);
       setActiveWhatsappContact(null);
-      setChatwootConversationId(null);
       return;
     }
     let cancelled = false;
@@ -137,30 +133,13 @@ export default function ConversationsPage() {
       .then((conv: ConversationHistory) => {
         if (cancelled) return;
         const inbox = conv as unknown as ConversationHistoryInbox;
-        const customerId = inbox.customer_id ?? null;
-        setActiveCustomerId(customerId);
+        setActiveCustomerId(inbox.customer_id ?? null);
         setActiveWhatsappContact(conv.whatsapp_contact ?? null);
-        // A-4: fetch customer to get chatwoot_conversation_id (parallel, non-blocking)
-        if (customerId) {
-          api
-            .getCustomerDetail(customerId)
-            .then((customer: CustomerDetail) => {
-              if (cancelled) return;
-              setChatwootConversationId(customer.chatwoot_conversation_id ?? null);
-            })
-            .catch(() => {
-              if (cancelled) return;
-              setChatwootConversationId(null);
-            });
-        } else {
-          setChatwootConversationId(null);
-        }
       })
       .catch(() => {
         if (cancelled) return;
         setActiveCustomerId(null);
         setActiveWhatsappContact(null);
-        setChatwootConversationId(null);
       });
     return () => {
       cancelled = true;
@@ -198,7 +177,6 @@ export default function ConversationsPage() {
         setActiveConversationId(null);
         setActiveCustomerId(null);
         setActiveWhatsappContact(null);
-        setChatwootConversationId(null);
         updateUrl(undefined, null);
       }
       // The list will refetch on its own polling cycle, but trigger immediately
@@ -243,7 +221,6 @@ export default function ConversationsPage() {
             <ConversationThread
               conversationId={activeConversationId}
               onDeleted={handleConversationDeleted}
-              chatwootConversationId={chatwootConversationId}
             />
           ) : (
             <EmptyThread />

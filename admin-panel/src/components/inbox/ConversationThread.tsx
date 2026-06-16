@@ -221,11 +221,6 @@ interface ConversationThreadProps {
   conversationId: string;
   /** Called with the deleted conversation's ID after a successful delete. */
   onDeleted?: (conversationId: string) => void;
-  /**
-   * A-4 (I-5): Chatwoot conversation ID for the linked customer, if available.
-   * The "Abrir en Chatwoot" menu item renders only when this is truthy.
-   */
-  chatwootConversationId?: string | null;
 }
 
 /**
@@ -233,7 +228,7 @@ interface ConversationThreadProps {
  * PausedBanner, Composer, and BotToggle in the header.
  * Polls at 3s (focused) / 10s (blurred) cadence (FR-UI-1, FR-UI-6).
  */
-export function ConversationThread({ conversationId, onDeleted, chatwootConversationId }: ConversationThreadProps) {
+export function ConversationThread({ conversationId, onDeleted }: ConversationThreadProps) {
   const [conversation, setConversation] = useState<ConversationHistory | null>(null);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState(false);
@@ -242,10 +237,15 @@ export function ConversationThread({ conversationId, onDeleted, chatwootConversa
   const bottomRef = useRef<HTMLDivElement>(null);
   const hadErrorRef = useRef(false);
 
+  // C1: container ref scopes the scroll-area viewport query to this component's subtree
+  const containerRef = useRef<HTMLDivElement>(null);
+
   // A-1: refs for near-bottom-gated auto-scroll
   const scrollRootRef = useRef<HTMLElement | null>(null);
   const isNearBottomRef = useRef(true);
   const prevMsgCountRef = useRef(0);
+  // W3: explicit first-load flag (replaces fragile prevMsgCountRef.current === 0 inference)
+  const hasLoadedOnceRef = useRef(false);
 
   // A-2: single TakeoverModal lifted up from BotToggle + Composer
   const [takeover, setTakeover] = useState<{
@@ -289,6 +289,8 @@ export function ConversationThread({ conversationId, onDeleted, chatwootConversa
     // A-1: reset scroll-tracking state on conversation change
     isNearBottomRef.current = true;
     prevMsgCountRef.current = 0;
+    // W3: reset first-load flag so the new conversation scrolls to bottom on first fetch
+    hasLoadedOnceRef.current = false;
     fetchThread();
     // PR-1: mark all messages read when a conversation is selected (REQ-2, Scenario 2.4)
     api.markRead(conversationId).catch(() => {
@@ -296,9 +298,14 @@ export function ConversationThread({ conversationId, onDeleted, chatwootConversa
     });
   }, [conversationId, fetchThread]);
 
-  // A-1: attach onScroll to the Radix ScrollArea viewport once it mounts
+  // C1 / A-1: attach onScroll to the Radix ScrollArea viewport scoped to THIS
+  // component's subtree (containerRef). Using document.querySelector would match
+  // the first [data-radix-scroll-area-viewport] in the DOM — which may belong to
+  // CustomerCard or another nested ScrollArea — causing a wrong-viewport bug.
   useEffect(() => {
-    const scrollArea = document.querySelector<HTMLElement>(
+    const root = containerRef.current;
+    if (!root) return;
+    const scrollArea = root.querySelector<HTMLElement>(
       "[data-radix-scroll-area-viewport]"
     );
     if (!scrollArea) return;
@@ -313,18 +320,23 @@ export function ConversationThread({ conversationId, onDeleted, chatwootConversa
 
     scrollArea.addEventListener("scroll", handleScroll, { passive: true });
     return () => scrollArea.removeEventListener("scroll", handleScroll);
-  }, [loading]); // re-attach after loading (ScrollArea appears after load)
+  }, [loading]); // re-attach after loading (ScrollArea renders only after load)
 
-  // A-1: near-bottom-gated auto-scroll — replaces unconditional scrollToBottom on every poll
+  // W3 / A-1: near-bottom-gated auto-scroll. Uses an explicit hasLoadedOnceRef
+  // instead of prevMsgCountRef.current === 0 so a transient empty-fetch that
+  // resets count to 0 does not re-arm the unconditional first-load scroll.
   useEffect(() => {
     const msgCount = Array.isArray(conversation?.messages)
       ? conversation!.messages.length
       : 0;
-    const isFirstLoad = prevMsgCountRef.current === 0;
+    const isFirstLoad = !hasLoadedOnceRef.current;
     const hasNewMessages = msgCount > prevMsgCountRef.current;
 
     if (isFirstLoad || (hasNewMessages && isNearBottomRef.current)) {
       scrollToBottom();
+    }
+    if (isFirstLoad && msgCount > 0) {
+      hasLoadedOnceRef.current = true;
     }
     prevMsgCountRef.current = msgCount;
   }, [conversation?.messages, scrollToBottom]);
@@ -335,7 +347,8 @@ export function ConversationThread({ conversationId, onDeleted, chatwootConversa
     enabled: true,
   });
 
-  const handleBotToggled = (newBotEnabled: boolean) => {
+  // W2: memoized so handleTakeoverConfirmed can safely reference it in its dep array
+  const handleBotToggled = useCallback((newBotEnabled: boolean) => {
     setConversation((prev) => {
       if (!prev) return prev;
       return {
@@ -344,7 +357,7 @@ export function ConversationThread({ conversationId, onDeleted, chatwootConversa
         paused_at: newBotEnabled ? null : new Date().toISOString(),
       } as unknown as ConversationHistory;
     });
-  };
+  }, []);
 
   const handleResumed = () => {
     handleBotToggled(true);
@@ -359,15 +372,25 @@ export function ConversationThread({ conversationId, onDeleted, chatwootConversa
     handleBotToggled(false);
   };
 
-  // A-2: single pause entry-point called by BotToggle and Composer
+  // A-2 / W1: single pause entry-point called by BotToggle and Composer.
+  // Guards re-entrancy (ignores new requests while modal is already open).
+  // For source==='toggle', clears any pending send callback (a toggle pause must
+  // never carry a lingering 'send' callback from a previous interaction).
   const handleRequestPause = useCallback(
     (source: "toggle" | "send", pendingText?: string) => {
+      // W1: ignore if modal is already open (prevent double-pause race)
+      if (takeover?.open) return;
+      if (source === "toggle") {
+        // W1: a toggle pause must never carry a stale send callback
+        onTakeoverConfirmedForComposerRef.current = null;
+      }
       setTakeover({ open: true, source, pendingText });
     },
-    []
+    [takeover?.open]
   );
 
-  // A-2: TakeoverModal confirmed — run pause path then signal Composer if needed
+  // A-2 / W2: TakeoverModal confirmed — run pause path then signal Composer if needed.
+  // handleBotToggled is stable (useCallback []) so including it in deps is safe.
   const handleTakeoverConfirmed = useCallback(() => {
     handleBotToggled(false);
     setTakeover(null);
@@ -376,7 +399,7 @@ export function ConversationThread({ conversationId, onDeleted, chatwootConversa
       onTakeoverConfirmedForComposerRef.current();
       onTakeoverConfirmedForComposerRef.current = null;
     }
-  }, []);
+  }, [handleBotToggled]);
 
   const handleDeleteConfirm = async () => {
     setDeleting(true);
@@ -415,7 +438,7 @@ export function ConversationThread({ conversationId, onDeleted, chatwootConversa
   const customerName = conversation?.customer_name ?? "esta conversación";
 
   return (
-    <div className="flex flex-col h-full">
+    <div ref={containerRef} className="flex flex-col h-full">
       {/* Thread header */}
       <div className="flex items-center justify-between px-4 py-2.5 border-b border-line bg-sidebar flex-shrink-0">
         <div className="flex items-center gap-2 min-w-0">
@@ -441,18 +464,7 @@ export function ConversationThread({ conversationId, onDeleted, chatwootConversa
               </Button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end">
-              {/* A-4 (I-5): Chatwoot link — rendered only when id is resolvable */}
-              {chatwootConversationId && (
-                <DropdownMenuItem asChild>
-                  <a
-                    href={`${process.env.NEXT_PUBLIC_CHATWOOT_URL}/app/accounts/1/conversations/${chatwootConversationId}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                  >
-                    Abrir en Chatwoot
-                  </a>
-                </DropdownMenuItem>
-              )}
+              {/* "Abrir en Chatwoot" deferred — needs NEXT_PUBLIC_CHATWOOT_ACCOUNT_ID config + confirmed Chatwoot URL pattern. */}
               <DropdownMenuItem
                 className="text-destructive focus:text-destructive focus:bg-destructive/10"
                 onClick={() => setDeleteDialogOpen(true)}
@@ -560,7 +572,12 @@ export function ConversationThread({ conversationId, onDeleted, chatwootConversa
         open={takeover?.open ?? false}
         conversationId={conversationId}
         onConfirmed={handleTakeoverConfirmed}
-        onCancelled={() => setTakeover(null)}
+        onCancelled={() => {
+          // W1: clear the send callback on cancel so a cancelled 'send' takeover
+          // cannot leak its callback into a later 'toggle' confirm.
+          onTakeoverConfirmedForComposerRef.current = null;
+          setTakeover(null);
+        }}
       />
     </div>
   );
