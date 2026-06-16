@@ -259,7 +259,7 @@ export default function HolidaysPage() {
           <DialogHeader>
             <DialogTitle>Agregar Festivo</DialogTitle>
             <DialogDescription>
-              Configurá un día festivo donde el salón permanecerá cerrado
+              Configura un día festivo donde el salón permanecerá cerrado
             </DialogDescription>
           </DialogHeader>
           <Form {...holidayForm}>
@@ -284,7 +284,7 @@ export default function HolidaysPage() {
                             field.onChange("");
                           }
                         }}
-                        placeholder="Seleccioná la fecha del festivo"
+                        placeholder="Selecciona la fecha del festivo"
                         minDate={new Date()}
                       />
                     </FormControl>

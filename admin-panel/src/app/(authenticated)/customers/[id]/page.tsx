@@ -332,11 +332,11 @@ export default function CustomerDetailPage() {
                   {customer.chatwoot_conversation_id && (
                     <div>
                       <p className="text-xs text-muted-foreground">
-                        ID Chatwoot
+                        Conversación WhatsApp
                       </p>
-                      <Badge variant="outline" className="font-mono text-xs mt-1">
-                        {customer.chatwoot_conversation_id}
-                      </Badge>
+                      <p className="text-sm font-medium">
+                        #{customer.chatwoot_conversation_id}
+                      </p>
                     </div>
                   )}
                 </CardContent>

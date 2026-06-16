@@ -135,7 +135,7 @@ function SyncGCalButton() {
       aria-label="Sincronizar Google Calendar"
     >
       <RefreshCw className={`h-3.5 w-3.5 ${syncing ? "animate-spin" : ""}`} />
-      Sync GCal
+      Sincronizar Google Calendar
     </Button>
   );
 }

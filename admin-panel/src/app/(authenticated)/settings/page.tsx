@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 const configSections = [
   {
     title: "Centro de Notificaciones",
-    description: "Historial completo, estadisticas y gestion de notificaciones",
+    description: "Historial completo, estadísticas y gestión de notificaciones",
     icon: Bell,
     href: "/settings/notifications",
     color: "bg-amber-500",

@@ -9,6 +9,8 @@ import {
   ResponsiveContainer,
   Cell,
 } from "recharts";
+import { format, parseISO } from "date-fns";
+import { es } from "date-fns/locale";
 import type { AppointmentTrendPoint } from "@/lib/types";
 
 interface AppointmentsTrendChartProps {
@@ -63,7 +65,7 @@ export function AppointmentsTrendChart({ data }: AppointmentsTrendChartProps) {
               return (
                 <div className="rounded-card-sm border border-[hsl(var(--line))] bg-white px-2 py-1 text-[11.5px] shadow-sm">
                   <span className="font-semibold text-ink">{point.count} citas</span>
-                  <span className="ml-1 text-ink-mute">{point.date}</span>
+                  <span className="ml-1 text-ink-mute">{format(parseISO(point.date), "dd/MM/yyyy", { locale: es })}</span>
                 </div>
               );
             }}

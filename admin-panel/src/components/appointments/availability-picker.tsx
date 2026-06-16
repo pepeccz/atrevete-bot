@@ -235,7 +235,7 @@ export function AvailabilityPicker({
           <div className="space-y-4">
             {availability.days.length === 0 ? (
               <div className="text-center py-8 text-muted-foreground">
-                <p>No se encontraron dias disponibles</p>
+                <p>No se encontraron días disponibles</p>
               </div>
             ) : (
               availability.days.map((day) => (
@@ -303,7 +303,7 @@ export function AvailabilityPicker({
                                 })}
                                 {stylist.slots.length > 12 && (
                                   <span className="text-xs text-muted-foreground self-center">
-                                    +{stylist.slots.length - 12} mas
+                                    +{stylist.slots.length - 12} más
                                   </span>
                                 )}
                               </div>

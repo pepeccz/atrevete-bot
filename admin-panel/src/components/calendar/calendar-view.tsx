@@ -1343,7 +1343,7 @@ export const CalendarView = forwardRef<CalendarViewRef, CalendarViewProps>(funct
           }
           buttonText={{
             today: "Hoy",
-            day: "Dia",
+            day: "Día",
             week: "Semana",
             month: "Mes",
             list: "Lista",

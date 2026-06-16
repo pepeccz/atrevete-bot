@@ -152,7 +152,7 @@ export function ConfirmStep({
           <div>
             <p className="text-sm font-medium">Nombre para la cita</p>
             <p className="text-xs text-muted-foreground">
-              Por defecto el nombre del cliente. Modificá si la cita es para otra persona.
+              Por defecto el nombre del cliente. Modifica si la cita es para otra persona.
             </p>
           </div>
           <div className="grid grid-cols-2 gap-4">

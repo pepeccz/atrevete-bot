@@ -127,7 +127,7 @@ function NotificationItem({
             onRead(notification.id);
           }}
           className="p-1 hover:bg-background rounded"
-          title="Marcar como leida"
+          title="Marcar como leída"
         >
           <Check className="h-3 w-3 text-muted-foreground" />
         </button>
@@ -255,7 +255,7 @@ export function NotificationCenter() {
               onClick={handleMarkAllRead}
               className="text-xs text-primary hover:underline"
             >
-              Marcar todas como leidas
+              Marcar todas como leídas
             </button>
           )}
         </div>

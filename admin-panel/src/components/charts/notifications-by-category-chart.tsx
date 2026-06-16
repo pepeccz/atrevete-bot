@@ -29,8 +29,8 @@ export function NotificationsByCategoryChart({ data }: NotificationsByCategoryCh
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Notificaciones por Categoria</CardTitle>
-        <CardDescription>Total historico por tipo</CardDescription>
+        <CardTitle>Notificaciones por Categoría</CardTitle>
+        <CardDescription>Total histórico por tipo</CardDescription>
       </CardHeader>
       <CardContent>
         <ResponsiveContainer width="100%" height={200}>

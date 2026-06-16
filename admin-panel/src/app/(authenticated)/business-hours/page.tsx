@@ -16,10 +16,10 @@ import type { BusinessHours } from "@/lib/types";
 const DAY_NAMES = [
   "Lunes",
   "Martes",
-  "Miercoles",
+  "Miércoles",
   "Jueves",
   "Viernes",
-  "Sabado",
+  "Sábado",
   "Domingo",
 ];
 

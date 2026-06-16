@@ -149,10 +149,10 @@ export default function NotificationsPage() {
             }
           : null
       );
-      toast.success("Marcada como leida");
+      toast.success("Marcada como leída");
       fetchStats();
     } catch (error) {
-      toast.error("Error al marcar como leida");
+      toast.error("Error al marcar como leída");
     }
   };
 
@@ -170,10 +170,10 @@ export default function NotificationsPage() {
             }
           : null
       );
-      toast.success("Marcada como no leida");
+      toast.success("Marcada como no leída");
       fetchStats();
     } catch (error) {
-      toast.error("Error al marcar como no leida");
+      toast.error("Error al marcar como no leída");
     }
   };
 
@@ -195,7 +195,7 @@ export default function NotificationsPage() {
             }
           : null
       );
-      toast.success("Notificacion eliminada");
+      toast.success("Notificación eliminada");
       fetchStats();
     } catch (error) {
       toast.error("Error al eliminar");
@@ -239,7 +239,7 @@ export default function NotificationsPage() {
     for (const id of selectedIds) {
       await api.markNotificationRead(id);
     }
-    toast.success("Notificaciones marcadas como leidas");
+    toast.success("Notificaciones marcadas como leídas");
     setRowSelection({});
     fetchNotifications();
     fetchStats();
@@ -282,7 +282,7 @@ export default function NotificationsPage() {
     <div className="flex flex-col">
       <Header
         title="Centro de Notificaciones"
-        description="Historial completo, estadisticas y gestion de notificaciones"
+        description="Historial completo, estadísticas y gestión de notificaciones"
       />
 
       <div className="flex-1 p-4 md:p-6 space-y-6">
@@ -299,7 +299,7 @@ export default function NotificationsPage() {
           </Card>
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">No Leidas</CardTitle>
+              <CardTitle className="text-sm font-medium">No Leídas</CardTitle>
               <Mail className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
@@ -360,7 +360,7 @@ export default function NotificationsPage() {
             <CardContent className="py-3">
               <div className="flex items-center justify-between">
                 <span className="text-sm font-medium">
-                  {selectedCount} notificacion(es) seleccionada(s)
+                  {selectedCount} notificación(es) seleccionada(s)
                 </span>
                 <div className="flex gap-2">
                   <Button
@@ -369,7 +369,7 @@ export default function NotificationsPage() {
                     onClick={handleBulkMarkRead}
                   >
                     <MailOpen className="h-4 w-4 mr-2" />
-                    Marcar leidas
+                    Marcar leídas
                   </Button>
                   <Button
                     variant="destructive"

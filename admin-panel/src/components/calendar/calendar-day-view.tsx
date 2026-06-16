@@ -317,7 +317,7 @@ export function CalendarDayView({
           <path d="M16 3.13a4 4 0 0 1 0 7.75" />
         </svg>
         <span className="text-[13px] text-ink-mute">
-          Activá al menos un estilista para ver citas
+          Activa al menos un estilista para ver citas
         </span>
       </div>
     );

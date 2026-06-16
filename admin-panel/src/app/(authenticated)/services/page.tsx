@@ -160,11 +160,11 @@ function ServiceModal({
         } else if (typeof error.detail === "string") {
           setFormError(error.detail);
         } else {
-          setFormError("Error de validación. Revisá los datos ingresados.");
+          setFormError("Error de validación. Revisa los datos ingresados.");
         }
       } else {
         setFormError(
-          `Error al guardar: ${error instanceof Error ? error.message : "Intentá de nuevo."}`
+          `Error al guardar: ${error instanceof Error ? error.message : "Intenta de nuevo."}`
         );
         toast.error(
           `Error: ${error instanceof Error ? error.message : "Error desconocido"}`
@@ -184,8 +184,8 @@ function ServiceModal({
           </DialogTitle>
           <DialogDescription>
             {service
-              ? "Actualizá la información del servicio"
-              : "Creá un nuevo servicio"}
+              ? "Actualiza la información del servicio"
+              : "Crea un nuevo servicio"}
           </DialogDescription>
         </DialogHeader>
         <Form {...form}>
@@ -406,7 +406,7 @@ export default function ServicesPage() {
       },
       {
         accessorKey: "category",
-        header: "Categoria",
+        header: "Categoría",
         cell: ({ row }) => (
           <CategoryBadge category={row.getValue("category") as ServiceCategory} />
         ),
@@ -423,7 +423,7 @@ export default function ServicesPage() {
       },
       {
         accessorKey: "description",
-        header: "Descripcion",
+        header: "Descripción",
         cell: ({ row }) => {
           const desc = row.getValue("description") as string | null;
           if (!desc) return "-";
@@ -544,7 +544,7 @@ export default function ServicesPage() {
               <EmptyState
                 icon={Scissors}
                 title="No hay servicios creados"
-                description="Creá los servicios del salón para que el bot pueda ofrecerlos."
+                description="Crea los servicios del salón para que el bot pueda ofrecerlos."
                 action={{ label: "Nuevo servicio", onClick: handleCreate }}
               />
             ) : (

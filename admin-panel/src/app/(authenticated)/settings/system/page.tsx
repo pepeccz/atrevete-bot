@@ -34,6 +34,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
 import api from "@/lib/api";
+import { formatModel } from "@/lib/category-labels";
 import type { SystemSetting, SettingCategory, SystemServiceName } from "@/lib/types";
 
 // Mapping from setting category to the worker service that needs restart
@@ -154,7 +155,7 @@ function SettingInput({ setting, value, onChange, disabled }: SettingInputProps)
         <SelectContent>
           {allowed_values.map((option) => (
             <SelectItem key={option} value={option}>
-              {option}
+              {formatModel(option)}
             </SelectItem>
           ))}
         </SelectContent>

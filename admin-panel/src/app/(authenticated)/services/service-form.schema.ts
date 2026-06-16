@@ -3,7 +3,7 @@ import { z } from "zod";
 export const ServiceFormSchema = z.object({
   name: z.string().min(1, "El nombre es requerido"),
   category: z.enum(["HAIRDRESSING", "AESTHETICS", "BOTH"], {
-    errorMap: () => ({ message: "Seleccioná una categoría válida" }),
+    errorMap: () => ({ message: "Selecciona una categoría válida" }),
   }),
   duration_minutes: z
     .number({ invalid_type_error: "La duración debe ser un número" })

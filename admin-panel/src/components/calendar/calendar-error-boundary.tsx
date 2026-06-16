@@ -47,7 +47,7 @@ export class CalendarErrorBoundary extends Component<Props, State> {
         <div className="flex flex-col items-center justify-center gap-4 py-16 px-4 text-center rounded-[14px] border border-line bg-white">
           <div className="text-[40px]" role="img" aria-label="Error">⚠️</div>
           <p className="text-sm font-medium text-ink max-w-xs">
-            No se pudo cargar el calendario. Recargá la página.
+            No se pudo cargar el calendario. Recarga la página.
           </p>
           {this.state.errorMessage && (
             <p className="text-xs text-ink-mute max-w-xs font-mono">
