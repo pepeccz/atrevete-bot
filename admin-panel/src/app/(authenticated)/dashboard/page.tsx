@@ -2,9 +2,11 @@
 
 import { useEffect, useState, useCallback } from "react";
 import dynamic from "next/dynamic";
+import { useRouter } from "next/navigation";
 import { Plus } from "lucide-react";
 import { formatDistanceToNow } from "date-fns";
 import { es } from "date-fns/locale";
+import { toast } from "sonner";
 
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
@@ -12,6 +14,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { StatCardSkeleton } from "@/components/shared/loading-skeleton";
 import { useAuth } from "@/contexts/auth-context";
+import { hasPermission } from "@/lib/permissions";
 import api from "@/lib/api";
 
 import { DashboardGreeting } from "@/components/dashboard/dashboard-greeting";
@@ -21,6 +24,7 @@ import { EscalationItem } from "@/components/dashboard/escalation-item";
 import { formatEscalationReason } from "@/lib/category-labels";
 import { ServiceBar } from "@/components/dashboard/service-bar";
 import { StylistActivityRow } from "@/components/dashboard/stylist-activity-row";
+import { AppointmentWizard } from "@/app/(authenticated)/appointments/components/wizard/appointment-wizard";
 
 import type {
   DashboardKPIs,
@@ -29,6 +33,9 @@ import type {
   StylistActivityItem,
   AppointmentTrendPoint,
   Escalation,
+  Service,
+  Stylist,
+  Customer,
 } from "@/lib/types";
 
 // Recharts does not support SSR — lazy load chart
@@ -109,6 +116,10 @@ function formatOccupation(rate: number | null | undefined): string {
 
 export default function DashboardPage() {
   const { user } = useAuth();
+  const router = useRouter();
+
+  // Permission gate for escalation resolve
+  const canResolve = hasPermission(user?.role ?? "", "escalations:resolve");
 
   const [kpis, setKpis] = useState<DashboardKPIs | null>(null);
   const [agenda, setAgenda] = useState<TodayAgendaItem[] | null>(null);
@@ -124,6 +135,13 @@ export default function DashboardPage() {
   const [trendLoading, setTrendLoading] = useState(true);
 
   const [escalationsError, setEscalationsError] = useState(false);
+
+  // ─── Appointment wizard state (T2.3) ───────────────────────────────────────
+  const [wizardOpen, setWizardOpen] = useState(false);
+  const [wizardServices, setWizardServices] = useState<Service[]>([]);
+  const [wizardStylists, setWizardStylists] = useState<Stylist[]>([]);
+  const [wizardCustomers, setWizardCustomers] = useState<Customer[]>([]);
+  const [wizardDataLoaded, setWizardDataLoaded] = useState(false);
 
   // Fetch KPIs
   useEffect(() => {
@@ -181,6 +199,58 @@ export default function DashboardPage() {
     });
   }, []);
 
+  // Lazy-fetch wizard data only when the wizard first opens (T2.3)
+  useEffect(() => {
+    if (wizardOpen && !wizardDataLoaded) {
+      Promise.all([
+        api.list<Service>("services", { page_size: 200 }),
+        api.list<Stylist>("stylists", { page_size: 100 }),
+        api.list<Customer>("customers", { page_size: 500 }),
+      ]).then(([s, st, c]) => {
+        setWizardServices(s.items);
+        setWizardStylists(st.items);
+        setWizardCustomers(c.items);
+        setWizardDataLoaded(true);
+      });
+    }
+  }, [wizardOpen, wizardDataLoaded]);
+
+  const refreshWizardCustomers = useCallback(async () => {
+    const r = await api.list<Customer>("customers", { page_size: 500 });
+    setWizardCustomers(r.items);
+  }, []);
+
+  // Re-fetch agenda + KPIs after a wizard booking succeeds (T2.3)
+  const handleWizardSuccess = useCallback(() => {
+    setWizardOpen(false);
+    // Refetch agenda
+    api
+      .getTodayAgenda()
+      .then((r) => setAgenda(r.appointments))
+      .catch(() => {});
+    // Refetch KPIs
+    api
+      .getDashboardKPIs()
+      .then(setKpis)
+      .catch(() => {});
+  }, []);
+
+  // Resolve escalation with optimistic update (T2.2)
+  const handleResolve = useCallback(
+    async (id: string) => {
+      // Optimistic removal — counter auto-decrements via derived state
+      setEscalations((prev) => (prev ? prev.filter((e) => e.id !== id) : prev));
+      try {
+        await api.resolveEscalation(id);
+      } catch {
+        toast.error("Error al resolver la escalación");
+        // Restore truth from server
+        fetchEscalations();
+      }
+    },
+    [fetchEscalations]
+  );
+
   // Derived
   const pendingEscalations =
     escalations?.filter((e) => e.status === "triggered").length ?? 0;
@@ -193,7 +263,11 @@ export default function DashboardPage() {
         title="Dashboard"
         subtitle={`${appointmentsToday} citas hoy · ${pendingEscalations} escalaciones pendientes`}
         primaryAction={
-          <Button size="sm" className="rounded-btn bg-gold text-white hover:bg-gold-dark">
+          <Button
+            size="sm"
+            className="rounded-btn bg-gold text-white hover:bg-gold-dark"
+            onClick={() => setWizardOpen(true)}
+          >
             <Plus className="mr-1 h-4 w-4" />
             Nueva cita
           </Button>
@@ -279,6 +353,7 @@ export default function DashboardPage() {
                       serviceName={serviceName}
                       status={item.status}
                       isLast={idx === agenda.length - 1}
+                      onClick={() => router.push(`/appointments/${item.id}`)}
                     />
                   );
                 })}
@@ -339,6 +414,8 @@ export default function DashboardPage() {
                         locale: es,
                       })}
                       isLast={idx === escalations.length - 1}
+                      canResolve={canResolve}
+                      onResolve={() => handleResolve(esc.id)}
                     />
                   ))}
                 </div>
@@ -464,6 +541,17 @@ export default function DashboardPage() {
           </Card>
         </div>
       </div>
+
+      {/* Appointment wizard — lazy-loaded data, opens on "Nueva cita" click (T2.3) */}
+      <AppointmentWizard
+        open={wizardOpen}
+        onOpenChange={setWizardOpen}
+        onSuccess={handleWizardSuccess}
+        services={wizardServices}
+        stylists={wizardStylists}
+        customers={wizardCustomers}
+        refreshCustomers={refreshWizardCustomers}
+      />
     </div>
   );
 }
