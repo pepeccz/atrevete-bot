@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { formatDate } from "@/components/shared/format-utils";
@@ -458,6 +459,8 @@ export function CustomerCard({
                 <button
                   type="button"
                   className="flex items-center gap-1.5 w-full text-left"
+                  aria-expanded={notesOpen}
+                  aria-controls="notes-panel"
                   onClick={() => setNotesOpen((o) => !o)}
                 >
                   <StickyNote className="h-3.5 w-3.5 text-muted-foreground" />
@@ -471,7 +474,7 @@ export function CustomerCard({
                   />
                 </button>
                 {notesOpen && (
-                  <div className="space-y-2 pt-1">
+                  <div id="notes-panel" className="space-y-2 pt-1">
                     {notes.length === 0 && (
                       <p className="text-xs text-muted-foreground">
                         Sin notas todavía.
@@ -484,8 +487,8 @@ export function CustomerCard({
                       >
                         {editingNoteId === note.id ? (
                           <div className="space-y-1">
-                            <textarea
-                              className="w-full text-xs border rounded p-1 resize-none"
+                            <Textarea
+                              className="w-full text-xs resize-none"
                               rows={3}
                               value={editContent}
                               onChange={(e) => setEditContent(e.target.value)}
@@ -521,6 +524,7 @@ export function CustomerCard({
                                 <button
                                   type="button"
                                   title="Editar"
+                                  aria-label="Editar nota"
                                   onClick={() => {
                                     setEditingNoteId(note.id);
                                     setEditContent(note.content);
@@ -531,6 +535,7 @@ export function CustomerCard({
                                 <button
                                   type="button"
                                   title="Eliminar"
+                                  aria-label="Eliminar nota"
                                   onClick={() => removeNote(note.id)}
                                 >
                                   <Trash2 className="h-3 w-3 text-destructive" />
@@ -545,9 +550,9 @@ export function CustomerCard({
                     {/* Add note input */}
                     {addingNote ? (
                       <div className="space-y-1">
-                        <textarea
+                        <Textarea
                           ref={newNoteRef}
-                          className="w-full text-xs border rounded p-1 resize-none"
+                          className="w-full text-xs resize-none"
                           rows={3}
                           placeholder="Escribe una nota..."
                           value={newNoteContent}

@@ -94,9 +94,9 @@ export default function SettingsPage() {
                   <CardDescription>{section.description}</CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <Link href={section.href}>
-                    <Button className="w-full">Configurar</Button>
-                  </Link>
+                  <Button asChild className="w-full">
+                    <Link href={section.href} aria-label={`Configurar ${section.title}`}>Configurar</Link>
+                  </Button>
                 </CardContent>
               </Card>
             );

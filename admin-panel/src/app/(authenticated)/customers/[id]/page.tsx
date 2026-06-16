@@ -700,19 +700,11 @@ export default function CustomerDetailPage() {
                     <Label htmlFor="mem-visit-count">Cantidad de visitas</Label>
                     <Input
                       id="mem-visit-count"
-                      type="number"
-                      min={0}
                       value={memories.visit_count ?? ""}
-                      onChange={(e) =>
-                        setMemories((prev) => ({
-                          ...prev,
-                          visit_count: e.target.value
-                            ? parseInt(e.target.value, 10)
-                            : null,
-                        }))
-                      }
-                      placeholder="0"
+                      readOnly
+                      className="bg-muted/40 cursor-default"
                     />
+                    <p className="text-xs text-muted-foreground">Se calcula automáticamente</p>
                   </div>
 
                   {/* Última visita */}
@@ -720,15 +712,11 @@ export default function CustomerDetailPage() {
                     <Label htmlFor="mem-last-visit">Última visita</Label>
                     <Input
                       id="mem-last-visit"
-                      type="date"
                       value={memories.last_visit_date ?? ""}
-                      onChange={(e) =>
-                        setMemories((prev) => ({
-                          ...prev,
-                          last_visit_date: e.target.value || null,
-                        }))
-                      }
+                      readOnly
+                      className="bg-muted/40 cursor-default"
                     />
+                    <p className="text-xs text-muted-foreground">Se calcula automáticamente</p>
                   </div>
 
                   {/* Última estilista */}

@@ -1,7 +1,7 @@
 import { deriveStylistPalette } from "@/lib/stylist-colors";
 import { cn } from "@/lib/utils";
 
-type StylistStatus = "on" | "idle" | "off";
+type StylistStatus = "on" | "off";
 
 interface StylistActivityRowProps {
   name: string;
@@ -22,12 +22,6 @@ const STATUS_CONFIG: Record<
     pillBg: "bg-[hsl(var(--status-confirm-bg))]",
     textColor: "text-[hsl(var(--status-confirm))]",
     dotColor: "bg-[hsl(var(--status-confirm))]",
-  },
-  idle: {
-    label: "En pausa",
-    pillBg: "bg-[hsl(var(--status-pending-bg))]",
-    textColor: "text-[hsl(var(--status-pending-fg,var(--status-pending)))]",
-    dotColor: "bg-[hsl(var(--status-pending))]",
   },
   off: {
     label: "Fuera",

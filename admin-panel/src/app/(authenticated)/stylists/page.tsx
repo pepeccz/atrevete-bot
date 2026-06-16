@@ -565,6 +565,7 @@ export default function StylistsPage() {
                 variant="ghost"
                 size="icon"
                 className="h-8 w-8"
+                aria-label={`Editar estilista ${stylist.name}`}
                 onClick={() => handleEdit(stylist)}
               >
                 <Edit className="h-4 w-4" />

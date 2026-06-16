@@ -458,6 +458,7 @@ export default function ServicesPage() {
                 variant="ghost"
                 size="icon"
                 className="h-8 w-8"
+                aria-label={`Editar servicio ${service.name}`}
                 onClick={() => handleEdit(service)}
               >
                 <Edit className="h-4 w-4" />

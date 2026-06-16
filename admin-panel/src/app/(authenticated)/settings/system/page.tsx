@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { RefreshCw, Save, RotateCcw, AlertTriangle } from "lucide-react";
+import { ArrowLeft, RefreshCw, Save, RotateCcw, AlertTriangle } from "lucide-react";
+import Link from "next/link";
 import { Header } from "@/components/layout/header";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -449,6 +450,9 @@ export default function SystemSettingsPage() {
           </div>
         }
       />
+      <Link href="/settings" className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground px-4 md:px-6 pt-4">
+        <ArrowLeft className="h-4 w-4" /> Ajustes
+      </Link>
 
       <div className="flex-1 p-4 md:p-6">
         {/* AI disabled warning banner */}

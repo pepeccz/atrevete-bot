@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter, useParams } from "next/navigation";
 import { format, parseISO } from "date-fns";
 import { es } from "date-fns/locale";
@@ -92,7 +92,14 @@ export default function AppointmentDetailPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [rescheduleModalOpen, setRescheduleModalOpen] = useState(false);
+
+  // Snapshot of initial form values for dirty-check
+  const initialRef = useRef<{
+    stylistId: string; date: string; time: string;
+    firstName: string; lastName: string; notes: string; status: string;
+  } | null>(null);
 
   // Form state
   const [selectedStylistId, setSelectedStylistId] = useState("");
@@ -124,6 +131,17 @@ export default function AppointmentDetailPage() {
       setLastName(apptData.last_name || "");
       setNotes(apptData.notes || "");
       setStatus(apptData.status as AppointmentStatus);
+
+      // Snapshot initial values for dirty-check
+      initialRef.current = {
+        stylistId: apptData.stylist_id,
+        date: format(startDate, "yyyy-MM-dd"),
+        time: format(startDate, "HH:mm"),
+        firstName: apptData.first_name,
+        lastName: apptData.last_name || "",
+        notes: apptData.notes || "",
+        status: apptData.status,
+      };
     } catch (error) {
       console.error("Error fetching appointment:", error);
       toast.error("Error al cargar la cita");
@@ -136,6 +154,20 @@ export default function AppointmentDetailPage() {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  const isDirty = () => {
+    const init = initialRef.current;
+    if (!init) return false;
+    return (
+      selectedStylistId !== init.stylistId ||
+      selectedDate !== init.date ||
+      selectedTime !== init.time ||
+      firstName.trim() !== init.firstName.trim() ||
+      lastName.trim() !== init.lastName.trim() ||
+      notes.trim() !== init.notes.trim() ||
+      status !== init.status
+    );
+  };
 
   const handleSave = async () => {
     if (!appointment) return;
@@ -410,7 +442,10 @@ export default function AppointmentDetailPage() {
                   </Button>
                   <Button
                     variant="outline"
-                    onClick={() => router.push("/appointments")}
+                    onClick={() => {
+                      if (isDirty()) setShowCancelConfirm(true);
+                      else router.push("/appointments");
+                    }}
                     disabled={isSaving}
                   >
                     Cancelar
@@ -452,6 +487,27 @@ export default function AppointmentDetailPage() {
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               {isSaving ? "Eliminando..." : "Eliminar"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Discard Changes Confirmation Dialog */}
+      <AlertDialog open={showCancelConfirm} onOpenChange={setShowCancelConfirm}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Descartar cambios?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Tienes cambios sin guardar. Si sales ahora se perderán.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Seguir editando</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => router.push("/appointments")}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Descartar
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
