@@ -27,9 +27,9 @@ export function SelectActionDialog({
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-xs">
         <DialogHeader>
-          <DialogTitle>¿Qué querés crear?</DialogTitle>
+          <DialogTitle>¿Qué quieres crear?</DialogTitle>
           <DialogDescription>
-            Seleccioná el tipo de evento para este horario
+            Selecciona el tipo de evento para este horario
           </DialogDescription>
         </DialogHeader>
         <div className="flex flex-col gap-3 pt-2">

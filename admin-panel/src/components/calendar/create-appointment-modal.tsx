@@ -584,7 +584,7 @@ export function CreateAppointmentModal({
             />
             {selectedCustomer && (
               <p className="text-xs text-ink-mute">
-                Autocompletado desde el cliente. Editalo si la cita es para otra persona.
+                Autocompletado desde el cliente. Edítalo si la cita es para otra persona.
               </p>
             )}
           </div>

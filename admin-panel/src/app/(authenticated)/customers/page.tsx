@@ -145,8 +145,8 @@ function CustomerModal({
           </DialogTitle>
           <DialogDescription>
             {customer
-              ? "Actualizá la información del cliente"
-              : "Creá un nuevo cliente"}
+              ? "Actualiza la información del cliente"
+              : "Crea un nuevo cliente"}
           </DialogDescription>
         </DialogHeader>
         <Form {...form}>
@@ -292,7 +292,7 @@ export default function CustomersPage() {
         header: () => (
           <div className="flex items-center">
             <Phone className="mr-2 h-4 w-4" />
-            Telefono
+            Teléfono
           </div>
         ),
       },
@@ -322,7 +322,7 @@ export default function CustomersPage() {
         header: ({ column }) => (
           <SortableHeader column={column}>
             <Calendar className="mr-2 h-4 w-4" />
-            Ultima Visita
+            Última Visita
           </SortableHeader>
         ),
         cell: ({ row }) => formatDate(row.getValue("last_service_date"), false),

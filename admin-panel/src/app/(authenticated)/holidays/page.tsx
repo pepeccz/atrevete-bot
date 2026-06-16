@@ -284,7 +284,7 @@ export default function HolidaysPage() {
                             field.onChange("");
                           }
                         }}
-                        placeholder="Seleccioná la fecha del festivo"
+                        placeholder="Selecciona la fecha del festivo"
                         minDate={new Date()}
                       />
                     </FormControl>

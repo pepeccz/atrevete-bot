@@ -123,7 +123,7 @@ export function NotificationsFilters({ filters, onFiltersChange }: Notifications
           onValueChange={handleCategoryChange}
         >
           <SelectTrigger className="w-[160px]">
-            <SelectValue placeholder="Categoria" />
+            <SelectValue placeholder="Categoría" />
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Todas</SelectItem>
@@ -151,8 +151,8 @@ export function NotificationsFilters({ filters, onFiltersChange }: Notifications
           </SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Todas</SelectItem>
-            <SelectItem value="unread">No leidas</SelectItem>
-            <SelectItem value="read">Leidas</SelectItem>
+            <SelectItem value="unread">No leídas</SelectItem>
+            <SelectItem value="read">Leídas</SelectItem>
           </SelectContent>
         </Select>
 

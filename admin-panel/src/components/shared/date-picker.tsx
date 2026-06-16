@@ -28,7 +28,7 @@ interface DatePickerProps {
 export function DatePicker({
   value,
   onChange,
-  placeholder = "Seleccioná una fecha",
+  placeholder = "Selecciona una fecha",
   disabled = false,
   minDate,
   maxDate,

@@ -22,7 +22,7 @@ interface EmptyStateProps {
  *   <EmptyState
  *     icon={CalendarOff}
  *     title="No hay citas programadas"
- *     description="Creá la primera cita para comenzar."
+ *     description="Crea la primera cita para comenzar."
  *     action={{ label: "Nueva cita", onClick: () => setOpen(true) }}
  *   />
  */

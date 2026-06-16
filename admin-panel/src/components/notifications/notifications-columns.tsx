@@ -199,7 +199,7 @@ export function getNotificationColumns({
         const isRead = row.getValue("is_read") as boolean;
         return (
           <Badge variant={isRead ? "secondary" : "default"}>
-            {isRead ? "Leida" : "No leida"}
+            {isRead ? "Leída" : "No leída"}
           </Badge>
         );
       },
@@ -252,12 +252,12 @@ export function getNotificationColumns({
               {notification.is_read ? (
                 <DropdownMenuItem onClick={() => onMarkUnread(notification.id)}>
                   <EyeOff className="mr-2 h-4 w-4" />
-                  Marcar como no leida
+                  Marcar como no leída
                 </DropdownMenuItem>
               ) : (
                 <DropdownMenuItem onClick={() => onMarkRead(notification.id)}>
                   <Eye className="mr-2 h-4 w-4" />
-                  Marcar como leida
+                  Marcar como leída
                 </DropdownMenuItem>
               )}
               <DropdownMenuItem onClick={() => onToggleStar(notification.id)}>

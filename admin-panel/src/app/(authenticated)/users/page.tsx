@@ -145,8 +145,8 @@ function UserFormModal({
           <DialogTitle>{isEdit ? "Editar Usuario" : "Nuevo Usuario"}</DialogTitle>
           <DialogDescription>
             {isEdit
-              ? "Modificá el rol o nombre visible del usuario."
-              : "Creá un nuevo usuario administrador o estilista."}
+              ? "Modifica el rol o nombre visible del usuario."
+              : "Crea un nuevo usuario administrador o estilista."}
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -516,7 +516,7 @@ export default function UsersPage() {
               <EmptyState
                 icon={Lock}
                 title="No hay usuarios registrados"
-                description="Creá el primer usuario administrador o estilista."
+                description="Crea el primer usuario administrador o estilista."
                 action={{ label: "Nuevo usuario", onClick: handleCreate }}
               />
             ) : (
@@ -558,7 +558,7 @@ export default function UsersPage() {
             <AlertDialogTitle>Desactivar usuario</AlertDialogTitle>
             <AlertDialogDescription>
               El usuario <strong>{deactivateTarget?.username}</strong> no podrá iniciar sesión.
-              Podés reactivarlo en cualquier momento.
+              Puedes reactivarlo en cualquier momento.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

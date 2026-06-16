@@ -134,7 +134,7 @@ export default function AppointmentsPage() {
               <EmptyState
                 icon={CalendarOff}
                 title="No hay citas programadas"
-                description="Agendá la primera cita para comenzar a gestionar el calendario."
+                description="Agenda la primera cita para comenzar a gestionar el calendario."
                 action={{ label: "Nueva cita", onClick: () => setCreateModalOpen(true) }}
               />
             ) : (
