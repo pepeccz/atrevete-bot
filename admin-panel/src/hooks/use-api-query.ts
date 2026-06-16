@@ -63,9 +63,7 @@ export function useApiQuery<T>(
         }
         setError(err instanceof Error ? err : new Error(String(err)));
       } finally {
-        if (!signal.aborted) {
-          setIsLoading(false);
-        }
+        setIsLoading(false);
       }
     };
 

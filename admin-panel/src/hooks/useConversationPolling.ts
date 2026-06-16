@@ -99,8 +99,23 @@ export function useConversationPolling({
       }
     };
 
-    // Run immediately on mount, then schedule.
-    poll();
+    // Initial load runs unconditionally — even if the tab is currently hidden
+    // (e.g. opened in a background tab or restored on startup) — so the view is
+    // populated by the time the user looks at it. Subsequent scheduled polls
+    // still respect document.hidden (in `poll`) to avoid background work.
+    const initialFetch = async () => {
+      if (cancelled) return;
+      try {
+        await fetchFn();
+        backoffRef.current = 0;
+      } catch {
+        backoffRef.current = Math.min(backoffRef.current + 1, 5);
+      }
+      if (!cancelled) {
+        scheduleNext(getInterval(), poll);
+      }
+    };
+    initialFetch();
 
     const handleFocus = () => {
       isFocusedRef.current = true;

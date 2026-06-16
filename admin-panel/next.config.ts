@@ -13,6 +13,15 @@ const nextConfig: NextConfig = {
       },
     ];
   },
+  async redirects() {
+    return [
+      {
+        source: "/escalations",
+        destination: "/conversations?filter=escalated",
+        permanent: true,
+      },
+    ];
+  },
 };
 
 export default nextConfig;

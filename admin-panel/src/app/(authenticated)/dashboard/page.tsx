@@ -330,6 +330,7 @@ export default function DashboardPage() {
                   {escalations.map((esc, idx) => (
                     <EscalationItem
                       key={esc.id}
+                      href={`/conversations?conversation_id=${esc.conversation_id}&filter=escalated`}
                       customerName={esc.customer_name ?? esc.customer_phone}
                       reason={esc.reason}
                       relativeTime={formatDistanceToNow(new Date(esc.triggered_at), {
