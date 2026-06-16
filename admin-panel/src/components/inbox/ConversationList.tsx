@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   MessageSquare,
   Bot,
@@ -182,12 +182,13 @@ export function ConversationList({
   }, [isSearching, clearSearch]);
 
   const fetchList = useCallback(async () => {
+    setLoading(true);
     try {
       const res = await api.list<ConversationHistory>("conversations", { page_size: 100 });
       setConversations(res.items);
       if (res.counts) setCounts(res.counts);
-    } catch {
-      // Silent — list is decorative-enough to degrade gracefully
+    } catch (err) {
+      console.error("[ConversationList] fetchList failed:", err);
     } finally {
       setLoading(false);
     }
@@ -195,9 +196,13 @@ export function ConversationList({
 
   // R2: unread = conversations with unread_message_count > 0 (same semantics as
   // the per-item badge and the unread filter tab)
-  const unreadCount = conversations.filter(
-    (c) => ((c as unknown as ConversationHistoryInbox).unread_message_count ?? 0) > 0
-  ).length;
+  const unreadCount = useMemo(
+    () =>
+      conversations.filter(
+        (c) => ((c as unknown as ConversationHistoryInbox).unread_message_count ?? 0) > 0
+      ).length,
+    [conversations]
+  );
 
   useConversationPolling({
     fetchFn: fetchList,
@@ -371,7 +376,7 @@ export function ConversationList({
 
       {/* List */}
       <div className="flex-1 overflow-y-auto p-2 space-y-1">
-        {loading && !isSearching ? (
+        {loading && !isSearching && conversations.length === 0 ? (
           <div className="flex items-center justify-center h-20 text-sm text-muted-foreground">
             Cargando…
           </div>

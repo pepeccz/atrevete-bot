@@ -782,6 +782,35 @@ Rollback: `alembic downgrade -1` + revert image. Existing rows lose the columns;
 
 ---
 
+### Deploy Runbook (inbox-reliability)
+
+Pure frontend/config change: escalations redirect moved from `route.ts` to `next.config.ts` (fixes localhost leak behind reverse proxy); `ConversationList` loading hardened (`setLoading(true)` at fetch start, logged catch, `useMemo` on unreadCount); `EscalationItem` now clickable deep-links into the inbox; `use-api-query` abort-guard on `setIsLoading` removed. **No DB migration. No checkpoint flush. No API/agent restart required — admin-panel only.**
+
+**OVERRIDE FOOTGUN WARNING**: Running plain `docker compose up` on the server auto-merges `docker-compose.override.yml`, which swaps to `Dockerfile.admin-panel.dev` and activates React StrictMode (dev build). This re-introduces the P0 infinite spinner. ALWAYS use `docker compose -f docker-compose.yml` on the server to prevent the override from being applied.
+
+```bash
+# On pepe@server, in /home/pepe/Proyectos/atrevete-bot
+docker compose -f docker-compose.yml up -d --build admin-panel
+```
+
+Verify `NEXT_PUBLIC_API_URL` was baked correctly at build time:
+
+```bash
+docker compose -f docker-compose.yml exec admin-panel printenv NEXT_PUBLIC_API_URL
+# expect: https://api.zonavix.com
+```
+
+UAT smoke checks (run after deploy, on the public host):
+
+1. Navigate to `/conversations` — list renders without permanent "Cargando…"; throttle network / force API 500 → browser console shows `[ConversationList] fetchList failed:` and empty state appears (no infinite spinner).
+2. Navigate to `/escalations` — server responds 308 and browser lands on `/conversations?filter=escalated` with no `localhost` in the Location header.
+3. Dashboard "Necesitan atención" section — click any item → browser navigates to `/conversations?conversation_id=<uuid>&filter=escalated` with that conversation pre-selected in the thread panel.
+4. No unexpected console errors on any of the above pages.
+
+Rollback: `git revert` the inbox-reliability commits + rebuild admin-panel image. No data loss.
+
+---
+
 ### Service Catalog Integrity Guard
 
 CI guard that asserts 7 structural invariants over the seeded `services` table. Introduced after the orphan-variant drift found at deploy 2026-05-11 (Engram obs #5260). I7 added by disambiguation-resilience PR-1.
