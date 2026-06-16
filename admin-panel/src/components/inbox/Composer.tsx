@@ -1,11 +1,10 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useRef, useState } from "react";
 import { SendHorizonal, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { usePermission } from "@/hooks/use-permission";
-import { TakeoverModal } from "./TakeoverModal";
 import { TemplatePicker } from "./TemplatePicker";
 import api from "@/lib/api";
 import { toast } from "sonner";
@@ -44,6 +43,16 @@ interface ComposerProps {
   onMessageSent: () => void;
   /** Called after the bot is paused via the takeover modal so BotToggle can update. */
   onBotPaused: () => void;
+  /**
+   * A-2 (I-2): Called to open the parent's single TakeoverModal when the user
+   * tries to send while the bot is active. Replaces the local modal mount.
+   */
+  onRequestPause: (source: "toggle" | "send", pendingText?: string) => void;
+  /**
+   * A-2 (I-2): Ref set by the parent. When TakeoverModal is confirmed for a
+   * "send" source, the parent calls this ref so Composer can proceed with the send.
+   */
+  onTakeoverConfirmedRef: React.MutableRefObject<(() => void) | null>;
 }
 
 /**
@@ -56,16 +65,17 @@ export function Composer({
   botEnabled,
   onMessageSent,
   onBotPaused,
+  onRequestPause,
+  onTakeoverConfirmedRef,
 }: ComposerProps) {
   const canWrite = usePermission("conversations:write");
   const canSendTemplate = usePermission("templates:send");
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
-  const [showTakeover, setShowTakeover] = useState(false);
   /**
-   * After modal confirmation the composer switches to freetext mode for this
-   * session. We use a local override rather than relying on parent re-render
-   * to avoid a round-trip while still reflecting the correct UI immediately.
+   * A-2: After the parent's TakeoverModal confirms, Composer switches to
+   * freetext mode for this session via this local override — avoids a
+   * round-trip while still reflecting the correct UI immediately.
    */
   const [botPausedLocally, setBotPausedLocally] = useState(false);
 
@@ -85,18 +95,10 @@ export function Composer({
     templatesAvailable
   );
 
-  const handleSend = async () => {
-    if (!text.trim()) return;
-
-    if (effectiveBotEnabled) {
-      // Intercept: show takeover modal before sending.
-      setShowTakeover(true);
-      return;
-    }
-
+  const doSend = async (messageText: string) => {
     setSending(true);
     try {
-      await api.sendMessage(conversationId, text.trim());
+      await api.sendMessage(conversationId, messageText);
       setText("");
       textareaRef.current?.focus();
       onMessageSent();
@@ -107,35 +109,31 @@ export function Composer({
     }
   };
 
+  const handleSend = async () => {
+    if (!text.trim()) return;
+
+    if (effectiveBotEnabled) {
+      // A-2: delegate to parent's single TakeoverModal; register a callback so
+      // the parent can signal us to proceed with the send after confirmation.
+      const pendingText = text.trim();
+      onTakeoverConfirmedRef.current = () => {
+        setBotPausedLocally(true);
+        onBotPaused();
+        doSend(pendingText);
+      };
+      onRequestPause("send", pendingText);
+      return;
+    }
+
+    doSend(text.trim());
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // Ctrl+Enter or Cmd+Enter sends the message.
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       handleSend();
     }
-  };
-
-  const handleTakeoverConfirmed = async () => {
-    setShowTakeover(false);
-    setBotPausedLocally(true);
-    onBotPaused();
-    // Now send the message that triggered the takeover.
-    if (!text.trim()) return;
-    setSending(true);
-    try {
-      await api.sendMessage(conversationId, text.trim());
-      setText("");
-      textareaRef.current?.focus();
-      onMessageSent();
-    } catch {
-      toast.error("Error al enviar el mensaje tras el takeover");
-    } finally {
-      setSending(false);
-    }
-  };
-
-  const handleTakeoverCancelled = () => {
-    setShowTakeover(false);
   };
 
   if (!canWrite && !canSendTemplate) return null;
@@ -200,12 +198,6 @@ export function Composer({
         </Button>
       </div>
 
-      <TakeoverModal
-        open={showTakeover}
-        conversationId={conversationId}
-        onConfirmed={handleTakeoverConfirmed}
-        onCancelled={handleTakeoverCancelled}
-      />
     </>
   );
 }
