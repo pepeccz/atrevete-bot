@@ -785,8 +785,11 @@ export default function GoogleCalendarSettingsPage() {
                           <TableCell className="text-sm text-muted-foreground">
                             {calendar.timeZone || "—"}
                           </TableCell>
-                          <TableCell>
-                            <code className="text-xs bg-muted px-1.5 py-0.5 rounded font-mono">
+                          <TableCell className="max-w-[160px]">
+                            <code
+                              className="text-xs bg-muted px-1.5 py-0.5 rounded font-mono block truncate"
+                              title={calendar.id}
+                            >
                               {calendar.id}
                             </code>
                           </TableCell>
@@ -798,14 +801,15 @@ export default function GoogleCalendarSettingsPage() {
                               <div className="flex items-center gap-2">
                                 <div
                                   className="w-4 h-4 rounded-full border"
+                                  role="img"
+                                  aria-label={`Color: ${calendar.background_color}`}
                                   style={{
                                     backgroundColor: calendar.background_color,
                                   }}
                                 />
-                                <span
-                                  className="sr-only"
-                                  aria-label={calendar.background_color ?? undefined}
-                                />
+                                <span className="sr-only">
+                                  {`Color: ${calendar.background_color}`}
+                                </span>
                               </div>
                             ) : (
                               <span className="text-muted-foreground text-xs">—</span>

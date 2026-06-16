@@ -2,7 +2,7 @@ import { z } from "zod";
 
 // Step 1: Customer selection
 export const CustomerStepSchema = z.object({
-  customer_id: z.string().min(1, "Debés seleccionar un cliente"),
+  customer_id: z.string().min(1, "Debes seleccionar un cliente"),
 });
 
 // Step 1b: Create new customer inline form
@@ -10,7 +10,7 @@ export const NewCustomerSchema = z.object({
   phone: z
     .string()
     .min(1, "El teléfono es requerido")
-    .regex(/^\+?[\d\s\-]{7,15}$/, "Ingresá un número de teléfono válido"),
+    .regex(/^\+?[\d\s\-]{7,15}$/, "Introduce un número de teléfono válido"),
   first_name: z.string().min(1, "El nombre es requerido"),
   last_name: z.string().optional(),
 });
@@ -19,7 +19,7 @@ export const NewCustomerSchema = z.object({
 export const ServiceStepSchema = z.object({
   service_ids: z
     .array(z.string())
-    .min(1, "Debés seleccionar al menos un servicio"),
+    .min(1, "Debes seleccionar al menos un servicio"),
 });
 
 // Step 3: Slot selection
@@ -34,7 +34,7 @@ export const SlotStepSchema = z.object({
       date: z.string(),
     })
     .nullable()
-    .refine((val) => val !== null, { message: "Debés seleccionar un horario" }),
+    .refine((val) => val !== null, { message: "Debes seleccionar un horario" }),
 });
 
 // Step 4: Confirm — appointment name + optional notes + notification

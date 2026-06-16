@@ -259,7 +259,7 @@ export default function HolidaysPage() {
           <DialogHeader>
             <DialogTitle>Agregar Festivo</DialogTitle>
             <DialogDescription>
-              Configurá un día festivo donde el salón permanecerá cerrado
+              Configura un día festivo donde el salón permanecerá cerrado
             </DialogDescription>
           </DialogHeader>
           <Form {...holidayForm}>

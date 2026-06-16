@@ -57,6 +57,7 @@ export const ESCALATION_REASON_LABELS = {
   ambiguity: "Mensaje ambiguo",
   technical_error: "Error técnico",
   auto_escalation: "Escalación automática",
+  policy_rejection: "Rechazo de política",
 } as const;
 
 export const formatEscalationReason = (v?: string | null): string =>

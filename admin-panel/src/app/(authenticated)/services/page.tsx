@@ -160,11 +160,11 @@ function ServiceModal({
         } else if (typeof error.detail === "string") {
           setFormError(error.detail);
         } else {
-          setFormError("Error de validación. Revisá los datos ingresados.");
+          setFormError("Error de validación. Revisa los datos ingresados.");
         }
       } else {
         setFormError(
-          `Error al guardar: ${error instanceof Error ? error.message : "Intentá de nuevo."}`
+          `Error al guardar: ${error instanceof Error ? error.message : "Intenta de nuevo."}`
         );
         toast.error(
           `Error: ${error instanceof Error ? error.message : "Error desconocido"}`
