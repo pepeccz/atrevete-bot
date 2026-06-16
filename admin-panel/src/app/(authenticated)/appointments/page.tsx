@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { Plus, CalendarOff } from "lucide-react";
 import { Header } from "@/components/layout/header";
 import { Card, CardContent } from "@/components/ui/card";
@@ -44,11 +44,19 @@ export default function AppointmentsPage() {
   // T9: pagination
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
+  // W2: stale-response guard
+  const reqIdRef = useRef(0);
 
   const stylistMap = Object.fromEntries(stylists.map((s) => [s.id, s.name]));
   const serviceMap = Object.fromEntries(services.map((s) => [s.id, s.name]));
 
+  // C1: derive displayed count for the footer — mirrors the client-side filter in AppointmentsTable
+  const displayedCount = gcalFailedOnly
+    ? appointments.filter((a) => a.gcal_sync_status === "failed").length
+    : appointments.length;
+
   const loadData = useCallback(async (currentPage: number = page) => {
+    const reqId = ++reqIdRef.current;
     setLoading(true);
     try {
       const appointmentParams: Record<string, string | number | boolean> = {
@@ -66,16 +74,19 @@ export default function AppointmentsPage() {
           api.list<Service>("services", { page_size: 200 }),
           api.list<Customer>("customers", { page_size: 500 }),
         ]);
+      // W2: discard stale responses
+      if (reqId !== reqIdRef.current) return;
       setAppointments(appointmentsRes.items);
       setHasMore(appointmentsRes.has_more);
       setStylists(stylistsRes.items);
       setServices(servicesRes.items);
       setCustomers(customersRes.items);
     } catch (error) {
+      if (reqId !== reqIdRef.current) return;
       toast.error("Error al cargar los datos");
       console.error(error);
     } finally {
-      setLoading(false);
+      if (reqId === reqIdRef.current) setLoading(false);
     }
   }, [filters, page]);
 
@@ -104,7 +115,13 @@ export default function AppointmentsPage() {
     try {
       await api.delete("appointments", appointmentToDelete);
       toast.success("Cita eliminada");
-      loadData(page);
+      // S3: if this was the last row on page >1, go back one page
+      const remainingOnPage = appointments.length - 1;
+      if (remainingOnPage === 0 && page > 1) {
+        setPage((p) => p - 1);
+      } else {
+        loadData(page);
+      }
     } catch (error) {
       toast.error("Error al eliminar la cita");
       console.error(error);
@@ -177,17 +194,20 @@ export default function AppointmentsPage() {
               />
             )}
 
-            {/* T9: pagination footer */}
+            {/* T9 + C1: pagination footer */}
             {!loading && appointments.length > 0 && (
               <div className="flex items-center justify-between pt-4">
                 <span className="text-sm text-muted-foreground">
-                  Mostrando {appointments.length} citas{hasMore ? " · hay más" : ""}
+                  {gcalFailedOnly
+                    ? `Mostrando ${displayedCount} con error de sincronización`
+                    : `Mostrando ${displayedCount} citas${hasMore ? " · hay más" : ""}`}
                 </span>
+                {/* C1: disable server pagination while a client-only filter is active */}
                 <div className="flex gap-2">
                   <Button
                     variant="outline"
                     size="sm"
-                    disabled={page === 1}
+                    disabled={page === 1 || gcalFailedOnly}
                     onClick={() => setPage((p) => p - 1)}
                   >
                     Anterior
@@ -195,7 +215,7 @@ export default function AppointmentsPage() {
                   <Button
                     variant="outline"
                     size="sm"
-                    disabled={!hasMore}
+                    disabled={!hasMore || gcalFailedOnly}
                     onClick={() => setPage((p) => p + 1)}
                   >
                     Siguiente

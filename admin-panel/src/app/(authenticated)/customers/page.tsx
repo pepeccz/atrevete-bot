@@ -248,8 +248,13 @@ export default function CustomersPage() {
   const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // W1: skip the debounced-search effect on first mount (initial load owned by [page] effect)
+  const didMountRef = useRef(false);
+  // W2: stale-response guard
+  const reqIdRef = useRef(0);
 
   const loadData = useCallback(async (currentPage: number, currentSearch: string) => {
+    const reqId = ++reqIdRef.current;
     setLoading(true);
     try {
       const params: Record<string, string | number | boolean> = {
@@ -258,13 +263,16 @@ export default function CustomersPage() {
       };
       if (currentSearch) params.search = currentSearch;
       const res = await api.list<Customer>("customers", params);
+      // W2: discard stale responses
+      if (reqId !== reqIdRef.current) return;
       setCustomers(res.items);
       setHasMore(res.has_more);
     } catch (error) {
+      if (reqId !== reqIdRef.current) return;
       toast.error("Error al cargar los clientes");
       console.error(error);
     } finally {
-      setLoading(false);
+      if (reqId === reqIdRef.current) setLoading(false);
     }
   }, []);
 
@@ -275,7 +283,12 @@ export default function CustomersPage() {
   }, [page]);
 
   // Debounced search: reset page to 1 and reload
+  // W1: skip first run — initial load is owned by the [page] effect above
   useEffect(() => {
+    if (!didMountRef.current) {
+      didMountRef.current = true;
+      return;
+    }
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
       setPage(1);
@@ -303,7 +316,13 @@ export default function CustomersPage() {
     try {
       await api.delete("customers", customerToDelete);
       toast.success("Cliente eliminado");
-      loadData(page, search);
+      // S3: if this was the last row on page >1, go back one page
+      const remainingOnPage = customers.length - 1;
+      if (remainingOnPage === 0 && page > 1) {
+        setPage((p) => p - 1);
+      } else {
+        loadData(page, search);
+      }
     } catch (error) {
       toast.error("Error al eliminar el cliente");
       console.error(error);

@@ -528,7 +528,7 @@ export default function UsersPage() {
             {/* T11: controlled multi-field search */}
             <div className="mb-4">
               <Input
-                placeholder="Buscar por usuario, nombre o email..."
+                placeholder="Buscar por usuario o nombre..."
                 value={userSearch}
                 onChange={(e) => setUserSearch(e.target.value)}
                 className="max-w-sm"
