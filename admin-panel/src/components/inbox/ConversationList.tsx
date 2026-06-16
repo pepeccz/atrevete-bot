@@ -17,9 +17,11 @@ import {
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
 import { useConversationPolling } from "@/hooks/useConversationPolling";
 import { useSearch } from "@/hooks/useSearch";
 import { formatDate } from "@/components/shared/format-utils";
+import { FetchError } from "@/components/shared/fetch-error";
 import api from "@/lib/api";
 import type { InboxFilter, ConversationHistoryInbox } from "@/lib/types";
 import type { ConversationHistory } from "@/lib/types";
@@ -157,6 +159,7 @@ export function ConversationList({
   const [conversations, setConversations] = useState<ConversationHistory[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState(false);
 
   // PR-2: search state
   const [searchQuery, setSearchQuery] = useState("");
@@ -183,12 +186,15 @@ export function ConversationList({
 
   const fetchList = useCallback(async () => {
     setLoading(true);
+    setFetchError(false);
     try {
       const res = await api.list<ConversationHistory>("conversations", { page_size: 100 });
       setConversations(res.items);
       if (res.counts) setCounts(res.counts);
     } catch (err) {
       console.error("[ConversationList] fetchList failed:", err);
+      setFetchError(true);
+      toast.error("No se pudo cargar la lista de conversaciones");
     } finally {
       setLoading(false);
     }
@@ -380,6 +386,8 @@ export function ConversationList({
           <div className="flex items-center justify-center h-20 text-sm text-muted-foreground">
             Cargando…
           </div>
+        ) : fetchError && conversations.length === 0 ? (
+          <FetchError onRetry={fetchList} />
         ) : displayList.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-32 text-sm text-muted-foreground gap-2">
             <Inbox className="h-6 w-6 opacity-40" />

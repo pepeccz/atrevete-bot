@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Loader2, SendHorizonal } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,6 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { FetchError } from "@/components/shared/fetch-error";
 import api from "@/lib/api";
 import type { InboxTemplateDef } from "@/lib/types";
 import { toast } from "sonner";
@@ -32,28 +33,28 @@ interface TemplatePickerProps {
 export function TemplatePicker({ conversationId, onSent }: TemplatePickerProps) {
   const [templates, setTemplates] = useState<InboxTemplateDef[]>([]);
   const [loadingTemplates, setLoadingTemplates] = useState(true);
+  const [fetchError, setFetchError] = useState(false);
   const [selectedTemplate, setSelectedTemplate] = useState<InboxTemplateDef | null>(null);
   const [params, setParams] = useState<Record<string, string>>({});
   const [sending, setSending] = useState(false);
 
-  useEffect(() => {
-    let cancelled = false;
+  const fetchTemplates = useCallback(async () => {
     setLoadingTemplates(true);
-    api
-      .listTemplates()
-      .then((res) => {
-        if (!cancelled) setTemplates(res.items);
-      })
-      .catch(() => {
-        if (!cancelled) toast.error("No se pudieron cargar las plantillas");
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingTemplates(false);
-      });
-    return () => {
-      cancelled = true;
-    };
+    setFetchError(false);
+    try {
+      const res = await api.listTemplates();
+      setTemplates(res.items);
+    } catch {
+      setFetchError(true);
+      toast.error("No se pudieron cargar las plantillas");
+    } finally {
+      setLoadingTemplates(false);
+    }
   }, []);
+
+  useEffect(() => {
+    fetchTemplates();
+  }, [fetchTemplates]);
 
   const approvedTemplates = templates.filter((t) => t.status === "approved");
   const hasApproved = approvedTemplates.length > 0;
@@ -91,6 +92,10 @@ export function TemplatePicker({ conversationId, onSent }: TemplatePickerProps) 
         Cargando plantillas…
       </div>
     );
+  }
+
+  if (fetchError) {
+    return <FetchError onRetry={fetchTemplates} />;
   }
 
   if (!hasApproved) {

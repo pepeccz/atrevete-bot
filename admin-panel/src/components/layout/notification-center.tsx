@@ -164,6 +164,7 @@ export function NotificationCenter() {
     }
     abortControllerRef.current = new AbortController();
 
+    setLoading(true);
     try {
       const response = await api.getNotifications(
         20,
@@ -177,6 +178,8 @@ export function NotificationCenter() {
         return;
       }
       console.error("Failed to fetch notifications:", error);
+    } finally {
+      setLoading(false);
     }
   }, []);
 
