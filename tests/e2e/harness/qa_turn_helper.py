@@ -111,6 +111,46 @@ def detect_repeats_in_run(run: dict) -> dict:
     }
 
 
+def compute_l4_verdict(
+    hallucination_result: dict[str, Any],
+    service_match: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Compute the combined L4 verdict from hallucination and service-match results.
+
+    Pure function — no I/O, no DB. Factored out so unit tests can cover verdict
+    logic without needing a DB or async context.
+
+    Args:
+        hallucination_result: Output of detect_unbacked_confirmation().
+            Required keys: "hallucinated_confirmation" (bool), "matched_phrase" (str|None).
+        service_match: Output of check_service_match(), or None when not asserted.
+            When None, service match is treated as passing (not asserted).
+
+    Returns:
+        {
+            "l4_pass": bool,
+            "findings": list[str],  # human-readable failure reasons; empty when passing
+        }
+    """
+    findings: list[str] = []
+
+    if hallucination_result.get("hallucinated_confirmation"):
+        phrase = hallucination_result.get("matched_phrase")
+        findings.append(
+            f"hallucinated confirmation: bot claimed booking confirmed but no appointment "
+            f"exists in DB (matched phrase: {phrase!r})"
+        )
+
+    if service_match is not None and not service_match.get("match"):
+        for mismatch in service_match.get("mismatches") or []:
+            findings.append(f"service mismatch: {mismatch}")
+
+    return {
+        "l4_pass": len(findings) == 0,
+        "findings": findings,
+    }
+
+
 async def _cmd_service_check(args: Any) -> None:
     """Fetch the booked services for a phone's latest (or given) appointment and validate them.
 
@@ -235,6 +275,145 @@ async def _cmd_service_check(args: Any) -> None:
         _json_err("service_check_failed", str(exc))
     finally:
         await engine.dispose()
+
+
+async def _cmd_reconcile(args: Any) -> None:
+    """Reconcile agent claim vs backend: combines hallucination check + service validation.
+
+    Queries the DB for the latest appointment for the given phone, loads the run JSON,
+    and produces a combined L4 verdict (hallucinated_confirmation + service_match).
+
+    Exit codes: 0 = l4_pass True; 1 = error; 3 = l4_pass False.
+    """
+    from pathlib import Path
+
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+
+    from tests.e2e.harness.assert_claim_backend import detect_unbacked_confirmation
+    from tests.e2e.harness.assert_service_match import check_service_match
+
+    # --- Load run file ---
+    run_path = Path(args.run_file)
+    if not run_path.exists():
+        _json_err("run_file_not_found", args.run_file)
+        return
+    try:
+        run = json.loads(run_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        _json_err("run_file_unreadable", str(exc))
+        return
+    if not isinstance(run, dict):
+        _json_err("run_file_invalid", "top-level JSON must be an object")
+        return
+
+    # --- Parse optional expected-service-json ---
+    expected_spec: dict[str, Any] | None = None
+    if args.expected_service_json:
+        try:
+            expected_spec = json.loads(args.expected_service_json)
+        except (json.JSONDecodeError, TypeError) as exc:
+            _json_err("invalid_expected_service_json", str(exc))
+            return
+        if not isinstance(expected_spec, dict):
+            _json_err("invalid_expected_service_json", "must be a JSON object")
+            return
+
+    # --- DB query: latest appointment for phone ---
+    settings = get_settings()
+    db_url = str(settings.DATABASE_URL)
+    if db_url.startswith("postgresql://") or db_url.startswith("postgresql+psycopg://"):
+        db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1).replace(
+            "postgresql+psycopg://", "postgresql+asyncpg://", 1
+        )
+
+    appointment_id: str | None = None
+    appointment_status: str | None = None
+    booked_services: list[dict[str, Any]] = []
+    appointment_exists: bool = False
+
+    engine = create_async_engine(db_url, echo=False)
+    try:
+        async with AsyncSession(engine) as session:
+            appt_row = await session.execute(
+                text(
+                    "SELECT a.id, a.status, a.service_ids "
+                    "FROM appointments a "
+                    "JOIN customers c ON c.id = a.customer_id "
+                    "WHERE c.phone = :phone "
+                    "ORDER BY a.start_time DESC "
+                    "LIMIT 1"
+                ),
+                {"phone": args.phone},
+            )
+            appt = appt_row.fetchone()
+
+            if appt is not None:
+                appointment_exists = True
+                appointment_id = str(appt[0])
+                appointment_status = str(appt[1]) if appt[1] is not None else None
+                service_ids: list = appt[2] or []
+
+                if service_ids:
+                    id_params = {f"sid_{i}": str(sid) for i, sid in enumerate(service_ids)}
+                    placeholders = ", ".join(f":sid_{i}" for i in range(len(service_ids)))
+                    svc_rows = await session.execute(
+                        text(
+                            f"SELECT name, audience, metadata->>'service_type' AS service_type "
+                            f"FROM services WHERE id::text IN ({placeholders})"
+                        ),
+                        id_params,
+                    )
+                    for row in svc_rows.fetchall():
+                        booked_services.append(
+                            {
+                                "name": row[0],
+                                "audience": row[1],
+                                "service_type": row[2],
+                            }
+                        )
+    except Exception as exc:
+        _json_err("db_query_failed", str(exc))
+        return
+    finally:
+        await engine.dispose()
+
+    # --- Collect agent messages from run JSON ---
+    agent_messages: list[str] = [
+        t["agent_response"]
+        for t in (run.get("turns") or [])
+        if isinstance(t, dict) and isinstance(t.get("agent_response"), str) and t["agent_response"]
+    ]
+
+    # --- Hallucination check ---
+    hallucination_result = detect_unbacked_confirmation(agent_messages, appointment_exists)
+
+    # --- Service match (only if spec provided AND appointment exists) ---
+    service_match: dict[str, Any] | None = None
+    if expected_spec is not None and appointment_exists:
+        service_match = check_service_match(booked_services, expected_spec)
+
+    # --- Combined L4 verdict ---
+    verdict = compute_l4_verdict(hallucination_result, service_match)
+
+    _json_out(
+        {
+            "phone": args.phone,
+            "run_file": args.run_file,
+            "appointment_exists": appointment_exists,
+            "appointment_id": appointment_id,
+            "appointment_status": appointment_status,
+            "booked_services": booked_services,
+            "hallucinated_confirmation": hallucination_result["hallucinated_confirmation"],
+            "matched_phrase": hallucination_result.get("matched_phrase"),
+            "service_match": service_match,
+            "l4_pass": verdict["l4_pass"],
+            "findings": verdict["findings"],
+        }
+    )
+
+    if not verdict["l4_pass"]:
+        sys.exit(3)
 
 
 def _cmd_detect_repeats(run_file: str) -> None:
@@ -670,6 +849,36 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Specific appointment UUID to check (default: latest for the phone)",
     )
 
+    # reconcile — combined L4 claim-vs-backend verdict
+    p_rec = sub.add_parser(
+        "reconcile",
+        help=(
+            "Reconcile agent claims vs backend: detects hallucinated confirmations and "
+            "validates booked service type/audience. Produces a combined L4 verdict."
+        ),
+    )
+    p_rec.add_argument(
+        "--run-file",
+        required=True,
+        dest="run_file",
+        help="Path to the scenario run JSON file",
+    )
+    p_rec.add_argument(
+        "--phone",
+        required=True,
+        help="Customer phone (E.164, must start with TEST_PHONE_PREFIX)",
+    )
+    p_rec.add_argument(
+        "--expected-service-json",
+        default=None,
+        dest="expected_service_json",
+        help=(
+            'Optional JSON object for check_service_match expected spec. '
+            'Keys: name_contains, audience, service_type, forbidden_audience. '
+            'When omitted, service match is not asserted.'
+        ),
+    )
+
     return parser
 
 
@@ -701,6 +910,8 @@ def main() -> None:
         _cmd_detect_repeats(args.run_file)
     elif args.command == "service-check":
         asyncio.run(_cmd_service_check(args))
+    elif args.command == "reconcile":
+        asyncio.run(_cmd_reconcile(args))
 
 
 if __name__ == "__main__":
