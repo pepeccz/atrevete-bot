@@ -269,7 +269,7 @@ export function GlobalSearch() {
   return (
     <Popover open={desktopOpen} onOpenChange={setDesktopOpen}>
       <PopoverTrigger asChild>
-        <div className="relative hidden md:flex items-center w-72 h-9 rounded-[10px] border border-line bg-bg/60 px-3 gap-2 hover:bg-bg cursor-text">
+        <div className="relative hidden md:flex items-center w-44 lg:w-56 xl:w-72 h-9 rounded-[10px] border border-line bg-bg/60 px-3 gap-2 hover:bg-bg cursor-text">
           <Search className="h-4 w-4 text-ink-mute flex-shrink-0" />
           <Input
             ref={inputRef}

@@ -62,7 +62,7 @@ export function Header({
           {title}
         </h1>
         {subtitleText && (
-          <p className="text-[13px] text-ink-mute mt-0.5 leading-none">
+          <p className="text-[13px] text-ink-mute mt-0.5 leading-none truncate">
             {subtitleText}
           </p>
         )}
@@ -133,9 +133,11 @@ function SyncGCalButton() {
       disabled={syncing}
       className="hidden md:flex items-center gap-1.5 text-[13.5px] font-medium text-ink-soft border-line hover:bg-gold-soft/50 hover:text-ink hover:border-gold-line"
       aria-label="Sincronizar Google Calendar"
+      title="Sincronizar Google Calendar"
     >
       <RefreshCw className={`h-3.5 w-3.5 ${syncing ? "animate-spin" : ""}`} />
-      Sincronizar Google Calendar
+      {/* Label collapses to an icon-only button below xl so it never crowds out the page title */}
+      <span className="hidden xl:inline">Sincronizar Google Calendar</span>
     </Button>
   );
 }
