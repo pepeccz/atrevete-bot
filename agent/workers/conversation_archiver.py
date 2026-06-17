@@ -69,15 +69,22 @@ def get_sync_redis_client() -> Redis:
     """
     Get synchronous Redis client for worker operations.
 
+    Mirrors the password-forwarding logic of shared/redis_client.py:get_redis_client()
+    so that Redis instances requiring authentication (requirepass) are reachable.
+    Password is only forwarded when REDIS_PASSWORD is truthy — keeps no-auth dev
+    environments working without change.
+
     Returns:
         Redis: Synchronous Redis client instance
     """
     settings = get_settings()
-    return redis.from_url(
-        settings.REDIS_URL,
-        decode_responses=False,  # Keep binary for checkpoint data
-        retry_on_timeout=True,
-    )
+    conn_kwargs: dict = {
+        "decode_responses": False,  # Keep binary for checkpoint data
+        "retry_on_timeout": True,
+    }
+    if settings.REDIS_PASSWORD:
+        conn_kwargs["password"] = settings.REDIS_PASSWORD
+    return redis.from_url(settings.REDIS_URL, **conn_kwargs)
 
 
 def signal_handler(signum: int, frame: Any) -> None:
