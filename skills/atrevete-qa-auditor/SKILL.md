@@ -295,12 +295,39 @@ response mentioning a different stylist name as a hallucination.
 
 ---
 
+### L6 — Coherence & Intent Resolution
+
+**Rubric-based (1–5 per criterion). This is the human-likeness layer: did each reply make sense in context, and did the user actually get what they came for? Score by reading the FULL turn sequence IN ORDER — never judge turns in isolation.**
+
+| Criterion | 1 (poor) | 5 (excellent) |
+|-----------|----------|---------------|
+| **Contextual coherence** | Replies contradict or ignore earlier turns; bot "forgets" a stated service/date/name and re-asks what was already answered | Every reply follows from the conversation so far; no contradictions; stated facts are carried forward |
+| **Intent resolution** | The user's real goal was NOT achieved or addressed — booked the wrong thing, looped, or deflected without resolving | The user's actual intent was resolved (or correctly refused/escalated with a clear reason); the user got what they came for |
+| **Multi-message handling** | On a burst (e.g. "hola" then "quiero cortarme el pelo") the bot answers only one message, loses the intent, or treats them as unrelated | The bot addresses the combined intent coherently in a single reply |
+| **Progress** | Conversation stalls, repeats steps, or drifts off-task | Each turn advances toward resolving the intent |
+
+Average score (1.0–5.0). Pass threshold: >= 3.0.
+
+Anchor intent-resolution to the backend, not the transcript:
+- Run the `reconcile` subcommand (see L4). If the bot's final message claims a booking/confirmation but `l4_pass` is False (no appointment, or wrong service/audience), **Intent resolution = 1** — the user believes they have something they do not. A confident-sounding but unbacked confirmation is the WORST coherence failure, not a good one.
+- For `multi_completed` / `partial_completed`, intent is resolved only if EVERY sub-intent reached its terminal state. `partial_completed` caps Intent resolution at 3.
+- For burst scenarios, confirm the merged reply addresses every message in the run JSON's `burst_messages`.
+
+```bash
+# deterministic backing for the Intent-resolution score:
+PYTHONPATH=. python tests/e2e/harness/qa_turn_helper.py reconcile \
+  --run-file <scenario>.json --phone <+34999...> [--expected-service-json '{...}']
+# l4_pass=false with a hallucinated_confirmation finding => Intent resolution = 1
+```
+
+---
+
 ### Step 3: Compute Verdict Per Scenario
 
 | Verdict | Condition |
 |---------|-----------|
-| `PASS` | L1–L4 all pass AND L5 >= 3.0 |
-| `WARN` | L1–L4 pass AND (L5 < 3.0 OR any check skipped due to missing traces) |
+| `PASS` | L1–L4 all pass AND L5 >= 3.0 AND L6 >= 3.0 |
+| `WARN` | L1–L4 pass AND (L5 < 3.0 OR L6 < 3.0 OR any check skipped due to missing traces) |
 | `FAIL` | Any L1–L4 check fails |
 
 ---

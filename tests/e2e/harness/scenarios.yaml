@@ -72,6 +72,15 @@
     tool_calls_required: [check_availability, book]
     tool_calls_forbidden: []
     tags: [change-a, pre-book-recheck]
+    # Service validation: "corte de dama" maps to a principal service whose name
+    # contains "corte" and is scoped to adult_female audience in the catalog.
+    # The forbidden_audience guard also asserts the bot did not accidentally book
+    # a male-only service (e.g. "Corte de Hombre").
+    service:
+      name_contains: corte
+      service_type: principal
+      audience: adult_female
+      forbidden_audience: adult_male
 
 - id: change-a-tz-madrid
   description: >
@@ -331,3 +340,46 @@
     tool_calls_required: [manage_appointments]
     tool_calls_forbidden: []
     tags: [change-c, idor, security]
+
+# ---------------------------------------------------------------------------
+# Change D regression — returning-customer personalization
+# ---------------------------------------------------------------------------
+
+- id: change-d-returning-customer-personalization
+  description: >
+    Returning customer with 4 prior visits and a known preferred stylist (Marta).
+    The bot should recognize the returning-customer context injected via <customer>
+    block and reflect it — e.g. reference the preferred stylist or greet with
+    familiarity — rather than asking everything cold.
+  persona:
+    name: Carmen Ruiz
+    phone: "+34999000050"
+    style: >
+      Cliente habitual que ya conoce el salón. Saluda de forma breve y pide cita
+      de nuevo sin dar muchos detalles, esperando que el bot recuerde sus preferencias.
+  intent: "Hola, quiero pedir cita otra vez"
+  max_turns: 10
+  seed:
+    customer_memories:
+      visit_count: 4
+      preferred_stylist_name: Marta
+      typical_services:
+        - Corte de Mujer
+      agent_notes: "Prefiere media melena. Alérgica a un tinte concreto."
+    past_appointment:
+      days_ago: 35
+      service_name: Corte de Mujer
+      stylist_name: Marta
+      status: completed
+  expect:
+    outcome: booked
+    must_contain_any:
+      - Marta
+      - tu estilista
+      - tu visita anterior
+    notes: >
+      The bot should leverage the <customer> XML block (memories injected by
+      CustomerResolveMiddleware) to offer Marta proactively or acknowledge the
+      returning relationship. Full booking is the primary happy path; if the
+      conversation ends at availability confirmation, accept info_provided as
+      a soft pass.

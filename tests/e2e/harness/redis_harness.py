@@ -590,11 +590,41 @@ def extract_options(text: str, context: str = "stylist") -> list[str]:
     """
     # Common Spanish words to skip so they are not mistaken for proper nouns
     _SKIP_WORDS = {
-        "tenemos", "podés", "elegir", "puede", "atenderte", "querés",
-        "perfecto", "ya", "reviso", "eso", "por", "vos", "si", "te",
-        "que", "la", "el", "un", "una", "en", "de", "del", "al",
-        "con", "para", "sin", "los", "las", "hay", "este",
-        "esta", "esto", "ser", "tiene", "tener",
+        "tenemos",
+        "podés",
+        "elegir",
+        "puede",
+        "atenderte",
+        "querés",
+        "perfecto",
+        "ya",
+        "reviso",
+        "eso",
+        "por",
+        "vos",
+        "si",
+        "te",
+        "que",
+        "la",
+        "el",
+        "un",
+        "una",
+        "en",
+        "de",
+        "del",
+        "al",
+        "con",
+        "para",
+        "sin",
+        "los",
+        "las",
+        "hay",
+        "este",
+        "esta",
+        "esto",
+        "ser",
+        "tiene",
+        "tener",
     }
 
     # Try numbered list first
@@ -903,6 +933,157 @@ class RedisTestHarness:
             "timed_out": timed_out,
             "raw_payloads": raw_payloads,
             "tool_evidence": tool_evidence_dicts,
+        }
+
+    async def execute_burst_turn(
+        self,
+        user_messages: list[str],
+        session: QARunSession,
+        timeout: float = 90.0,
+        inter_message_delay: float = 0.4,
+        raise_on_timeout: bool = False,
+    ) -> dict[str, Any]:
+        """Execute a burst of messages as a single logical turn.
+
+        Sends several user messages back-to-back within the agent's batch window
+        so the agent merges them into ONE turn and produces ONE coherent reply.
+
+        Sequence (critical — subscribe before first inject so the merged reply
+        is never missed):
+            1. prepare_response_capture()      → subscribe to response channel
+            2. inject_message(msg[0])
+            3. asyncio.sleep(inter_message_delay)
+            4. inject_message(msg[1])
+            ...
+            N. capture_response()              → collect the single merged reply
+
+        Args:
+            user_messages: Ordered list of messages to inject. All must land
+                within the agent's MESSAGE_BATCH_WINDOW_SECONDS (default 3s).
+                Safe rule: inter_message_delay * (len(user_messages) - 1) < 3s.
+                With default delay=0.4s that means up to 7 messages safely.
+            session: The active QARunSession; turn_count is incremented by 1.
+            timeout: Seconds to wait for the merged agent reply.
+            inter_message_delay: Seconds between consecutive injections.
+                Keep this small (< 1s) so all messages arrive within the 3s
+                batch window. Do NOT set it >= MESSAGE_BATCH_WINDOW_SECONDS.
+            raise_on_timeout: If True, re-raises TimeoutError on no reply.
+
+        Returns:
+            Same keys as execute_turn, PLUS:
+                "burst_messages": the original list of injected messages
+                "burst_size": len(user_messages)
+            "user_message" is the joined burst ("msg1 / msg2 / ...") for logging.
+        """
+        from tests.e2e.harness.run_models import TurnEvidence
+
+        identity = session.identity
+        # A burst is ONE logical turn — increment exactly once.
+        session.turn_count += 1
+        turn_number = session.turn_count
+
+        timestamp_sent = datetime.now(UTC)
+
+        # Subscribe BEFORE injecting so we never miss the merged reply.
+        await self.prepare_response_capture()
+
+        # Inject each message in order, sleeping between injections so all
+        # messages land within the agent's batch window.
+        for idx, msg_text in enumerate(user_messages):
+            await self.inject_message(
+                conversation_id=identity.conversation_id,
+                message_text=msg_text,
+                customer_phone=identity.customer_phone,
+                sender_name=identity.sender_name,
+                customer_name=identity.sender_name,
+            )
+            if idx < len(user_messages) - 1:
+                await asyncio.sleep(inter_message_delay)
+
+        # Capture the single merged reply produced by the agent.
+        timed_out = False
+        agent_response: str | None = None
+        raw_payloads: list[dict[str, Any]] = []
+        timestamp_received: datetime | None = None
+        response_latency_ms = 0
+
+        try:
+            response = await self.capture_response(
+                conversation_id=identity.conversation_id,
+                timeout=timeout,
+                batch_window_seconds=session.batch_window_seconds,
+            )
+            timestamp_received = datetime.now(UTC)
+            agent_response = response.get("message")
+            raw_payloads = response.get("raw_payloads", [])
+            latency = (timestamp_received - timestamp_sent).total_seconds() * 1000
+            response_latency_ms = int(latency)
+
+            # Log joined burst + merged bot reply in the outgoing trace stream.
+            joined = " / ".join(user_messages)
+            await self.redis.xadd(
+                f"qa_outgoing:{identity.conversation_id}",
+                {
+                    "bot_reply": agent_response or "",
+                    "turn_index": str(turn_number),
+                    "user_message": joined,
+                    "burst_size": str(len(user_messages)),
+                },
+            )
+        except TimeoutError:
+            if raise_on_timeout:
+                raise
+            timed_out = True
+
+        # Collect tool evidence via the standard 3-tier chain.
+        tool_evidence_list: list[ToolCallEvidence] = []
+        try:
+            tool_evidence_list = await self.collect_tool_evidence(
+                identity.conversation_id, turn_number
+            )
+        except Exception:
+            pass
+
+        tool_evidence_dicts: list[dict[str, Any]] = [
+            {
+                "tool_name": e.tool_name,
+                "arguments": e.arguments,
+                "result": e.result,
+                "source": e.source,
+                "timestamp": e.timestamp.isoformat(),
+            }
+            for e in tool_evidence_list
+        ]
+
+        # Joined burst string used as the display user_message in evidence.
+        joined_user_message = " / ".join(user_messages)
+
+        evidence = TurnEvidence(
+            turn_number=turn_number,
+            user_message=joined_user_message,
+            agent_response=agent_response,
+            response_latency_ms=response_latency_ms,
+            timed_out=timed_out,
+            raw_payloads=raw_payloads,
+            timestamp_sent=timestamp_sent,
+            timestamp_received=timestamp_received,
+            tool_evidence=tool_evidence_dicts,
+        )
+        session.evidence.append(evidence)
+        session.raw_payloads.extend(raw_payloads)
+
+        return {
+            "turn_number": turn_number,
+            "user_message": joined_user_message,
+            "agent_response": agent_response,
+            "timestamp_sent": timestamp_sent.isoformat(),
+            "timestamp_received": timestamp_received.isoformat() if timestamp_received else None,
+            "response_latency_ms": response_latency_ms,
+            "timed_out": timed_out,
+            "raw_payloads": raw_payloads,
+            "tool_evidence": tool_evidence_dicts,
+            "burst_messages": list(user_messages),
+            "burst_size": len(user_messages),
         }
 
     async def capture_final_state(self, conversation_id: str) -> dict[str, Any] | None:
