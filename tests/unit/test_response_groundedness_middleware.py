@@ -317,3 +317,166 @@ def test_response_groundedness_in_agent_factory():
     assert (
         "ResponseGroundednessMiddleware" in source
     ), "ResponseGroundednessMiddleware must be instantiated in build_conversation_agent"
+
+
+# ---------------------------------------------------------------------------
+# FIX MINOR-1 — regex drift guard
+# ---------------------------------------------------------------------------
+
+
+def test_booking_regex_source_matches_harness_helper():
+    """The middleware booking regex and the harness helper regex MUST be identical.
+
+    The harness (tests/e2e/harness/assert_claim_backend.py) duplicates the booking
+    confirmation pattern tuple on purpose (no import-time dep on the agent package).
+    This guard asserts the two module-level constants are byte-for-byte equal so that
+    editing one without the other fails CI.
+    """
+    from agent.middleware.response_groundedness import _BOOKING_CONFIRMATION_PATTERNS as mw_patterns
+    from tests.e2e.harness.assert_claim_backend import (
+        _BOOKING_CONFIRMATION_PATTERNS as harness_patterns,
+    )
+
+    assert mw_patterns == harness_patterns, (
+        "Booking confirmation regex drift between middleware and harness helper. "
+        "Update both agent/middleware/response_groundedness.py and "
+        "tests/e2e/harness/assert_claim_backend.py together."
+    )
+
+
+# ---------------------------------------------------------------------------
+# FIX MINOR-2 — middleware-level BLOCKING gate tests (real ToolMessage / AIMessage)
+# ---------------------------------------------------------------------------
+
+
+def _book_ok_json(appointment_id: str = "11111111-1111-1111-1111-111111111111") -> str:
+    """A real `book` ToolResponse ok payload, serialized like the tool returns it."""
+    from agent.tools.schemas import ToolResponse
+
+    return ToolResponse(
+        status="ok",
+        payload={
+            "appointment_id": appointment_id,
+            "customer_id": "22222222-2222-2222-2222-222222222222",
+            "start_iso": "2026-07-01T10:00:00+02:00",
+            "end_iso": "2026-07-01T10:30:00+02:00",
+            "stylist_id": "33333333-3333-3333-3333-333333333333",
+        },
+    ).model_dump_json()
+
+
+async def _run_gate(*, history, result, reply_content):
+    """Drive awrap_model_call with a real AIMessage reply + the given history/result.
+
+    `history` is the state["messages"] list; `result` is response.result (this turn).
+    Returns the final reply content of the last result message after the gate ran.
+    """
+    from agent.middleware.response_groundedness import ResponseGroundednessMiddleware
+
+    mock_response = MagicMock()
+    mock_response.result = result
+
+    async def mock_handler(req):
+        return mock_response
+
+    middleware = ResponseGroundednessMiddleware()
+    request = MagicMock()
+    request.state = {
+        "_slot_catalog": "",
+        "conversation_id": "test-conv",
+        "messages": history,
+    }
+
+    with patch("agent.middleware.response_groundedness.logger"):
+        response = await middleware.awrap_model_call(request, mock_handler)
+    return response.result[-1].content
+
+
+@pytest.mark.asyncio
+async def test_booking_confirmation_with_matching_this_turn_book_ok_not_blocked():
+    """(a) booking confirmation + matching this-turn `book` ok → NOT blocked."""
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+    reply = "¡Listo! Tu cita queda confirmada para el jueves."
+    history = [HumanMessage(content="Quiero reservar")]
+    # This-turn AIMessage requested `book` (tool_call id call_1); ToolMessage answers it.
+    ai_call = AIMessage(
+        content="",
+        tool_calls=[{"name": "book", "args": {}, "id": "call_1"}],
+    )
+    tool_msg = ToolMessage(content=_book_ok_json(), name="book", tool_call_id="call_1")
+    final_ai = AIMessage(content=reply)
+    result = [ai_call, tool_msg, final_ai]
+
+    final = await _run_gate(history=history, result=result, reply_content=reply)
+    assert final == reply, "Genuine this-turn booking confirmation must NOT be rewritten"
+
+
+@pytest.mark.asyncio
+async def test_booking_confirmation_with_only_stale_prior_turn_book_ok_is_blocked():
+    """(b) BLOCKER-2: stale prior-turn `book` ok + NEW confirmation this turn → BLOCKED."""
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+    from agent.middleware.response_groundedness import _CONFIRMATION_FALLBACK_MESSAGE
+
+    reply = "¡Listo! Tu cita queda confirmada."
+    # Prior turn: a real book ok-result lives in history BEFORE the latest HumanMessage.
+    history = [
+        HumanMessage(content="Reserva la primera"),
+        AIMessage(content="", tool_calls=[{"name": "book", "args": {}, "id": "old_call"}]),
+        ToolMessage(content=_book_ok_json(), name="book", tool_call_id="old_call"),
+        AIMessage(content="Te confirmé la primera."),
+        HumanMessage(content="Ahora confírmame otra cosa"),  # latest human → turn boundary
+    ]
+    # This turn: NO new book tool_call, just a hallucinated confirmation.
+    final_ai = AIMessage(content=reply)
+    result = [final_ai]
+
+    final = await _run_gate(history=history, result=result, reply_content=reply)
+    assert final == _CONFIRMATION_FALLBACK_MESSAGE, (
+        "A stale prior-turn book result must NOT green-light a new hallucinated "
+        "confirmation — it must be rewritten to the fallback."
+    )
+
+
+@pytest.mark.asyncio
+async def test_booking_confirmation_with_no_book_result_is_blocked():
+    """(c) booking confirmation + NO `book` result anywhere → BLOCKED."""
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    from agent.middleware.response_groundedness import _CONFIRMATION_FALLBACK_MESSAGE
+
+    reply = "Perfecto, te he confirmado la cita para el jueves."
+    history = [HumanMessage(content="Confírmame la cita")]
+    final_ai = AIMessage(content=reply)
+    result = [final_ai]
+
+    final = await _run_gate(history=history, result=result, reply_content=reply)
+    assert final == _CONFIRMATION_FALLBACK_MESSAGE
+
+
+@pytest.mark.asyncio
+async def test_cancel_confirmation_string_is_not_blocked_log_only():
+    """(d) a real cancel confirmation string → NOT blocked (log-only path)."""
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    reply = "Tu cita ha sido cancelada."
+    history = [HumanMessage(content="Cancela mi cita")]
+    final_ai = AIMessage(content=reply)
+    result = [final_ai]
+
+    final = await _run_gate(history=history, result=result, reply_content=reply)
+    assert final == reply, "Cancel/reschedule confirmations are log-only — never rewritten"
+
+
+@pytest.mark.asyncio
+async def test_non_string_content_skips_gate_safely():
+    """FIX MINOR-3: list-of-parts content is skipped safely (no crash, no rewrite)."""
+    from langchain_core.messages import AIMessage
+
+    list_content = [{"type": "text", "text": "Tu cita queda confirmada."}]
+    final_ai = AIMessage(content=list_content)
+    result = [final_ai]
+
+    final = await _run_gate(history=[], result=result, reply_content=list_content)
+    assert final == list_content, "Non-str content must pass through untouched"

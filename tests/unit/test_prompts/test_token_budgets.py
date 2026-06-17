@@ -53,7 +53,9 @@ BUDGETS: dict[str, int] = {
     #   escalation_required routing row (N3).
     # booking_flow.md: +250 for the Paso 2 qualifier→audience mapping (N5),
     #   fits within the existing 3050 budget.
-    "critical_rules.md": 3600,
+    # critical_rules.md: +200 for R-42 (tool-backed confirmation rule — blocks
+    #   hallucinated booking confirmations; see PR #77). Actual 3708.
+    "critical_rules.md": 3800,
     "booking_flow.md": 3050,
     "examples.md": 2600,
     "tools_contract.md": 2050,
