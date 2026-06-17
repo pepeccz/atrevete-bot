@@ -72,6 +72,22 @@ function EmptyThread() {
   );
 }
 
+// ─── Unavailable thread pane ───────────────────────────────────────────────────
+
+function UnavailableThread() {
+  return (
+    <div className="flex flex-col items-center justify-center h-full gap-4 text-muted-foreground">
+      <MessageSquare className="h-10 w-10 opacity-20" />
+      <div className="text-center">
+        <p className="text-sm font-medium">Esta conversación ya no está disponible</p>
+        <p className="text-xs mt-1 max-w-xs">
+          Puede haber expirado o ya fue resuelta. Puedes resolver la escalación desde el panel.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function ConversationsPage() {
@@ -87,6 +103,7 @@ export default function ConversationsPage() {
   const [activeConversationId, setActiveConversationId] = useState<string | null>(convIdParam);
   const [activeCustomerId, setActiveCustomerId] = useState<string | null>(null);
   const [listRefreshKey, setListRefreshKey] = useState(0);
+  const [conversationUnavailable, setConversationUnavailable] = useState(false);
   const [activeWhatsappContact, setActiveWhatsappContact] = useState<
     import("@/lib/types").WhatsappContact | null
   >(null);
@@ -143,12 +160,16 @@ export default function ConversationsPage() {
   // Fetch customer_id + whatsapp_contact for the active conversation to
   // populate CustomerCard. whatsapp_contact is the fallback contact info
   // shown when no Customer row is linked yet.
+  // Also clears the unavailable flag whenever a valid loadable id is present
+  // (e.g. user clicks a different conversation after an orphan deep-link).
   useEffect(() => {
     if (!loadableConversationId) {
       setActiveCustomerId(null);
       setActiveWhatsappContact(null);
       return;
     }
+    // A loadable id means the conversation resolved — clear any prior unavailable flag
+    setConversationUnavailable(false);
     let cancelled = false;
     api
       .getConversation(loadableConversationId)
@@ -237,6 +258,7 @@ export default function ConversationsPage() {
             onSelectConversation={handleSelectConversation}
             collapsed={listCollapsed}
             onToggleCollapsed={toggleListCollapsed}
+            onActiveConversationUnavailable={setConversationUnavailable}
           />
         </div>
 
@@ -247,6 +269,8 @@ export default function ConversationsPage() {
               conversationId={loadableConversationId}
               onDeleted={handleConversationDeleted}
             />
+          ) : activeConversationId && conversationUnavailable ? (
+            <UnavailableThread />
           ) : (
             <EmptyThread />
           )}
