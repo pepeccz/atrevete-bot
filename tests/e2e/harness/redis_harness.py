@@ -129,35 +129,84 @@ def validate_tool_trace(evidence: list[ToolCallEvidence], flow_type: str) -> Too
 
 
 class CheckpointToolEvidenceAdapter:
-    """Collects tool call evidence from LangGraph checkpoint state."""
+    """Collects tool call evidence from LangGraph checkpoint state.
+
+    Reads state["messages"] from the latest checkpoint and extracts tool calls
+    using the same paired AIMessage.tool_calls + ToolMessage logic as
+    agent/main.py:_extract_tool_calls(). The qa_tool_trace field does not exist
+    in AgentState — tool data lives in the messages list.
+    """
+
+    # Mirror of agent/main.py:_TOOL_RESULT_MAX_CHARS
+    _RESULT_MAX_CHARS = 500
 
     def __init__(self, harness: RedisTestHarness):
         self._harness = harness
 
     async def collect(self, conversation_id: str, turn_index: int) -> list[ToolCallEvidence]:
-        """Return tool evidence for a specific turn from the checkpoint."""
+        """Return tool evidence for the latest turn from the checkpoint messages.
+
+        Extracts ALL tool calls present in state["messages"] — the checkpoint
+        holds the full message history so we cannot isolate a specific turn_index
+        reliably. Callers should treat the returned list as the cumulative tool
+        evidence for the conversation up to the latest checkpoint.
+        """
         state = await self._harness.capture_final_state(conversation_id)
         if state is None:
             return []
 
-        raw_trace = state.get("qa_tool_trace", [])
-        result = []
-        for entry in raw_trace:
-            if entry.get("turn_index") == turn_index:
-                ts_str = entry.get("timestamp", "")
-                try:
-                    ts = datetime.fromisoformat(ts_str)
-                except (ValueError, TypeError):
-                    ts = datetime.now(UTC)
-                result.append(
-                    ToolCallEvidence(
-                        tool_name=entry.get("tool_name", ""),
-                        arguments=dict(entry.get("arguments") or {}),
-                        result=dict(entry.get("result") or {}),
-                        source=entry.get("source", "checkpoint"),
-                        timestamp=ts,
+        messages = state.get("messages", [])
+        if not messages:
+            return []
+
+        # Build a lookup of ToolMessage by tool_call_id (mirrors _extract_tool_calls)
+        tool_results: dict[str, tuple[str, str]] = {}
+        for msg in messages:
+            try:
+                from langchain_core.messages import ToolMessage as _ToolMessage
+
+                if isinstance(msg, _ToolMessage):
+                    content = msg.content if isinstance(msg.content, str) else str(msg.content)
+                    status = getattr(msg, "status", None) or "success"
+                    tool_results[msg.tool_call_id] = (content, status)
+            except Exception:  # noqa: BLE001
+                continue
+
+        result: list[ToolCallEvidence] = []
+        ts_now = datetime.now(UTC)
+
+        for msg in messages:
+            try:
+                from langchain_core.messages import AIMessage as _AIMessage
+
+                if not isinstance(msg, _AIMessage):
+                    continue
+                for tc in getattr(msg, "tool_calls", []) or []:
+                    if not isinstance(tc, dict):
+                        continue
+                    call_id = tc.get("id") or tc.get("tool_call_id", "")
+                    if call_id in tool_results:
+                        raw_result, status = tool_results[call_id]
+                    else:
+                        raw_result = "<no ToolMessage recorded — tool raised or run aborted>"
+                        status = "missing"
+
+                    result_payload: dict[str, Any] = {
+                        "result_summary": raw_result[: self._RESULT_MAX_CHARS],
+                        "status": status,
+                    }
+                    result.append(
+                        ToolCallEvidence(
+                            tool_name=tc.get("name", ""),
+                            arguments=dict(tc.get("args", {}) or {}),
+                            result=result_payload,
+                            source="checkpoint",
+                            timestamp=ts_now,
+                        )
                     )
-                )
+            except Exception:  # noqa: BLE001
+                continue
+
         return result
 
 
@@ -861,7 +910,8 @@ class RedisTestHarness:
 
         client = await self._get_binary_client()
         checkpointer = AsyncRedisSaver(redis_client=client)
-        config = {"configurable": {"thread_id": conversation_id}}
+        # thread_id format SSOT: agent/main.py (v2: prefix)
+        config = {"configurable": {"thread_id": f"v2:{conversation_id}"}}
         checkpoint = await checkpointer.aget(config)
         if checkpoint is None:
             return None
@@ -886,5 +936,11 @@ class RedisTestHarness:
     async def _get_binary_client(self) -> redis.Redis:
         if self.binary_redis is None:
             settings = get_settings()
-            self.binary_redis = redis.from_url(settings.REDIS_URL, decode_responses=False)
+            # Binary client must carry the Redis password when set; otherwise the
+            # lazily-created client fails auth and checkpoint reads (binary blobs)
+            # silently return nothing — e.g. tool_evidence empty in the turn path.
+            binary_kwargs: dict[str, Any] = {"decode_responses": False}
+            if settings.REDIS_PASSWORD:
+                binary_kwargs["password"] = settings.REDIS_PASSWORD
+            self.binary_redis = redis.from_url(settings.REDIS_URL, **binary_kwargs)
         return self.binary_redis

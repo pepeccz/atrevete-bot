@@ -16,29 +16,32 @@ from tests.e2e.harness.run_models import QARunIdentity
 
 
 @pytest.mark.asyncio
-async def test_checkpoint_adapter_collects_turn_specific_evidence() -> None:
+async def test_checkpoint_adapter_collects_tool_evidence_from_messages() -> None:
+    """CheckpointToolEvidenceAdapter reads AIMessage.tool_calls + ToolMessages.
+
+    The old qa_tool_trace field does not exist in AgentState; tool data lives
+    in state["messages"] (SSOT: agent/main.py:_extract_tool_calls).
+    """
+    from langchain_core.messages import AIMessage, ToolMessage
+
+    ai_msg = AIMessage(
+        content="",
+        tool_calls=[
+            {
+                "id": "call_abc",
+                "name": "check_availability",
+                "args": {"service_names": ["Cortar"], "stylist_name": "Marta"},
+            }
+        ],
+    )
+    tool_msg = ToolMessage(
+        content='{"slots": []}',
+        tool_call_id="call_abc",
+    )
+
     harness = RedisTestHarness(redis_client=AsyncMock(), binary_redis_client=AsyncMock())
     harness.capture_final_state = AsyncMock(
-        return_value={
-            "qa_tool_trace": [
-                {
-                    "turn_index": 1,
-                    "tool_name": "check_availability",
-                    "arguments": {"service_names": ["Cortar"], "stylist_name": "Marta"},
-                    "result": {"slots": []},
-                    "source": "checkpoint",
-                    "timestamp": "2026-03-19T12:00:00+00:00",
-                },
-                {
-                    "turn_index": 2,
-                    "tool_name": "book",
-                    "arguments": {"slot_index": 1},
-                    "result": {"success": True},
-                    "source": "checkpoint",
-                    "timestamp": "2026-03-19T12:01:00+00:00",
-                },
-            ]
-        }
+        return_value={"messages": [ai_msg, tool_msg]}
     )
 
     adapter = CheckpointToolEvidenceAdapter(harness)
@@ -47,6 +50,8 @@ async def test_checkpoint_adapter_collects_turn_specific_evidence() -> None:
     assert [entry.tool_name for entry in evidence] == ["check_availability"]
     assert evidence[0].arguments == {"service_names": ["Cortar"], "stylist_name": "Marta"}
     assert evidence[0].source == "checkpoint"
+    assert evidence[0].result["status"] == "success"
+    assert '{"slots": []}' in evidence[0].result["result_summary"]
 
 
 @pytest.mark.asyncio

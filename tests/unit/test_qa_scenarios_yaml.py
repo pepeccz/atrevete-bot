@@ -28,6 +28,7 @@ VALID_OUTCOMES = {
     "timeout",
     "error",
     "rejected",
+    "info_provided",
 }
 
 TEST_PHONE_PREFIX = "+34999"

@@ -184,12 +184,13 @@ class StateResetHarness:
         - checkpoint_write:{thread_id}:*
         - write_keys_zset:{thread_id}:*
         """
+        # thread_id format SSOT: agent/main.py (v2: prefix)
         return await self._delete_matching_patterns(
             [
-                f"checkpoint:{conversation_id}:*",
-                f"checkpoint_write:{conversation_id}:*",
-                f"write_keys_zset:{conversation_id}:*",
-                # Legacy patterns for backwards compatibility
+                f"checkpoint:v2:{conversation_id}:*",
+                f"checkpoint_write:v2:{conversation_id}:*",
+                f"write_keys_zset:v2:{conversation_id}:*",
+                # Legacy patterns for backwards compatibility (substring match already covers v2:)
                 f"langgraph:checkpoint:*{conversation_id}*",
             ]
         )
