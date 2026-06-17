@@ -233,12 +233,19 @@ export function ConversationList({
       (c) => c.id === activeConversationId
     );
     if (alreadyMatched) return;                      // already a valid UUID — no-op
-    const matched = conversations.find(
-      (c) =>
-        String((c as unknown as ConversationHistoryInbox).conversation_id) ===
-        String(activeConversationId)
+    // F9: conversation_id is on the base ConversationHistory type — no cast needed.
+    // F7: if multiple items share the same conversation_id, prefer the one with
+    // the highest message_count (most active thread). Falls back to first match.
+    const candidates = conversations.filter(
+      (c) => String(c.conversation_id) === String(activeConversationId)
     );
-    if (matched) {
+    if (candidates.length > 0) {
+      const matched =
+        candidates.length === 1
+          ? candidates[0]
+          : candidates.reduce((best, c) =>
+              (c.message_count ?? 0) > (best.message_count ?? 0) ? c : best
+            );
       onSelectConversation(matched.id);
     }
   }, [loading, conversations, activeConversationId, onSelectConversation]);
