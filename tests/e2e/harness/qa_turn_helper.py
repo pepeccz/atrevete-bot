@@ -279,6 +279,38 @@ async def _cmd_burst(args: Any) -> int:
         await client.aclose()
 
 
+async def _cmd_seed(args: Any) -> None:
+    """Seed a returning customer with memories and an optional past appointment."""
+    from tests.e2e.harness.seed_customer import seed_returning_customer
+
+    try:
+        memories = json.loads(args.memories_json)
+    except json.JSONDecodeError as exc:
+        _json_err("invalid memories_json", str(exc))
+        return
+
+    past_appt: dict | None = None
+    if args.past_appointment_json:
+        try:
+            past_appt = json.loads(args.past_appointment_json)
+        except json.JSONDecodeError as exc:
+            _json_err("invalid past_appointment_json", str(exc))
+            return
+
+    try:
+        result = await seed_returning_customer(
+            phone=args.phone,
+            customer_name=args.customer_name,
+            memories=memories,
+            past_appointment=past_appt,
+        )
+        _json_out(result)
+    except ValueError as exc:
+        _json_err("phone_guard_failed", str(exc))
+    except Exception as exc:
+        _json_err("seed_failed", str(exc))
+
+
 async def _cmd_reset(conversation_id: str, phone: str) -> None:
     """Clean up Redis state for a conversation."""
     import redis.asyncio as redis
@@ -448,6 +480,33 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Seconds between consecutive injections (must be < MESSAGE_BATCH_WINDOW_SECONDS)",
     )
 
+    # seed
+    p_seed = sub.add_parser(
+        "seed",
+        help="Seed a returning customer with memories and an optional past appointment",
+    )
+    p_seed.add_argument("--phone", required=True, help="Customer phone (must start with +349)")
+    p_seed.add_argument(
+        "--customer-name",
+        required=True,
+        dest="customer_name",
+        help="Full customer name (e.g. 'Ana Torres')",
+    )
+    p_seed.add_argument(
+        "--memories-json",
+        required=True,
+        dest="memories_json",
+        help="JSON object string with memory fields (visit_count, preferred_stylist_name, etc.)",
+    )
+    p_seed.add_argument(
+        "--past-appointment-json",
+        default=None,
+        dest="past_appointment_json",
+        help=(
+            "Optional JSON object with keys: days_ago, service_name, stylist_name, status"
+        ),
+    )
+
     # detect-repeats (L5 — auditor entry point for the repeated-sentence detector)
     p_repeats = sub.add_parser(
         "detect-repeats", help="Report repeated sentences in a scenario run JSON file"
@@ -481,6 +540,8 @@ def main() -> None:
         )
     elif args.command == "state":
         asyncio.run(_cmd_state(args))
+    elif args.command == "seed":
+        asyncio.run(_cmd_seed(args))
     elif args.command == "detect-repeats":
         _cmd_detect_repeats(args.run_file)
 
