@@ -11,25 +11,25 @@ reply for the following violation types:
       service names not offered by the salon. — LOG-ONLY.
   (b) Numeric price patterns (\\d+[.,]?\\d* followed by €/eur/euros). — LOG-ONLY.
   (c) BOOKING confirmation phrasing ("te he confirmado la cita", "reserva confirmada",
-      "ya está tu cita", …) that is NOT backed by a successful `book` tool result in the
-      CURRENT turn. — BLOCKING.
+      "ya está tu cita", …) that is NOT backed by a successful `book` OR
+      `manage_appointments` tool result in the CURRENT turn. — BLOCKING.
   (d) MUTATION confirmation phrasing for cancel/reschedule ("cita cancelada",
       "cita reprogramada", …). — LOG-ONLY (see BLOCKER-1 below).
 
-SCOPE DECISION (BLOCKER-1): the BLOCKING gate covers BOOKING confirmations ONLY.
-`manage_appointments` currently returns a plain STRING (the message text), not a JSON
-ToolResponse, so we CANNOT reliably verify cancel/reschedule success from its
-ToolMessage payload. Blocking those would produce false positives on legitimate
-cancellations. Therefore cancel/reschedule confirmation phrasing is handled as
-LOG-ONLY (warn, never rewrite) for now.
-  TODO: gate cancel/reschedule confirmations once `manage_appointments` returns
-        structured JSON (status + appointment_id) so a backing result can be verified.
+SCOPE DECISION (BLOCKER-1 — REVISED): the BLOCKING gate covers BOOKING confirmation
+phrasing regardless of which management tool triggered it. `manage_appointments`
+returns a plain STRING (the message text), not a JSON ToolResponse. We detect success
+by checking the string is non-empty and does NOT contain error-marker substrings
+(_MANAGE_ERROR_MARKERS). This allows legitimate cancel/reschedule turns whose reply
+uses booking-flavored wording ("te he confirmado…", "listo… la cita") to pass through
+without being rewritten, while still blocking a hallucinated confirmation that has no
+backing tool result at all.
 
 Checks (a), (b) and (d) are LOG-ONLY. Check (c) is the only BLOCKING gate: when
-BOOKING confirmation phrasing is present but no backing successful `book` result proves
-a real appointment was created IN THIS TURN, the assistant message content is REPLACED
-with a safe castellano fallback so the customer never receives a hallucinated
-confirmation.
+BOOKING confirmation phrasing is present but no backing successful `book` OR
+`manage_appointments` result proves an action happened IN THIS TURN, the assistant
+message content is REPLACED with a safe castellano fallback so the customer never
+receives a hallucinated confirmation.
 
 Performance: word-boundary regex over normalized catalog tokens. Compiled regex
 cached per catalog content hash (5-min wall-clock TTL). Overhead target: <5ms/turn.
@@ -76,10 +76,31 @@ logger = logging.getLogger(__name__)
 
 # Tool whose successful result legitimizes a BOOKING confirmation message.
 _BOOK_TOOL_NAME = "book"
-# Tool that handles cancel/reschedule. NOTE: it returns a plain STRING, not JSON,
-# so we cannot verify its success from the ToolMessage payload (BLOCKER-1). Mutation
-# confirmation phrasing is LOG-ONLY for now.
+# Tool that handles cancel/reschedule. Returns a plain STRING (not JSON).
+# Success is detected by substring absence — see _has_successful_manage_result_this_turn.
 _MANAGE_TOOL_NAME = "manage_appointments"
+
+# Error-signal substrings for manage_appointments plain-string results (case-insensitive).
+# If ANY of these appears in the ToolMessage content, the result is treated as a failure.
+# Derived from the real failure strings in agent/tools/manage_appointments_tool.py
+# (e.g. "No pude cancelar la cita.", "Hubo un problema al ...", "El identificador ... no es válido.").
+_MANAGE_ERROR_MARKERS: tuple[str, ...] = (
+    "no se ha podido",
+    "no he podido",
+    "no pude",
+    "hubo un problema",
+    "no encontr",
+    "no existe",
+    "no puedo",
+    "no es válido",
+    "no consta",
+    "no reconozco",
+    "no tienes citas",
+    "necesito el id",
+    "error",
+    "no hay ninguna cita",
+    "no figura",
+)
 
 # --- BOOKING confirmation phrasing (BLOCKING) ------------------------------
 # Spanish, case-insensitive. Conservative: must NOT match questions such as
@@ -346,32 +367,72 @@ def _has_successful_book_in_messages(messages: list[Any]) -> bool:
     return False
 
 
-def _has_backing_book_result_this_turn(
+def _has_successful_manage_result_this_turn(current_turn_messages: list[Any]) -> bool:
+    """True when a successful `manage_appointments` ToolMessage is present in the current turn.
+
+    manage_appointments returns a plain STRING (not JSON). Success detection:
+      - content is a non-empty string
+      - content does NOT contain any of _MANAGE_ERROR_MARKERS (case-insensitive)
+
+    Turn-bounding: caller MUST pass the already-computed current-turn slice (the same
+    set used by the book check) so a manage success from a prior turn never counts.
+
+    Defensive: handles non-str content and missing name attribute gracefully.
+    """
+    if not current_turn_messages:
+        return False
+    for message in current_turn_messages:
+        if not isinstance(message, ToolMessage):
+            continue
+        if getattr(message, "name", None) != _MANAGE_TOOL_NAME:
+            continue
+        content = getattr(message, "content", None)
+        if not isinstance(content, str) or not content.strip():
+            continue
+        content_lower = content.lower()
+        if any(marker in content_lower for marker in _MANAGE_ERROR_MARKERS):
+            continue
+        # Non-empty content with no error markers → successful manage result
+        return True
+    return False
+
+
+def _has_backing_tool_result_this_turn(
     *,
     history: list[Any],
     result_messages: list[Any],
 ) -> bool:
-    """Turn-bounded check for a successful `book` result backing a confirmation.
+    """Turn-bounded check for a successful `book` OR `manage_appointments` result.
 
-    Primary path (D7): correlate by tool_call_id. Collect `book` tool_call ids from the
-    AIMessage(s) in `result_messages` (this cycle) and accept ONLY a `book` ToolMessage
-    whose tool_call_id matches AND whose payload is a successful book result.
+    Primary path (D7): correlate by tool_call_id for `book`. Collect `book` tool_call
+    ids from the AIMessage(s) in `result_messages` (this cycle) and accept ONLY a `book`
+    ToolMessage whose tool_call_id matches AND whose payload is a successful book result.
 
     Fallback: when no `book` tool_call ids are found on this cycle's AIMessages (e.g.
     the result objects do not expose tool_calls), slice the combined sequence to the
-    messages AFTER the last HumanMessage and look for a successful `book` result there.
-    This keeps the search bounded to the current turn and prevents a stale prior-turn
-    booking from green-lighting a later hallucinated confirmation.
+    messages AFTER the last HumanMessage and look there for either:
+      - a successful `book` ToolMessage (JSON payload), OR
+      - a successful `manage_appointments` ToolMessage (plain-string, no error markers).
+
+    This keeps the search bounded to the current turn and prevents stale prior-turn
+    results from green-lighting a later hallucinated confirmation.
     """
     combined: list[Any] = [*history, *result_messages]
 
     book_call_ids = _collect_current_turn_book_call_ids(result_messages)
     if book_call_ids:
-        return _has_correlated_book_result(combined, book_call_ids)
+        # Primary path: tool_call_id-correlated book check.
+        # Also compute current-turn slice for manage check (turn-bounded same way).
+        current_turn = _slice_after_last_human(combined)
+        return _has_correlated_book_result(
+            combined, book_call_ids
+        ) or _has_successful_manage_result_this_turn(current_turn)
 
     # Fallback: turn-bound by slicing after the last HumanMessage.
     current_turn = _slice_after_last_human(combined)
-    return _has_successful_book_in_messages(current_turn)
+    return _has_successful_book_in_messages(
+        current_turn
+    ) or _has_successful_manage_result_this_turn(current_turn)
 
 
 class ResponseGroundednessMiddleware(AgentMiddleware):
@@ -516,7 +577,7 @@ class ResponseGroundednessMiddleware(AgentMiddleware):
         if isinstance(raw_result, list):
             result_messages = raw_result
 
-        if _has_backing_book_result_this_turn(history=history, result_messages=result_messages):
+        if _has_backing_tool_result_this_turn(history=history, result_messages=result_messages):
             # Genuine this-turn booking confirmation — leave untouched.
             return None
 
