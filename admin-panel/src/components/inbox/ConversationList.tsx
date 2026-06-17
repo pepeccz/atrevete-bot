@@ -189,7 +189,10 @@ export function ConversationList({
     setLoading(true);
     setFetchError(false);
     try {
-      const res = await api.list<ConversationHistory>("conversations", { page_size: 100 });
+      const res = await api.list<ConversationHistory>("conversations", {
+        page_size: 100,
+        filter: activeFilter,
+      });
       hadErrorRef.current = false;
       setConversations(res.items);
       if (res.counts) setCounts(res.counts);
@@ -203,7 +206,7 @@ export function ConversationList({
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [activeFilter]);
 
   // R2: unread = conversations with unread_message_count > 0 (same semantics as
   // the per-item badge and the unread filter tab)
