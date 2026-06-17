@@ -224,6 +224,61 @@ async def _cmd_turn(args: Any) -> int:
         await client.aclose()
 
 
+async def _cmd_burst(args: Any) -> int:
+    """Execute a burst of messages as a single logical turn.
+
+    All messages are injected in order within the agent's batch window so the
+    agent merges them into ONE turn and produces ONE coherent reply.
+
+    Returns 0 on success, 2 on timeout.
+    """
+    import redis.asyncio as redis
+
+    from tests.e2e.harness.run_models import QARunIdentity, QARunSession
+
+    settings = get_settings()
+    redis_kwargs: dict[str, Any] = {"decode_responses": True}
+    if settings.REDIS_PASSWORD:
+        redis_kwargs["password"] = settings.REDIS_PASSWORD
+    client = redis.from_url(settings.REDIS_URL, **redis_kwargs)
+    harness = RedisTestHarness(redis_client=client)
+    try:
+        identity = QARunIdentity(
+            conversation_id=args.conversation_id,
+            customer_phone=args.customer_phone,
+            sender_name=args.persona_name,
+            run_started_at=datetime.now(UTC),
+        )
+        session = QARunSession(
+            identity=identity,
+            started_monotonic=time.monotonic(),
+        )
+        result = await harness.execute_burst_turn(
+            user_messages=args.user_message,
+            session=session,
+            timeout=args.timeout,
+            inter_message_delay=args.inter_message_delay,
+            raise_on_timeout=False,
+        )
+        _json_out(
+            {
+                "agent_response": result["agent_response"],
+                "timed_out": result["timed_out"],
+                "response_latency_ms": result["response_latency_ms"],
+                "tool_evidence": result["tool_evidence"],
+                "burst_messages": result["burst_messages"],
+                "burst_size": result["burst_size"],
+            }
+        )
+        return 2 if result["timed_out"] else 0
+    except Exception as exc:
+        _json_err("burst_failed", str(exc))
+        return 1
+    finally:
+        await harness.close()
+        await client.aclose()
+
+
 async def _cmd_reset(conversation_id: str, phone: str) -> None:
     """Clean up Redis state for a conversation."""
     import redis.asyncio as redis
@@ -356,6 +411,43 @@ def _build_parser() -> argparse.ArgumentParser:
         "--conversation-id", required=True, dest="conversation_id", help="Conversation UUID"
     )
 
+    # burst
+    p_burst = sub.add_parser(
+        "burst",
+        help="Inject multiple messages as one logical burst turn (agent merges them)",
+    )
+    p_burst.add_argument(
+        "--conversation-id", required=True, dest="conversation_id", help="Conversation UUID"
+    )
+    p_burst.add_argument(
+        "--user-message",
+        action="append",
+        required=True,
+        dest="user_message",
+        metavar="MESSAGE",
+        help="A message in the burst (repeat for each message, in order)",
+    )
+    p_burst.add_argument(
+        "--customer-phone",
+        default="+34999000000",
+        dest="customer_phone",
+        help="Customer phone (must start with TEST_PHONE_PREFIX)",
+    )
+    p_burst.add_argument(
+        "--persona-name",
+        default="QA Test Client",
+        dest="persona_name",
+        help="Customer display name",
+    )
+    p_burst.add_argument("--timeout", type=float, default=90.0, help="Response timeout (seconds)")
+    p_burst.add_argument(
+        "--inter-message-delay",
+        type=float,
+        default=0.4,
+        dest="inter_message_delay",
+        help="Seconds between consecutive injections (must be < MESSAGE_BATCH_WINDOW_SECONDS)",
+    )
+
     # detect-repeats (L5 — auditor entry point for the repeated-sentence detector)
     p_repeats = sub.add_parser(
         "detect-repeats", help="Report repeated sentences in a scenario run JSON file"
@@ -378,6 +470,8 @@ def main() -> None:
         asyncio.run(_cmd_health())
     elif args.command == "turn":
         asyncio.run(_cmd_turn(args))
+    elif args.command == "burst":
+        sys.exit(asyncio.run(_cmd_burst(args)))
     elif args.command == "reset":
         asyncio.run(
             _cmd_reset(
