@@ -415,8 +415,9 @@ async def test_booking_confirmation_with_matching_this_turn_book_ok_not_blocked(
 @pytest.mark.asyncio
 async def test_booking_confirmation_with_only_stale_prior_turn_book_ok_is_blocked():
     """(b) BLOCKER-2: stale prior-turn `book` ok + NEW confirmation this turn → BLOCKED."""
-    from agent.middleware.response_groundedness import _CONFIRMATION_FALLBACK_MESSAGE
     from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+    from agent.middleware.response_groundedness import _CONFIRMATION_FALLBACK_MESSAGE
 
     reply = "¡Listo! Tu cita queda confirmada."
     # Prior turn: a real book ok-result lives in history BEFORE the latest HumanMessage.
@@ -441,8 +442,9 @@ async def test_booking_confirmation_with_only_stale_prior_turn_book_ok_is_blocke
 @pytest.mark.asyncio
 async def test_booking_confirmation_with_no_book_result_is_blocked():
     """(c) booking confirmation + NO `book` result anywhere → BLOCKED."""
-    from agent.middleware.response_groundedness import _CONFIRMATION_FALLBACK_MESSAGE
     from langchain_core.messages import AIMessage, HumanMessage
+
+    from agent.middleware.response_groundedness import _CONFIRMATION_FALLBACK_MESSAGE
 
     reply = "Perfecto, te he confirmado la cita para el jueves."
     history = [HumanMessage(content="Confírmame la cita")]
