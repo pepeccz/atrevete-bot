@@ -222,6 +222,34 @@ export function ConversationList({
     enabled: true,
   });
 
+  // Deep-link resolution: when the URL passes a Chatwoot numeric conversation_id
+  // (e.g. from the dashboard escalation widget), it won't match any conv.id (UUID).
+  // Find the item whose conv.conversation_id matches and swap the active id to the
+  // real loadable UUID so the thread fetch and list highlight both work.
+  useEffect(() => {
+    if (loading) return;                             // wait until list is fetched
+    if (!activeConversationId) return;               // nothing to resolve
+    const alreadyMatched = conversations.some(
+      (c) => c.id === activeConversationId
+    );
+    if (alreadyMatched) return;                      // already a valid UUID — no-op
+    // F9: conversation_id is on the base ConversationHistory type — no cast needed.
+    // F7: if multiple items share the same conversation_id, prefer the one with
+    // the highest message_count (most active thread). Falls back to first match.
+    const candidates = conversations.filter(
+      (c) => String(c.conversation_id) === String(activeConversationId)
+    );
+    if (candidates.length > 0) {
+      const matched =
+        candidates.length === 1
+          ? candidates[0]
+          : candidates.reduce((best, c) =>
+              (c.message_count ?? 0) > (best.message_count ?? 0) ? c : best
+            );
+      onSelectConversation(matched.id);
+    }
+  }, [loading, conversations, activeConversationId, onSelectConversation]);
+
   // When search is active, show search results; otherwise use the filtered list.
   const displayList: ConversationHistory[] = isSearching
     ? (searchResults as unknown as ConversationHistory[])

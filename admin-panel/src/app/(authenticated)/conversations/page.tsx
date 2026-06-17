@@ -31,6 +31,20 @@ import api from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { InboxFilter, ConversationHistory, ConversationHistoryInbox } from "@/lib/types";
 
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+/**
+ * Returns true only when `id` is safe to pass directly to the thread-fetch API:
+ * either a UUID (e.g. "a1b2c3d4-...") or a redis checkpoint key ("redis:...").
+ * Bare Chatwoot numeric ids (e.g. "8") are NOT loadable — they need to be
+ * resolved to a UUID by ConversationList first.
+ */
+function isLoadableConversationId(id: string | null): boolean {
+  if (!id) return false;
+  if (id.startsWith("redis:")) return true;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+}
+
 // ─── Permission gate ───────────────────────────────────────────────────────────
 
 function AccessDenied() {
@@ -118,18 +132,26 @@ export default function ConversationsPage() {
     setActiveConversationId(convIdParam);
   }, [filterParam, convIdParam]);
 
+  // Derived: the id is safe to pass to the API only once it's a UUID or redis: key.
+  // When it's still a raw Chatwoot numeric id (e.g. "8"), ConversationList is
+  // resolving it — we stay in the neutral "nothing selected" state to avoid a
+  // GET /conversations/8 → 400 and the resulting error flash.
+  const loadableConversationId = isLoadableConversationId(activeConversationId)
+    ? activeConversationId
+    : null;
+
   // Fetch customer_id + whatsapp_contact for the active conversation to
   // populate CustomerCard. whatsapp_contact is the fallback contact info
   // shown when no Customer row is linked yet.
   useEffect(() => {
-    if (!activeConversationId) {
+    if (!loadableConversationId) {
       setActiveCustomerId(null);
       setActiveWhatsappContact(null);
       return;
     }
     let cancelled = false;
     api
-      .getConversation(activeConversationId)
+      .getConversation(loadableConversationId)
       .then((conv: ConversationHistory) => {
         if (cancelled) return;
         const inbox = conv as unknown as ConversationHistoryInbox;
@@ -144,7 +166,7 @@ export default function ConversationsPage() {
     return () => {
       cancelled = true;
     };
-  }, [activeConversationId]);
+  }, [loadableConversationId]);
 
   // Push URL param changes (keeps navigation history for back button)
   const updateUrl = useCallback(
@@ -165,10 +187,13 @@ export default function ConversationsPage() {
     updateUrl(filter, null);
   };
 
-  const handleSelectConversation = (id: string) => {
-    setActiveConversationId(id);
-    updateUrl(undefined, id);
-  };
+  const handleSelectConversation = useCallback(
+    (id: string) => {
+      setActiveConversationId(id);
+      updateUrl(undefined, id);
+    },
+    [updateUrl]
+  );
 
   const handleConversationDeleted = useCallback(
     (deletedId: string) => {
@@ -217,9 +242,9 @@ export default function ConversationsPage() {
 
         {/* Center — active thread */}
         <div className="flex-1 min-w-0 overflow-hidden border-r border-line">
-          {activeConversationId ? (
+          {loadableConversationId ? (
             <ConversationThread
-              conversationId={activeConversationId}
+              conversationId={loadableConversationId}
               onDeleted={handleConversationDeleted}
             />
           ) : (
