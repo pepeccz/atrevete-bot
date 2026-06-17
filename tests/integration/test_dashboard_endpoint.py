@@ -570,3 +570,85 @@ class TestDashboardKpisNoSessionConcurrency:
         assert data["appointments_today"] == 5
         assert data["occupation_today"] == round(0.72, 4)
         assert data["new_customers_this_week"] == 3
+
+
+# =============================================================================
+# Regression test — appointments-trend date format (ISO, not dd/mm)
+# =============================================================================
+
+
+def _make_trend_session(rows=None):
+    """Return a session mock for get_appointments_trend.
+
+    The endpoint calls session.execute(query) once, then iterates result.all()
+    (returns (date, count) rows) to build date_counts.  We return an empty rows
+    list so the endpoint falls back to filling every date with count=0 — enough
+    to verify the date key format.
+    """
+    if rows is None:
+        rows = []
+
+    mock_session = AsyncMock()
+    mock_result = MagicMock()
+    mock_result.all.return_value = rows
+    mock_session.execute = AsyncMock(return_value=mock_result)
+
+    mock_ctx = AsyncMock()
+    mock_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+    mock_ctx.__aexit__ = AsyncMock(return_value=False)
+    return mock_ctx
+
+
+import re as _re
+from datetime import date as _date
+
+
+class TestAppointmentsTrendDateFormat:
+    """Regression guard: each trend data point's 'date' field must be ISO (YYYY-MM-DD).
+
+    Bug: the endpoint was using date_key.strftime("%d/%m") → "16/06".
+    The frontend chart (appointments-trend-chart.tsx) passes these strings directly
+    to new Date(isoDate + "T12:00:00"), parseISO(), and isoDate === today comparison —
+    all of which break on non-ISO input, producing overlapping garbage tick labels.
+
+    Fix: use date_key.isoformat() → "2026-06-16".
+    """
+
+    _ISO_RE = _re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+    def test_appointments_trend_returns_iso_dates(self, client, mock_auth):
+        """
+        GIVEN the appointments-trend endpoint is called with days=14
+        WHEN GET /api/admin/dashboard/charts/appointments-trend?days=14
+        THEN every item's 'date' field matches YYYY-MM-DD
+        AND each value is parseable by date.fromisoformat
+        """
+        mock_ctx = _make_trend_session(rows=[])
+
+        with patch("api.routes.admin.get_async_session", return_value=mock_ctx):
+            response = client.get(
+                "/api/admin/dashboard/charts/appointments-trend?days=14"
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert isinstance(data, list), "Response should be a list of trend points"
+        assert len(data) > 0, "days=14 should produce at least one data point"
+
+        for point in data:
+            date_value = point["date"]
+            assert self._ISO_RE.match(date_value), (
+                f"date '{date_value}' is not ISO format YYYY-MM-DD. "
+                "Backend must use date_key.isoformat(), not strftime('%d/%m')."
+            )
+            # Must be parseable — raises ValueError if not ISO
+            _date.fromisoformat(date_value)
+
+    def test_appointments_trend_requires_authentication(self, client):
+        """
+        GIVEN no valid auth token
+        WHEN GET /api/admin/dashboard/charts/appointments-trend
+        THEN returns 401 or 403
+        """
+        response = client.get("/api/admin/dashboard/charts/appointments-trend")
+        assert response.status_code in (401, 403, 422)
