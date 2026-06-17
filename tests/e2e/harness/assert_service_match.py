@@ -82,10 +82,7 @@ def check_service_match(
     if "name_contains" in expected:
         needle = (expected["name_contains"] or "").strip().lower()
         if needle:
-            found = any(
-                needle in (svc["name"] or "").lower()
-                for svc in normalized
-            )
+            found = any(needle in (svc["name"] or "").lower() for svc in normalized)
             if not found:
                 names = [svc["name"] for svc in normalized]
                 mismatches.append(
@@ -111,16 +108,13 @@ def check_service_match(
         if not found:
             types = [svc["service_type"] for svc in normalized]
             mismatches.append(
-                f"service_type={want_type!r} not matched by any booked service "
-                f"(got: {types})"
+                f"service_type={want_type!r} not matched by any booked service " f"(got: {types})"
             )
 
     # --- forbidden_audience ---
     if "forbidden_audience" in expected:
         forbidden = expected["forbidden_audience"]
-        violators = [
-            svc["name"] for svc in normalized if svc["audience"] == forbidden
-        ]
+        violators = [svc["name"] for svc in normalized if svc["audience"] == forbidden]
         if violators:
             mismatches.append(
                 f"forbidden_audience={forbidden!r} found on booked service(s): {violators}"

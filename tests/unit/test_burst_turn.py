@@ -7,16 +7,14 @@ collect_tool_evidence) are monkeypatched on the harness instance.
 
 from __future__ import annotations
 
-import asyncio
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock
 
 import pytest
 
 from tests.e2e.harness.redis_harness import RedisTestHarness, ToolCallEvidence
 from tests.e2e.harness.run_models import QARunIdentity, QARunSession
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -30,9 +28,10 @@ def _make_harness() -> RedisTestHarness:
     return RedisTestHarness(redis_client=redis_client, binary_redis_client=AsyncMock())
 
 
-def _make_session(harness: RedisTestHarness, conversation_id: str = "burst-conv-001") -> QARunSession:
+def _make_session(
+    harness: RedisTestHarness, conversation_id: str = "burst-conv-001"
+) -> QARunSession:
     """Return a fresh QARunSession bound to a test identity."""
-    import time
 
     identity = QARunIdentity(
         conversation_id=conversation_id,
@@ -53,8 +52,13 @@ def _fake_capture_response(conversation_id: str) -> dict[str, Any]:
         "messages": ["Hola! ¿Qué servicio querés?"],
         "timestamp_first_captured": now,
         "timestamp_captured": now,
-        "raw_payloads": [{"conversation_id": conversation_id, "message": "Hola! ¿Qué servicio querés?"}],
-        "raw_payload": {"conversation_id": conversation_id, "message": "Hola! ¿Qué servicio querés?"},
+        "raw_payloads": [
+            {"conversation_id": conversation_id, "message": "Hola! ¿Qué servicio querés?"}
+        ],
+        "raw_payload": {
+            "conversation_id": conversation_id,
+            "message": "Hola! ¿Qué servicio querés?",
+        },
     }
 
 
@@ -114,7 +118,9 @@ async def test_inject_called_in_order() -> None:
 
     injected: list[str] = []
 
-    async def fake_inject(*, conversation_id: str, message_text: str, **kwargs: Any) -> str:  # noqa: ARG001
+    async def fake_inject(
+        *, conversation_id: str, message_text: str, **kwargs: Any
+    ) -> str:  # noqa: ARG001
         injected.append(message_text)
         return "1-0"
 
@@ -148,9 +154,7 @@ async def test_capture_response_called_once() -> None:
 
     harness.prepare_response_capture = AsyncMock()
     harness.inject_message = AsyncMock(return_value="1-0")
-    mock_capture = AsyncMock(
-        return_value=_fake_capture_response(session.identity.conversation_id)
-    )
+    mock_capture = AsyncMock(return_value=_fake_capture_response(session.identity.conversation_id))
     harness.capture_response = mock_capture
     harness.collect_tool_evidence = AsyncMock(return_value=[])
 
@@ -247,15 +251,17 @@ async def test_evidence_appended_to_session() -> None:
     harness.capture_response = AsyncMock(
         return_value=_fake_capture_response(session.identity.conversation_id)
     )
-    harness.collect_tool_evidence = AsyncMock(return_value=[
-        ToolCallEvidence(
-            tool_name="check_availability",
-            arguments={"service_names": ["Tinte"]},
-            result={"slots": []},
-            source="checkpoint",
-            timestamp=datetime.now(UTC),
-        )
-    ])
+    harness.collect_tool_evidence = AsyncMock(
+        return_value=[
+            ToolCallEvidence(
+                tool_name="check_availability",
+                arguments={"service_names": ["Tinte"]},
+                result={"slots": []},
+                source="checkpoint",
+                timestamp=datetime.now(UTC),
+            )
+        ]
+    )
 
     await harness.execute_burst_turn(
         user_messages=messages,

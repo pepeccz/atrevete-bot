@@ -8,10 +8,9 @@ from __future__ import annotations
 import sys
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -120,7 +119,10 @@ async def test_memories_written_keys_in_result() -> None:
     fake_store.aput = AsyncMock()
 
     with (
-        patch("tests.e2e.harness.seed_customer.AsyncSessionLocal", MagicMock(return_value=fake_session)),
+        patch(
+            "tests.e2e.harness.seed_customer.AsyncSessionLocal",
+            MagicMock(return_value=fake_session),
+        ),
         patch("tests.e2e.harness.seed_customer._get_store_safe", return_value=fake_store),
     ):
         result = await seed_returning_customer(
@@ -191,7 +193,10 @@ async def test_past_appointment_date_is_in_the_past() -> None:
     before_call = datetime.now(UTC)
 
     with (
-        patch("tests.e2e.harness.seed_customer.AsyncSessionLocal", MagicMock(return_value=fake_session)),
+        patch(
+            "tests.e2e.harness.seed_customer.AsyncSessionLocal",
+            MagicMock(return_value=fake_session),
+        ),
         patch("tests.e2e.harness.seed_customer._get_store_safe", return_value=None),
     ):
         result = await seed_returning_customer(
@@ -211,9 +216,9 @@ async def test_past_appointment_date_is_in_the_past() -> None:
     appt = created_appts[0]
 
     # start_time must be strictly in the past relative to when the call was made
-    assert appt.start_time < before_call, (
-        f"Expected start_time {appt.start_time} to be before {before_call}"
-    )
+    assert (
+        appt.start_time < before_call
+    ), f"Expected start_time {appt.start_time} to be before {before_call}"
 
     # gcal_sync_status must be 'not_applicable' for test appointments
     assert appt.gcal_sync_status == "not_applicable"

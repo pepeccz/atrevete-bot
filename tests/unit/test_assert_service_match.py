@@ -11,10 +11,7 @@ Covers:
 
 from __future__ import annotations
 
-import pytest
-
 from tests.e2e.harness.assert_service_match import check_service_match
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -140,9 +137,7 @@ def test_forbidden_audience_none_not_flagged() -> None:
 
 def test_forbidden_audience_mixed_list_detects_violator() -> None:
     """Fails when one service in a mixed list carries the forbidden audience."""
-    result = check_service_match(
-        [CORTE_DAMA, CORTE_HOMBRE], {"forbidden_audience": "adult_male"}
-    )
+    result = check_service_match([CORTE_DAMA, CORTE_HOMBRE], {"forbidden_audience": "adult_male"})
     assert result["match"] is False
 
 

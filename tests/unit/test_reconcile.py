@@ -8,7 +8,6 @@ from __future__ import annotations
 
 from tests.e2e.harness.qa_turn_helper import compute_l4_verdict
 
-
 # ---------------------------------------------------------------------------
 # Fixtures — representative inputs
 # ---------------------------------------------------------------------------
@@ -21,8 +20,12 @@ _HALLUCINATION = {
 _SERVICE_MATCH_OK = {"match": True, "mismatches": [], "booked_summary": []}
 _SERVICE_MATCH_FAIL = {
     "match": False,
-    "mismatches": ["audience='adult_male' not matched by any booked service (got: ['adult_female'])"],
-    "booked_summary": [{"name": "Corte de Mujer", "audience": "adult_female", "service_type": "principal"}],
+    "mismatches": [
+        "audience='adult_male' not matched by any booked service (got: ['adult_female'])"
+    ],
+    "booked_summary": [
+        {"name": "Corte de Mujer", "audience": "adult_female", "service_type": "principal"}
+    ],
 }
 
 

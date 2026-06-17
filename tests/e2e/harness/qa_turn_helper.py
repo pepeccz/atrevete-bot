@@ -166,10 +166,9 @@ async def _cmd_service_check(args: Any) -> None:
     Then resolves each service UUID to (name, audience, service_type) via the services table
     and calls check_service_match against the --expected-json spec.
     """
-    import uuid
 
-    from sqlalchemy import select, text
-    from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+    from sqlalchemy import text
+    from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
     from tests.e2e.harness.assert_service_match import check_service_match
 
@@ -807,9 +806,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--past-appointment-json",
         default=None,
         dest="past_appointment_json",
-        help=(
-            "Optional JSON object with keys: days_ago, service_name, stylist_name, status"
-        ),
+        help=("Optional JSON object with keys: days_ago, service_name, stylist_name, status"),
     )
 
     # detect-repeats (L5 — auditor entry point for the repeated-sentence detector)
@@ -838,7 +835,7 @@ def _build_parser() -> argparse.ArgumentParser:
         required=True,
         dest="expected_json",
         help=(
-            'JSON object with optional keys: name_contains, audience, service_type, '
+            "JSON object with optional keys: name_contains, audience, service_type, "
             'forbidden_audience. E.g. \'{"name_contains": "corte", "audience": "adult_female"}\''
         ),
     )
@@ -873,9 +870,9 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         dest="expected_service_json",
         help=(
-            'Optional JSON object for check_service_match expected spec. '
-            'Keys: name_contains, audience, service_type, forbidden_audience. '
-            'When omitted, service match is not asserted.'
+            "Optional JSON object for check_service_match expected spec. "
+            "Keys: name_contains, audience, service_type, forbidden_audience. "
+            "When omitted, service match is not asserted."
         ),
     )
 

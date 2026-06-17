@@ -143,9 +143,7 @@ async def seed_returning_customer(
                 )
             else:
                 # Look up Stylist (case-insensitive)
-                sty_stmt = select(Stylist).where(
-                    func.lower(Stylist.name) == stylist_name.lower()
-                )
+                sty_stmt = select(Stylist).where(func.lower(Stylist.name) == stylist_name.lower())
                 sty_result = await session.execute(sty_stmt)
                 stylist = sty_result.scalar_one_or_none()
 
