@@ -480,3 +480,153 @@ async def test_non_string_content_skips_gate_safely():
 
     final = await _run_gate(history=[], result=result, reply_content=list_content)
     assert final == list_content, "Non-str content must pass through untouched"
+
+
+# ---------------------------------------------------------------------------
+# manage_appointments false-positive regression fix
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_manage_cancel_backed_not_blocked():
+    """Booking-flavored phrasing + current-turn manage_appointments success → NOT blocked.
+
+    Regression guard: cancel turns that use wording like "te he confirmado" or
+    "listo... la cita" were being rewritten to the booking fallback because the gate
+    only checked for a `book` ToolMessage backing. A legitimate cancel/reschedule
+    backed by a successful manage_appointments result must now pass through intact.
+    """
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+    # Bot reply uses booking-flavored phrasing after a cancel
+    reply = "¡Listo! Te he confirmado la cancelación de la cita."
+    history = [HumanMessage(content="Cancela mi cita del jueves")]
+    # Current-turn manage_appointments ToolMessage with a successful plain-string result
+    ai_call = AIMessage(
+        content="",
+        tool_calls=[{"name": "manage_appointments", "args": {"action": "cancel"}, "id": "mgmt_1"}],
+    )
+    tool_msg = ToolMessage(
+        content="Tu cita ha sido cancelada.",
+        name="manage_appointments",
+        tool_call_id="mgmt_1",
+    )
+    final_ai = AIMessage(content=reply)
+    result = [ai_call, tool_msg, final_ai]
+
+    final = await _run_gate(history=history, result=result, reply_content=reply)
+    assert (
+        final == reply
+    ), "A cancel turn backed by manage_appointments success must NOT be rewritten to the fallback"
+
+
+@pytest.mark.asyncio
+async def test_manage_error_content_is_blocked():
+    """Booking-flavored phrasing + manage_appointments error result → BLOCKED.
+
+    When the manage_appointments ToolMessage content contains an error marker, the
+    result is treated as a failure. The booking-confirmation gate must still block.
+    """
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+    from agent.middleware.response_groundedness import _CONFIRMATION_FALLBACK_MESSAGE
+
+    reply = "¡Listo! Te he confirmado la cancelación de la cita."
+    history = [HumanMessage(content="Cancela mi cita")]
+    ai_call = AIMessage(
+        content="",
+        tool_calls=[{"name": "manage_appointments", "args": {"action": "cancel"}, "id": "mgmt_2"}],
+    )
+    # Error-marker in the ToolMessage content → manage result is a failure
+    tool_msg = ToolMessage(
+        content="No he podido encontrar tu cita.",
+        name="manage_appointments",
+        tool_call_id="mgmt_2",
+    )
+    final_ai = AIMessage(content=reply)
+    result = [ai_call, tool_msg, final_ai]
+
+    final = await _run_gate(history=history, result=result, reply_content=reply)
+    assert (
+        final == _CONFIRMATION_FALLBACK_MESSAGE
+    ), "An error manage result must NOT green-light booking phrasing — gate must block"
+
+
+@pytest.mark.asyncio
+async def test_stale_manage_prior_turn_is_blocked():
+    """Booking-flavored phrasing + STALE prior-turn manage success + no book this turn → BLOCKED.
+
+    Turn-bounding must hold: a manage_appointments success from a previous turn must NOT
+    green-light a booking-confirmation phrase in the current turn.
+
+    Structure:
+      [HumanMessage, AIMessage(tool_calls=[manage]), ToolMessage(manage success),  <- prior turn
+       HumanMessage, AIMessage(booking phrase, no tool_calls)]                     <- current turn
+    """
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+    from agent.middleware.response_groundedness import _CONFIRMATION_FALLBACK_MESSAGE
+
+    reply = "¡Listo! Tu cita queda confirmada."
+    # Prior turn: manage succeeded
+    history = [
+        HumanMessage(content="Cancela mi cita"),
+        AIMessage(
+            content="",
+            tool_calls=[
+                {"name": "manage_appointments", "args": {"action": "cancel"}, "id": "old_mgmt"}
+            ],
+        ),
+        ToolMessage(
+            content="Tu cita ha sido cancelada.",
+            name="manage_appointments",
+            tool_call_id="old_mgmt",
+        ),
+        AIMessage(content="Tu cita del jueves ha sido cancelada con éxito."),
+        HumanMessage(content="Quiero reservar otra cita"),  # current-turn boundary
+    ]
+    # Current turn: no tool calls at all, just a hallucinated confirmation
+    final_ai = AIMessage(content=reply)
+    result = [final_ai]
+
+    final = await _run_gate(history=history, result=result, reply_content=reply)
+    assert (
+        final == _CONFIRMATION_FALLBACK_MESSAGE
+    ), "A stale prior-turn manage result must NOT green-light a new hallucinated confirmation"
+
+
+@pytest.mark.asyncio
+async def test_book_backed_still_passes():
+    """Regression guard: a real book-backed confirmation must still pass through after the fix."""
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+    reply = "¡Listo! Tu cita queda confirmada para el jueves."
+    history = [HumanMessage(content="Reserva para el jueves")]
+    ai_call = AIMessage(
+        content="",
+        tool_calls=[{"name": "book", "args": {}, "id": "book_1"}],
+    )
+    tool_msg = ToolMessage(content=_book_ok_json(), name="book", tool_call_id="book_1")
+    final_ai = AIMessage(content=reply)
+    result = [ai_call, tool_msg, final_ai]
+
+    final = await _run_gate(history=history, result=result, reply_content=reply)
+    assert final == reply, "Genuine book-backed confirmation must NOT be rewritten after the fix"
+
+
+@pytest.mark.asyncio
+async def test_no_backing_still_blocked():
+    """Regression guard: booking phrasing with NO tool backing at all must still be blocked."""
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    from agent.middleware.response_groundedness import _CONFIRMATION_FALLBACK_MESSAGE
+
+    reply = "Te he confirmado la cita para el viernes."
+    history = [HumanMessage(content="Confirma mi cita")]
+    final_ai = AIMessage(content=reply)
+    result = [final_ai]
+
+    final = await _run_gate(history=history, result=result, reply_content=reply)
+    assert (
+        final == _CONFIRMATION_FALLBACK_MESSAGE
+    ), "No-backing hallucinated confirmation must still be blocked after the fix"
