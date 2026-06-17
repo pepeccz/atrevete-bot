@@ -141,6 +141,13 @@ interface ConversationListProps {
   collapsed?: boolean;
   /** Toggle handler — flips collapsed state in the parent. */
   onToggleCollapsed?: () => void;
+  /**
+   * Called after the list finishes loading and the deep-link resolution
+   * attempt is complete. Receives `true` when `activeConversationId` is set
+   * but matches no conversation in the list (orphan deep-link); `false`
+   * otherwise (including while loading).
+   */
+  onActiveConversationUnavailable?: (unavailable: boolean) => void;
 }
 
 /**
@@ -155,6 +162,7 @@ export function ConversationList({
   onSelectConversation,
   collapsed = false,
   onToggleCollapsed,
+  onActiveConversationUnavailable,
 }: ConversationListProps) {
   const [conversations, setConversations] = useState<ConversationHistory[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
@@ -252,6 +260,30 @@ export function ConversationList({
       onSelectConversation(matched.id);
     }
   }, [loading, conversations, activeConversationId, onSelectConversation]);
+
+  // Orphan deep-link detection: after the list has loaded, if activeConversationId
+  // is set but matches neither conv.id (UUID) nor conv.conversation_id (Chatwoot
+  // numeric id), notify the parent so it can show a clear "unavailable" message
+  // instead of the generic empty-state. Cleared immediately when loading starts or
+  // when there is no active id (no false flash during resolution).
+  useEffect(() => {
+    if (!onActiveConversationUnavailable) return;
+    if (loading) {
+      // Still fetching — report false to prevent a premature flash
+      onActiveConversationUnavailable(false);
+      return;
+    }
+    if (!activeConversationId) {
+      onActiveConversationUnavailable(false);
+      return;
+    }
+    const matched = conversations.some(
+      (c) =>
+        c.id === activeConversationId ||
+        String(c.conversation_id) === String(activeConversationId)
+    );
+    onActiveConversationUnavailable(!matched);
+  }, [loading, activeConversationId, conversations, onActiveConversationUnavailable]);
 
   // When search is active, show search results; otherwise use the filtered list.
   const displayList: ConversationHistory[] = isSearching
