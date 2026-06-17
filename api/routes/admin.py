@@ -1355,7 +1355,7 @@ async def get_appointments_trend(
             date_key = current.date()
             data.append(
                 {
-                    "date": date_key.strftime("%d/%m"),
+                    "date": date_key.isoformat(),
                     "count": date_counts.get(date_key, 0),
                 }
             )

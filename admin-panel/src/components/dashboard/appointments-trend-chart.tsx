@@ -21,6 +21,7 @@ interface AppointmentsTrendChartProps {
 function dayLabel(isoDate: string): string {
   const labels = ["D", "L", "M", "X", "J", "V", "S"];
   const d = new Date(isoDate + "T12:00:00"); // noon to avoid TZ edge cases
+  if (Number.isNaN(d.getTime())) return ""; // guard: non-ISO input → empty tick
   return labels[d.getDay()];
 }
 
