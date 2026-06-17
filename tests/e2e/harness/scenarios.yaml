@@ -6,7 +6,7 @@
 # max_turns <= 12 per scenario.
 #
 # expect.outcome enum: booked | cancelled | rescheduled | escalated | policy_accepted |
-#                      timeout | error | rejected
+#                      timeout | error | rejected | info_provided
 
 # ---------------------------------------------------------------------------
 # Change A regression (6 scenarios) — security / policy gate / TZ / injected state
