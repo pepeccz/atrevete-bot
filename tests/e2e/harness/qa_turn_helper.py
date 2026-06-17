@@ -111,6 +111,132 @@ def detect_repeats_in_run(run: dict) -> dict:
     }
 
 
+async def _cmd_service_check(args: Any) -> None:
+    """Fetch the booked services for a phone's latest (or given) appointment and validate them.
+
+    Queries:
+        SELECT a.id, a.service_ids
+        FROM appointments a
+        JOIN customers c ON c.id = a.customer_id
+        WHERE c.phone = :phone
+          [AND a.id = :appointment_id]
+        ORDER BY a.start_time DESC
+        LIMIT 1
+
+    Then resolves each service UUID to (name, audience, service_type) via the services table
+    and calls check_service_match against the --expected-json spec.
+    """
+    import uuid
+
+    from sqlalchemy import select, text
+    from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
+
+    from tests.e2e.harness.assert_service_match import check_service_match
+
+    try:
+        expected = json.loads(args.expected_json)
+    except (json.JSONDecodeError, TypeError) as exc:
+        _json_err("invalid_expected_json", str(exc))
+        return
+
+    if not isinstance(expected, dict):
+        _json_err("invalid_expected_json", "expected-json must be a JSON object")
+        return
+
+    settings = get_settings()
+    db_url = str(settings.DATABASE_URL)
+    # SQLAlchemy async engine requires asyncpg driver
+    if db_url.startswith("postgresql://") or db_url.startswith("postgresql+psycopg://"):
+        db_url = db_url.replace("postgresql://", "postgresql+asyncpg://", 1).replace(
+            "postgresql+psycopg://", "postgresql+asyncpg://", 1
+        )
+
+    engine = create_async_engine(db_url, echo=False)
+    try:
+        async with AsyncSession(engine) as session:
+            # Resolve appointment: latest for phone, or specific by id
+            if args.appointment_id:
+                appt_row = await session.execute(
+                    text(
+                        "SELECT a.id, a.service_ids "
+                        "FROM appointments a "
+                        "JOIN customers c ON c.id = a.customer_id "
+                        "WHERE c.phone = :phone AND a.id = :appt_id "
+                        "LIMIT 1"
+                    ),
+                    {"phone": args.phone, "appt_id": args.appointment_id},
+                )
+            else:
+                appt_row = await session.execute(
+                    text(
+                        "SELECT a.id, a.service_ids "
+                        "FROM appointments a "
+                        "JOIN customers c ON c.id = a.customer_id "
+                        "WHERE c.phone = :phone "
+                        "ORDER BY a.start_time DESC "
+                        "LIMIT 1"
+                    ),
+                    {"phone": args.phone},
+                )
+            appt = appt_row.fetchone()
+
+            if appt is None:
+                _json_out(
+                    {
+                        "phone": args.phone,
+                        "appointment_id": None,
+                        "booked_services": [],
+                        "expected": expected,
+                        "result": {
+                            "match": False,
+                            "mismatches": ["no appointment found for phone"],
+                            "booked_summary": [],
+                        },
+                    }
+                )
+                return
+
+            appointment_id = str(appt[0])
+            service_ids: list = appt[1] or []
+
+            # Resolve service UUIDs to (name, audience, service_type)
+            booked_services: list[dict[str, Any]] = []
+            if service_ids:
+                # Cast UUIDs to text for the IN clause
+                id_params = {f"sid_{i}": str(sid) for i, sid in enumerate(service_ids)}
+                placeholders = ", ".join(f":sid_{i}" for i in range(len(service_ids)))
+                svc_rows = await session.execute(
+                    text(
+                        f"SELECT name, audience, metadata->>'service_type' AS service_type "
+                        f"FROM services WHERE id::text IN ({placeholders})"
+                    ),
+                    id_params,
+                )
+                for row in svc_rows.fetchall():
+                    booked_services.append(
+                        {
+                            "name": row[0],
+                            "audience": row[1],
+                            "service_type": row[2],
+                        }
+                    )
+
+            result = check_service_match(booked_services, expected)
+            _json_out(
+                {
+                    "phone": args.phone,
+                    "appointment_id": appointment_id,
+                    "booked_services": booked_services,
+                    "expected": expected,
+                    "result": result,
+                }
+            )
+    except Exception as exc:
+        _json_err("service_check_failed", str(exc))
+    finally:
+        await engine.dispose()
+
+
 def _cmd_detect_repeats(run_file: str) -> None:
     """Load a run JSON file and print the repeated-sentence report."""
     from pathlib import Path
@@ -515,6 +641,35 @@ def _build_parser() -> argparse.ArgumentParser:
         "--run-file", required=True, dest="run_file", help="Path to {scenario_id}.json run file"
     )
 
+    # service-check — deterministic service-type / audience validation
+    p_svc = sub.add_parser(
+        "service-check",
+        help=(
+            "Validate that the booked service for a phone matches the expected "
+            "service type and audience. Queries the DB for the latest appointment."
+        ),
+    )
+    p_svc.add_argument(
+        "--phone",
+        required=True,
+        help="Customer phone (E.164, must start with TEST_PHONE_PREFIX)",
+    )
+    p_svc.add_argument(
+        "--expected-json",
+        required=True,
+        dest="expected_json",
+        help=(
+            'JSON object with optional keys: name_contains, audience, service_type, '
+            'forbidden_audience. E.g. \'{"name_contains": "corte", "audience": "adult_female"}\''
+        ),
+    )
+    p_svc.add_argument(
+        "--appointment-id",
+        default=None,
+        dest="appointment_id",
+        help="Specific appointment UUID to check (default: latest for the phone)",
+    )
+
     return parser
 
 
@@ -544,6 +699,8 @@ def main() -> None:
         asyncio.run(_cmd_seed(args))
     elif args.command == "detect-repeats":
         _cmd_detect_repeats(args.run_file)
+    elif args.command == "service-check":
+        asyncio.run(_cmd_service_check(args))
 
 
 if __name__ == "__main__":

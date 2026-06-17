@@ -72,6 +72,15 @@
     tool_calls_required: [check_availability, book]
     tool_calls_forbidden: []
     tags: [change-a, pre-book-recheck]
+    # Service validation: "corte de dama" maps to a principal service whose name
+    # contains "corte" and is scoped to adult_female audience in the catalog.
+    # The forbidden_audience guard also asserts the bot did not accidentally book
+    # a male-only service (e.g. "Corte de Hombre").
+    service:
+      name_contains: corte
+      service_type: principal
+      audience: adult_female
+      forbidden_audience: adult_male
 
 - id: change-a-tz-madrid
   description: >
