@@ -222,6 +222,27 @@ export function ConversationList({
     enabled: true,
   });
 
+  // Deep-link resolution: when the URL passes a Chatwoot numeric conversation_id
+  // (e.g. from the dashboard escalation widget), it won't match any conv.id (UUID).
+  // Find the item whose conv.conversation_id matches and swap the active id to the
+  // real loadable UUID so the thread fetch and list highlight both work.
+  useEffect(() => {
+    if (loading) return;                             // wait until list is fetched
+    if (!activeConversationId) return;               // nothing to resolve
+    const alreadyMatched = conversations.some(
+      (c) => c.id === activeConversationId
+    );
+    if (alreadyMatched) return;                      // already a valid UUID — no-op
+    const matched = conversations.find(
+      (c) =>
+        String((c as unknown as ConversationHistoryInbox).conversation_id) ===
+        String(activeConversationId)
+    );
+    if (matched) {
+      onSelectConversation(matched.id);
+    }
+  }, [loading, conversations, activeConversationId, onSelectConversation]);
+
   // When search is active, show search results; otherwise use the filtered list.
   const displayList: ConversationHistory[] = isSearching
     ? (searchResults as unknown as ConversationHistory[])
