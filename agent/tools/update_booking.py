@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import UTC, datetime
 from typing import Annotated, Literal
 from zoneinfo import ZoneInfo
@@ -46,6 +47,14 @@ from agent.tools.schemas import ToolResponse
 from shared.config import get_settings
 
 _MADRID_TZ = ZoneInfo("Europe/Madrid")
+
+# Defense-in-depth: detect UUID strings that the model accidentally puts in `services`
+# instead of `pre_resolved_service_ids`. These are re-routed rather than rejected so the
+# booking flow is not broken by model echo behaviour (see booking_flow.md R-36b fix).
+_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -325,6 +334,32 @@ async def _update_booking_impl(
     # C1 fix: callers using pre_resolved_service_ids only may pass services=None.
     # Default to [] so subsequent iteration (Steps 1/2 audience/variant loops) is safe.
     services = services or []
+
+    # Defense-in-depth: re-route UUID strings that leaked into `services`.
+    # The model sometimes echoes collected.service_ids (UUIDs) back into the `services`
+    # field on policy-acceptance round-trips (booking_flow.md R-36b).  Name resolution
+    # (_resolve_service_ids_strict) does not match UUIDs → unknown_names rejection.
+    # Fix: detect UUID-format entries, strip them from `services`, and merge them into
+    # `pre_resolved_service_ids` so they go through the existing DB-existence gate.
+    _leaked_uuids = [s for s in services if _UUID_RE.match(s)]
+    if _leaked_uuids:
+        logger.warning(
+            "tool.uuid_reroute",
+            extra={
+                "tool_name": "update_booking",
+                "leaked_uuids": _leaked_uuids,
+                "conversation_id": conversation_id,
+            },
+        )
+        services = [s for s in services if not _UUID_RE.match(s)]
+        # Merge leaked UUIDs into pre_resolved_service_ids (preserve order, dedupe).
+        existing_pre = list(pre_resolved_service_ids) if pre_resolved_service_ids else []
+        existing_set = set(u.lower() for u in existing_pre)
+        for _u in _leaked_uuids:
+            if _u.lower() not in existing_set:
+                existing_pre.append(_u)
+                existing_set.add(_u.lower())
+        pre_resolved_service_ids = existing_pre if existing_pre else None
 
     async with get_async_session() as session:
         collected: dict = {}
