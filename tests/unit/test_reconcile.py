@@ -88,3 +88,96 @@ def test_all_pass() -> None:
     result = compute_l4_verdict(_NO_HALLUCINATION, service_match=_SERVICE_MATCH_OK)
     assert result["l4_pass"] is True
     assert result["findings"] == []
+
+
+# ---------------------------------------------------------------------------
+# Consent fixtures
+# ---------------------------------------------------------------------------
+
+_CONSENT_INFO_OK = {
+    "policy_accepted_at": "2026-06-17T10:00:00+00:00",
+    "policy_version": "1.0",
+    "consent_rows": 1,
+}
+_CONSENT_INFO_MISSING = {
+    "policy_accepted_at": None,
+    "policy_version": None,
+    "consent_rows": 0,
+}
+
+_CONSENT_EXPECTED_OK = {"expected": True, "consent_ok": True, "consent_info": _CONSENT_INFO_OK}
+_CONSENT_EXPECTED_FAIL = {
+    "expected": True,
+    "consent_ok": False,
+    "consent_info": _CONSENT_INFO_MISSING,
+}
+_CONSENT_NOT_EXPECTED = {
+    "expected": False,
+    "consent_ok": False,
+    "consent_info": _CONSENT_INFO_MISSING,
+}
+
+
+# ---------------------------------------------------------------------------
+# (a) consent expected + consent_ok True → does not fail l4_pass
+# ---------------------------------------------------------------------------
+def test_consent_expected_and_ok_passes() -> None:
+    result = compute_l4_verdict(_NO_HALLUCINATION, service_match=None, consent=_CONSENT_EXPECTED_OK)
+    assert result["l4_pass"] is True
+    assert result["findings"] == []
+
+
+# ---------------------------------------------------------------------------
+# (b) consent expected + consent_ok False → l4_pass False with consent finding
+# ---------------------------------------------------------------------------
+def test_consent_expected_but_missing_fails() -> None:
+    result = compute_l4_verdict(
+        _NO_HALLUCINATION, service_match=None, consent=_CONSENT_EXPECTED_FAIL
+    )
+    assert result["l4_pass"] is False
+    assert len(result["findings"]) == 1
+    assert "consent not persisted" in result["findings"][0]
+    assert "policy_accepted_at=None" in result["findings"][0]
+    assert "expected a stored consent" in result["findings"][0]
+
+
+# ---------------------------------------------------------------------------
+# (c) consent=None (not asserted) → backward compatible, does not affect verdict
+# ---------------------------------------------------------------------------
+def test_consent_none_is_ignored() -> None:
+    result = compute_l4_verdict(_NO_HALLUCINATION, service_match=None, consent=None)
+    assert result["l4_pass"] is True
+    assert result["findings"] == []
+
+
+# ---------------------------------------------------------------------------
+# (d) consent expected=False → ignored even when consent_ok is False
+# ---------------------------------------------------------------------------
+def test_consent_not_expected_is_ignored() -> None:
+    result = compute_l4_verdict(
+        _NO_HALLUCINATION, service_match=None, consent=_CONSENT_NOT_EXPECTED
+    )
+    assert result["l4_pass"] is True
+    assert result["findings"] == []
+
+
+# ---------------------------------------------------------------------------
+# (e) combined: no hallucination + service match ok + consent expected + ok → passes
+# ---------------------------------------------------------------------------
+def test_all_pass_with_consent() -> None:
+    result = compute_l4_verdict(
+        _NO_HALLUCINATION,
+        service_match=_SERVICE_MATCH_OK,
+        consent=_CONSENT_EXPECTED_OK,
+    )
+    assert result["l4_pass"] is True
+    assert result["findings"] == []
+
+
+# ---------------------------------------------------------------------------
+# (f) backward compat: positional call (hallucination, service_match) still works
+# ---------------------------------------------------------------------------
+def test_backward_compat_two_args() -> None:
+    result = compute_l4_verdict(_NO_HALLUCINATION, _SERVICE_MATCH_OK)
+    assert result["l4_pass"] is True
+    assert result["findings"] == []
