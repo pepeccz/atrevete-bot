@@ -26,12 +26,13 @@ def _make_settings(
     s.LLM_PROVIDER_ORDER = provider_order
     s.LLM_MAX_RETRIES = max_retries
     s.LLM_REQUEST_TIMEOUT = request_timeout
+    s.LLM_FALLBACK_MODELS = ""
     return s
 
 
 @patch("agent.llm._traced_client_singleton", return_value=None)
 @patch("agent.llm.get_settings")
-@patch("agent.llm.ChatOpenAI")
+@patch("agent.llm.ResilientChatOpenAI")
 def test_build_llm_includes_provider_routing_hint(mock_chat_openai, mock_settings, _traced):
     """_build_llm passes extra_body with provider order when LLM_PROVIDER_ORDER is set."""
     mock_settings.return_value = _make_settings("openai")
@@ -50,7 +51,26 @@ def test_build_llm_includes_provider_routing_hint(mock_chat_openai, mock_setting
 
 @patch("agent.llm._traced_client_singleton", return_value=None)
 @patch("agent.llm.get_settings")
-@patch("agent.llm.ChatOpenAI")
+@patch("agent.llm.ResilientChatOpenAI")
+def test_build_llm_disables_streaming_for_tool_calling(mock_chat_openai, mock_settings, _traced):
+    """_build_llm must pin tool-calling turns to the non-streaming _agenerate path
+    so the ResilientChatOpenAI retry guarantee cannot be bypassed by streaming."""
+    mock_settings.return_value = _make_settings("openai")
+
+    from agent.llm import _build_llm
+
+    _build_llm("openai/gpt-4.1-mini")
+
+    call_kwargs = mock_chat_openai.call_args.kwargs
+    assert call_kwargs.get("disable_streaming") == "tool_calling", (
+        "_build_llm must set disable_streaming='tool_calling' so every tool-calling "
+        "turn routes through _agenerate where the retry wrapper lives"
+    )
+
+
+@patch("agent.llm._traced_client_singleton", return_value=None)
+@patch("agent.llm.get_settings")
+@patch("agent.llm.ResilientChatOpenAI")
 def test_build_llm_omits_extra_body_when_provider_order_empty(
     mock_chat_openai, mock_settings, _traced
 ):
@@ -70,7 +90,7 @@ def test_build_llm_omits_extra_body_when_provider_order_empty(
 
 @patch("agent.llm._traced_client_singleton", return_value=None)
 @patch("agent.llm.get_settings")
-@patch("agent.llm.ChatOpenAI")
+@patch("agent.llm.ResilientChatOpenAI")
 def test_build_llm_multi_provider_order(mock_chat_openai, mock_settings, _traced):
     """_build_llm correctly splits a comma-separated LLM_PROVIDER_ORDER."""
     mock_settings.return_value = _make_settings("openai, anthropic")
@@ -90,7 +110,7 @@ def test_build_llm_multi_provider_order(mock_chat_openai, mock_settings, _traced
 
 @patch("agent.llm._traced_client_singleton", return_value=None)
 @patch("agent.llm.get_settings")
-@patch("agent.llm.ChatOpenAI")
+@patch("agent.llm.ResilientChatOpenAI")
 def test_build_llm_passes_max_retries_and_timeout_defaults(
     mock_chat_openai, mock_settings, _traced
 ):
@@ -118,7 +138,7 @@ def test_build_llm_passes_max_retries_and_timeout_defaults(
 
 @patch("agent.llm._traced_client_singleton", return_value=None)
 @patch("agent.llm.get_settings")
-@patch("agent.llm.ChatOpenAI")
+@patch("agent.llm.ResilientChatOpenAI")
 def test_build_llm_respects_settings_override_for_retry_and_timeout(
     mock_chat_openai, mock_settings, _traced
 ):

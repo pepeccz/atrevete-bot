@@ -255,6 +255,35 @@ class Settings(BaseSettings):
             "On timeout the SDK counts it as a transient failure and retries per LLM_MAX_RETRIES."
         ),
     )
+    LLM_FALLBACK_MODELS: str = Field(
+        default="",
+        description=(
+            "Comma-separated OpenRouter model slugs used as OpenRouter-level fallbacks "
+            "when the primary model fails (e.g. 'anthropic/claude-3-haiku,mistralai/mistral-7b-instruct'). "
+            "Empty string disables OpenRouter models-fallback routing. "
+            "NOTE: these are OpenRouter-level fallbacks (different models/providers). "
+            "Account-level credit exhaustion is NOT recoverable this way — all models share the same account."
+        ),
+    )
+    LLM_TRANSIENT_RETRY_ATTEMPTS: int = Field(
+        default=2,
+        ge=0,
+        description=(
+            "Extra in-process retry attempts on TRANSIENT LLM errors (rate limits, 5xx, timeouts, "
+            "provider overload) on top of the openai SDK HTTP-status retries. "
+            "These retries catch 200-OK responses with error bodies that the SDK does not retry. "
+            "Set to 0 to disable in-process retries."
+        ),
+    )
+    LLM_TRANSIENT_RETRY_BASE_DELAY: float = Field(
+        default=0.8,
+        gt=0,
+        description=(
+            "Base seconds for exponential backoff between in-process TRANSIENT retries. "
+            "Actual delay: base * (2 ** attempt) + 0.1 * attempt. "
+            "Only used when LLM_TRANSIENT_RETRY_ATTEMPTS > 0."
+        ),
+    )
 
     # State Delivery — synthetic message primitive (E1 seed)
     STATE_DELIVERY_SYNTHETIC_ENABLED: bool = Field(
