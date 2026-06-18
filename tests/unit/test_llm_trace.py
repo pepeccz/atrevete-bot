@@ -383,7 +383,7 @@ def test_flag_off_build_llm_no_http_client():
         with patch("agent.tracing.httpx_hooks.settings") as mock_trace_settings:
             mock_trace_settings.LLM_TRACE_ENABLED = False
 
-            with patch("agent.llm.ChatOpenAI") as MockChatOpenAI:
+            with patch("agent.llm.ResilientChatOpenAI") as MockChatOpenAI:
                 MockChatOpenAI.return_value = MagicMock()
                 from agent.llm import _build_llm
 
@@ -411,7 +411,7 @@ def test_flag_on_build_llm_injects_traced_client():
 
         # Patch _traced_client_singleton where it is imported in agent.llm
         with patch("agent.llm._traced_client_singleton", return_value=fake_client):
-            with patch("agent.llm.ChatOpenAI") as MockChatOpenAI:
+            with patch("agent.llm.ResilientChatOpenAI") as MockChatOpenAI:
                 MockChatOpenAI.return_value = MagicMock()
 
                 from agent.llm import _build_llm
@@ -439,7 +439,7 @@ def test_flag_on_summarizer_llm_injects_traced_client():
         mock_get_settings.return_value = mock_s
 
         with patch("agent.llm._traced_client_singleton", return_value=fake_client):
-            with patch("agent.llm.ChatOpenAI") as MockChatOpenAI:
+            with patch("agent.llm.ResilientChatOpenAI") as MockChatOpenAI:
                 MockChatOpenAI.return_value = MagicMock()
 
                 from agent.llm import get_summarizer_llm
