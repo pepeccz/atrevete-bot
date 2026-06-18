@@ -114,8 +114,9 @@ def detect_repeats_in_run(run: dict) -> dict:
 def compute_l4_verdict(
     hallucination_result: dict[str, Any],
     service_match: dict[str, Any] | None,
+    consent: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Compute the combined L4 verdict from hallucination and service-match results.
+    """Compute the combined L4 verdict from hallucination, service-match, and consent results.
 
     Pure function — no I/O, no DB. Factored out so unit tests can cover verdict
     logic without needing a DB or async context.
@@ -125,6 +126,9 @@ def compute_l4_verdict(
             Required keys: "hallucinated_confirmation" (bool), "matched_phrase" (str|None).
         service_match: Output of check_service_match(), or None when not asserted.
             When None, service match is treated as passing (not asserted).
+        consent: Optional consent assertion dict. When None, consent is not asserted.
+            Shape: {"expected": bool, "consent_ok": bool, "consent_info": {...}}.
+            l4_pass fails only when expected=True and consent_ok=False.
 
     Returns:
         {
@@ -144,6 +148,14 @@ def compute_l4_verdict(
     if service_match is not None and not service_match.get("match"):
         for mismatch in service_match.get("mismatches") or []:
             findings.append(f"service mismatch: {mismatch}")
+
+    if consent is not None and consent.get("expected") and not consent.get("consent_ok"):
+        info = consent.get("consent_info") or {}
+        findings.append(
+            f"consent not persisted: policy_accepted_at={info.get('policy_accepted_at')!r}, "
+            f"customer_consents rows={info.get('consent_rows', 0)} "
+            f"(expected a stored consent)"
+        )
 
     return {
         "l4_pass": len(findings) == 0,
@@ -330,6 +342,11 @@ async def _cmd_reconcile(args: Any) -> None:
     appointment_status: str | None = None
     booked_services: list[dict[str, Any]] = []
     appointment_exists: bool = False
+    consent_info: dict[str, Any] = {
+        "policy_accepted_at": None,
+        "policy_version": None,
+        "consent_rows": 0,
+    }
 
     engine = create_async_engine(db_url, echo=False)
     try:
@@ -371,6 +388,35 @@ async def _cmd_reconcile(args: Any) -> None:
                                 "service_type": row[2],
                             }
                         )
+
+            # Consent check: query the DB as source of truth regardless of appointment.
+            # Uses customers.policy_accepted_at + COUNT(customer_consents rows).
+            # When the phone has no customer row, defaults to null/0 (no error).
+            #
+            # SELECT c.policy_accepted_at, c.policy_version,
+            #        COUNT(cc.id) AS consent_rows
+            # FROM customers c
+            # LEFT JOIN customer_consents cc ON cc.customer_id = c.id
+            # WHERE c.phone = :phone
+            # GROUP BY c.policy_accepted_at, c.policy_version
+            consent_row = await session.execute(
+                text(
+                    "SELECT c.policy_accepted_at, c.policy_version, "
+                    "COUNT(cc.id) AS consent_rows "
+                    "FROM customers c "
+                    "LEFT JOIN customer_consents cc ON cc.customer_id = c.id "
+                    "WHERE c.phone = :phone "
+                    "GROUP BY c.policy_accepted_at, c.policy_version"
+                ),
+                {"phone": args.phone},
+            )
+            crow = consent_row.fetchone()
+            if crow is not None:
+                consent_info = {
+                    "policy_accepted_at": crow[0].isoformat() if crow[0] is not None else None,
+                    "policy_version": crow[1],
+                    "consent_rows": int(crow[2]),
+                }
     except Exception as exc:
         _json_err("db_query_failed", str(exc))
         return
@@ -392,8 +438,20 @@ async def _cmd_reconcile(args: Any) -> None:
     if expected_spec is not None and appointment_exists:
         service_match = check_service_match(booked_services, expected_spec)
 
+    # --- Consent assertion (only when --expect-consent is set) ---
+    consent_ok: bool = (
+        consent_info["policy_accepted_at"] is not None and consent_info["consent_rows"] >= 1
+    )
+    consent_arg: dict[str, Any] | None = None
+    if args.expect_consent:
+        consent_arg = {
+            "expected": True,
+            "consent_ok": consent_ok,
+            "consent_info": consent_info,
+        }
+
     # --- Combined L4 verdict ---
-    verdict = compute_l4_verdict(hallucination_result, service_match)
+    verdict = compute_l4_verdict(hallucination_result, service_match, consent=consent_arg)
 
     _json_out(
         {
@@ -406,6 +464,8 @@ async def _cmd_reconcile(args: Any) -> None:
             "hallucinated_confirmation": hallucination_result["hallucinated_confirmation"],
             "matched_phrase": hallucination_result.get("matched_phrase"),
             "service_match": service_match,
+            "consent_info": consent_info,
+            "consent_ok": consent_ok,
             "l4_pass": verdict["l4_pass"],
             "findings": verdict["findings"],
         }
@@ -873,6 +933,17 @@ def _build_parser() -> argparse.ArgumentParser:
             "Optional JSON object for check_service_match expected spec. "
             "Keys: name_contains, audience, service_type, forbidden_audience. "
             "When omitted, service match is not asserted."
+        ),
+    )
+    p_rec.add_argument(
+        "--expect-consent",
+        action="store_true",
+        default=False,
+        dest="expect_consent",
+        help=(
+            "When set, the reconcile check asserts that policy consent was persisted in "
+            "the DB (policy_accepted_at IS NOT NULL and at least one customer_consents row). "
+            "Uses the DB as source of truth, not the LangGraph checkpoint."
         ),
     )
 
