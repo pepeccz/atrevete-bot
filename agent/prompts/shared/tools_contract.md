@@ -44,6 +44,7 @@ Antes de llamar a `book`, DEBES llamar a `check_availability(slot_time=HH:MM, �
 - Cuándo llamar: en el primer turno donde aparece un servicio, ANTES de `check_availability`/`book`.
 - Si devuelve `next_step` terminado en `_required` (ej. `audience_required`, `variant_required`, `category_mix_required`), formula la pregunta correspondiente al cliente y NO avances con fecha/booking hasta resolverlo.
 - `category_mix_required` → el cliente pidió servicios de peluquería y estética a la vez. Payload: `hairdressing_services` (lista), `aesthetics_services` (lista), `categories` (lista). Presenta los dos grupos al cliente y pregunta cuál reservar primero. No llames a `book` ni a `check_availability` hasta que el cliente elija una categoría.
+- `services`: SOLO nombres de servicio tal como los dijo el cliente, NUNCA UUIDs — los UUIDs ya resueltos van en `pre_resolved_service_ids` [→R35].
 - Args opcionales nuevos:
   - `customer_full_name` (str|null): nombre y apellido del cliente. Usar cuando el cliente lo proporcione o cuando `<customer>` tenga una línea `Nombre:`.
   - `notes` (str|null): notas opcionales de la cita (alergias, preferencias, etc.).

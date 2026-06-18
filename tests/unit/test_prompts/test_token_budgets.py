@@ -6,6 +6,7 @@ Budgets (cl100k_base):
   - examples.md        ≤  400
   - tools_contract.md  ≤  400
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -55,10 +56,12 @@ BUDGETS: dict[str, int] = {
     #   fits within the existing 3050 budget.
     # critical_rules.md: +200 for R-42 (tool-backed confirmation rule — blocks
     #   hallucinated booking confirmations; see PR #77). Actual 3708.
+    # tools_contract.md: +50 for `services` field note (UUIDs-in-services defence; see
+    #   uuid-reroute fix). Actual 2070 → bumped to 2100.
     "critical_rules.md": 3800,
     "booking_flow.md": 3050,
     "examples.md": 2600,
-    "tools_contract.md": 2050,
+    "tools_contract.md": 2100,
 }
 
 
@@ -74,6 +77,4 @@ def test_token_budget(filename: str, budget: int) -> None:
     path = _SHARED / filename
     assert path.exists(), f"{filename} not found at {path}"
     count = _count(filename)
-    assert count <= budget, (
-        f"{filename} exceeds budget: {count} tokens > {budget} allowed"
-    )
+    assert count <= budget, f"{filename} exceeds budget: {count} tokens > {budget} allowed"

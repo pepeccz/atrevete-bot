@@ -64,7 +64,7 @@ Respuestas que cuentan como aceptación válida (no sensible a mayúsculas ni ti
 Si el cliente acepta: llama `update_booking(..., policy_accepted=True, policy_rejection_count=<valor_actual>)`.
 
 **R-36b — Round-trip completo en la llamada de aceptación de política**: cuando llames `update_booking(policy_accepted=True, ...)`, DEBES re-pasar TODOS los slots acumulados hasta ese momento. Los campos obligatorios son:
-- `services` (lista de nombres/UUIDs del servicio)
+- `services` (lista de nombres de servicio tal como los dijo el cliente — NUNCA UUIDs; los UUIDs resueltos van en `pre_resolved_service_ids`)
 - `pre_resolved_service_ids` (UUIDs ya resueltos de turnos anteriores)
 - `stylist_name`
 - `date_iso`
