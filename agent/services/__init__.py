@@ -19,7 +19,6 @@ from agent.services.availability_service import (
 )
 from agent.services.escalation_service import (
     create_escalation_notification,
-    disable_bot_in_chatwoot,
     trigger_escalation,
 )
 from agent.services.gcal_push_service import (
@@ -48,6 +47,5 @@ __all__ = [
     "update_gcal_event_status",
     # Escalation service
     "create_escalation_notification",
-    "disable_bot_in_chatwoot",
     "trigger_escalation",
 ]

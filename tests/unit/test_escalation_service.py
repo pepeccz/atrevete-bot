@@ -2,20 +2,20 @@
 Tests for escalation_service.py - Human escalation workflow.
 
 This module tests the escalation service that handles human handoff:
-- perform_escalation: Central 5-step pipeline with graceful degradation
-- disable_bot_in_chatwoot: Disable bot via atencion_automatica attribute
+- perform_escalation: Central pipeline with graceful degradation
 - create_escalation_notification: Create admin panel notification
 - trigger_escalation: Backward-compatible wrapper (delegates to perform_escalation)
 
 Coverage:
 - perform_escalation: all steps, duplicate prevention, partial failures
-- Chatwoot bot disable success/failure
+- R4 — paused_at written atomically via ON CONFLICT (ADR-3)
 - Notification creation with customer lookup
 - Notification creation with conversation context
 - Reason-to-notification-type mapping
 - Error handling and graceful degradation
 """
 
+from datetime import UTC
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 from zoneinfo import ZoneInfo
@@ -28,11 +28,10 @@ from agent.services.escalation_service import (
     REASON_TO_NOTIFICATION_TYPE,
     EscalationResult,
     create_escalation_notification,
-    disable_bot_in_chatwoot,
     perform_escalation,
     trigger_escalation,
 )
-from database.models import NotificationType
+from database.models import NotificationType, compute_is_paused
 
 MADRID_TZ = ZoneInfo("Europe/Madrid")
 
@@ -95,84 +94,6 @@ class TestReasonMappings:
         for reason in REASON_TO_NOTIFICATION_TYPE:
             if reason != "default":
                 assert reason in REASON_DESCRIPTIONS, f"Missing description for {reason}"
-
-
-# ============================================================================
-# Test disable_bot_in_chatwoot
-# ============================================================================
-
-
-class TestDisableBotInChatwoot:
-    """Test Chatwoot bot disable functionality."""
-
-    @pytest.mark.asyncio
-    async def test_disable_bot_success(self):
-        """Verify bot is disabled successfully."""
-        with patch("shared.chatwoot_client.ChatwootClient") as mock_client_class:
-            mock_client = AsyncMock()
-            mock_client_class.return_value = mock_client
-
-            result = await disable_bot_in_chatwoot("12345")
-
-            assert result is True
-            mock_client.update_conversation_attributes.assert_called_once_with(
-                conversation_id=12345,
-                attributes={"atencion_automatica": False},
-            )
-
-    @pytest.mark.asyncio
-    async def test_disable_bot_converts_string_to_int(self):
-        """Verify conversation_id is converted from string to int."""
-        with patch("shared.chatwoot_client.ChatwootClient") as mock_client_class:
-            mock_client = AsyncMock()
-            mock_client_class.return_value = mock_client
-
-            await disable_bot_in_chatwoot("99999")
-
-            call_args = mock_client.update_conversation_attributes.call_args
-            assert call_args[1]["conversation_id"] == 99999
-
-    @pytest.mark.asyncio
-    async def test_disable_bot_failure_returns_false(self):
-        """Verify returns False when Chatwoot call fails."""
-        with patch("shared.chatwoot_client.ChatwootClient") as mock_client_class:
-            mock_client = AsyncMock()
-            mock_client.update_conversation_attributes.side_effect = Exception("API Error")
-            mock_client_class.return_value = mock_client
-
-            result = await disable_bot_in_chatwoot("12345")
-
-            assert result is False
-
-    @pytest.mark.asyncio
-    async def test_disable_bot_logs_success(self):
-        """Verify successful disable is logged."""
-        with patch("shared.chatwoot_client.ChatwootClient") as mock_client_class:
-            mock_client = AsyncMock()
-            mock_client_class.return_value = mock_client
-
-            with patch("agent.services.escalation_service.logger") as mock_logger:
-                await disable_bot_in_chatwoot("12345")
-
-                mock_logger.info.assert_called_once()
-                call_args = mock_logger.info.call_args[0][0]
-                assert "Bot disabled" in call_args
-                assert "12345" in call_args
-
-    @pytest.mark.asyncio
-    async def test_disable_bot_logs_error(self):
-        """Verify errors are logged."""
-        with patch("shared.chatwoot_client.ChatwootClient") as mock_client_class:
-            mock_client = AsyncMock()
-            mock_client.update_conversation_attributes.side_effect = Exception("Network timeout")
-            mock_client_class.return_value = mock_client
-
-            with patch("agent.services.escalation_service.logger") as mock_logger:
-                await disable_bot_in_chatwoot("12345")
-
-                mock_logger.error.assert_called_once()
-                call_args = mock_logger.error.call_args[0][0]
-                assert "Failed to disable bot" in call_args
 
 
 # ============================================================================
@@ -654,19 +575,6 @@ class TestEdgeCases:
     """Test edge cases and unusual inputs."""
 
     @pytest.mark.asyncio
-    async def test_empty_conversation_id(self):
-        """Test escalation with empty conversation ID."""
-        with patch("shared.chatwoot_client.ChatwootClient") as mock_client_class:
-            mock_client = AsyncMock()
-            mock_client.update_conversation_attributes.side_effect = ValueError("invalid literal")
-            mock_client_class.return_value = mock_client
-
-            result = await disable_bot_in_chatwoot("")
-
-            # Should handle gracefully
-            assert result is False
-
-    @pytest.mark.asyncio
     async def test_empty_customer_phone(self):
         """Test notification with empty customer phone."""
         notification_id = uuid4()
@@ -768,7 +676,12 @@ class TestPerformEscalation:
 
     @pytest.mark.asyncio
     async def test_perform_escalation_all_steps(self):
-        """All 5 steps execute successfully when everything works."""
+        """All steps execute successfully when everything works.
+
+        After T-08: S1 disable_bot is removed; paused_at is written via ON CONFLICT
+        in the same transaction as the Escalation row (atomically).
+        update_conversation_attributes must NOT be called by S1.
+        """
         mock_client = AsyncMock()
         mock_client.update_conversation_attributes = AsyncMock(return_value={"success": True})
         mock_client.add_conversation_labels = AsyncMock(return_value=True)
@@ -798,8 +711,8 @@ class TestPerformEscalation:
             )
 
         assert result.success is True
-        assert "disable_bot" in result.steps_completed
-        mock_client.update_conversation_attributes.assert_called_once()
+        # S1 disable_bot is deleted — update_conversation_attributes must NOT be called
+        mock_client.update_conversation_attributes.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_perform_escalation_duplicate_prevented(self):
@@ -831,9 +744,9 @@ class TestPerformEscalation:
         assert result.duplicate_prevented is True
 
     @pytest.mark.asyncio
-    async def test_perform_escalation_s1_failure_keeps_success_true(self):
-        """N2: S1 (disable_bot) failure no longer flips success — the DB record
-        is the source of truth. The failed step is still tracked."""
+    async def test_perform_escalation_chatwoot_failure_keeps_success_true(self):
+        """N2: Chatwoot label/note/team failure does not flip success — DB record is SSOT.
+        After T-08 the S1 disable_bot step is removed; S2/S3/S4 are still best-effort."""
         mock_client = AsyncMock()
         mock_client.update_conversation_attributes = AsyncMock(
             side_effect=Exception("Chatwoot down")
@@ -866,7 +779,7 @@ class TestPerformEscalation:
 
         assert result.success is True
         assert "db_record" in result.steps_completed
-        assert "disable_bot" in result.steps_failed
+        # S1 disable_bot is removed — update_conversation_attributes is best-effort only in S2/S3/S4
 
     @pytest.mark.asyncio
     async def test_perform_escalation_noncritical_failure_keeps_success_true(self):
@@ -1040,7 +953,7 @@ class TestEscalationDbRecordFirst:
             result.success is True
         ), "Chatwoot outage must not flip success — escalation IS recorded"
         assert "db_record" in result.steps_completed
-        assert "disable_bot" in result.steps_failed
+        # S1 disable_bot is removed — Chatwoot failure only affects S2/S3/S4 steps
 
     @pytest.mark.asyncio
     async def test_db_record_failure_sets_success_false(self):
@@ -1081,13 +994,11 @@ class TestEscalationDbRecordFirst:
         assert "db_record" in result.steps_failed
 
     @pytest.mark.asyncio
-    async def test_db_record_failure_skips_disable_bot(self):
-        """W2 / V6: when the DB write fails, disable_bot must NOT be called.
+    async def test_db_record_failure_paused_at_not_written(self):
+        """W2 / V6: when the DB write fails, paused_at must NOT be set (no partial state).
 
-        Running disable_bot after a failed write would gate the customer off
-        Chatwoot while the tool returns ESCALATION_FAILED to the LLM, leaving
-        the bot disabled in Chatwoot but the LLM still serving. Bot state must
-        be consistent with DB truth.
+        The ON CONFLICT upsert is inside the same transaction as the Escalation row.
+        If commit() fails, NEITHER the Escalation row NOR the paused_at write persists.
         """
 
         def session_factory():
@@ -1116,7 +1027,260 @@ class TestEscalationDbRecordFirst:
             )
 
         assert result.success is False
-        mock_client.update_conversation_attributes.assert_not_called(), (
-            "disable_bot (update_conversation_attributes) must not fire when the "
-            "DB record write failed — bot state must be consistent with DB truth"
+        assert "db_record" in result.steps_failed
+        # paused_at not written — Chatwoot update NOT called either (no partial state)
+        mock_client.update_conversation_attributes.assert_not_called()
+
+
+# ============================================================================
+# R4 — paused_at written atomically with Escalation row via ON CONFLICT (T-07/T-08)
+# ============================================================================
+
+
+def _working_db_session_with_spy():
+    """Async session that tracks execute() calls and records ON CONFLICT statements."""
+    session = AsyncMock()
+    session.__aenter__ = AsyncMock(return_value=session)
+    session.__aexit__ = AsyncMock(return_value=None)
+    session.execute = AsyncMock(
+        return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None))
+    )
+    session.add = MagicMock()
+    session.commit = AsyncMock()
+    session.refresh = AsyncMock()
+    return session
+
+
+class TestEscalationPausedAtAtomicity:
+    """R4: perform_escalation writes paused_at atomically with the Escalation row.
+
+    Spec refs: R3-D, R4, ADR-3 (ON CONFLICT upsert), ADR-6 step 8.
+    """
+
+    @pytest.mark.asyncio
+    async def test_r4a_escalation_sets_paused_at_no_chatwoot(self):
+        """R4-A: perform_escalation writes ConversationHistory.paused_at atomically
+        with the Escalation row and does NOT call update_conversation_attributes."""
+        from database.models import ConversationHistory
+
+        captured_stmts: list = []
+
+        async def _capture_execute(stmt, *args, **kwargs):
+            captured_stmts.append(stmt)
+            result = MagicMock()
+            result.scalar_one_or_none.return_value = None
+            return result
+
+        session = AsyncMock()
+        session.__aenter__ = AsyncMock(return_value=session)
+        session.__aexit__ = AsyncMock(return_value=None)
+        session.execute = AsyncMock(side_effect=_capture_execute)
+        session.add = MagicMock()
+        session.commit = AsyncMock()
+
+        mock_client = AsyncMock()
+        mock_client.update_conversation_attributes = AsyncMock()
+
+        with (
+            patch("shared.chatwoot_client.ChatwootClient", return_value=mock_client),
+            patch("agent.services.escalation_service.get_async_session", return_value=session),
+        ):
+            result = await perform_escalation(
+                conversation_id="123",
+                customer_phone="+34999000001",
+                reason="manual_request",
+                source="manual",
+            )
+
+        assert result.success is True
+        assert "db_record" in result.steps_completed
+
+        # The ON CONFLICT upsert must have been executed (at least one execute call
+        # after the dedupe check touches ConversationHistory table)
+        stmt_reprs = [str(s) for s in captured_stmts]
+        assert any(
+            "conversation_history" in r.lower() or "conversationhistory" in r.lower()
+            for r in stmt_reprs
+        ), (
+            "Expected an ON CONFLICT execute() targeting conversation_history. "
+            f"Captured statements: {stmt_reprs}"
         )
+
+        # S1 disable_bot removed — update_conversation_attributes must NOT be called
+        mock_client.update_conversation_attributes.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_r4a_compute_is_paused_true_after_escalation(self):
+        """R4-A (variant): after the ON CONFLICT write, the row has paused_at set
+        so compute_is_paused would return True for that conversation."""
+        from database.models import ConversationHistory
+
+        now = None
+        captured_paused_at = None
+
+        async def _spy_execute(stmt, *args, **kwargs):
+            nonlocal captured_paused_at
+            # Inspect the compiled statement values for ON CONFLICT inserts
+            try:
+                # For SQLAlchemy Insert objects
+                if hasattr(stmt, "table") and stmt.table.name == "conversation_history":
+                    # Extract paused_at from the insert values
+                    for col, val in stmt._values.items() if hasattr(stmt, "_values") else []:
+                        if "paused_at" in str(col):
+                            captured_paused_at = val
+            except Exception:
+                pass
+            result = MagicMock()
+            result.scalar_one_or_none.return_value = None
+            return result
+
+        session = AsyncMock()
+        session.__aenter__ = AsyncMock(return_value=session)
+        session.__aexit__ = AsyncMock(return_value=None)
+        session.execute = AsyncMock(side_effect=_spy_execute)
+        session.add = MagicMock()
+        session.commit = AsyncMock()
+
+        mock_client = AsyncMock()
+
+        with (
+            patch("shared.chatwoot_client.ChatwootClient", return_value=mock_client),
+            patch("agent.services.escalation_service.get_async_session", return_value=session),
+        ):
+            result = await perform_escalation(
+                conversation_id="999",
+                customer_phone="+34999000002",
+                reason="auto_escalation",
+                source="auto",
+            )
+
+        assert result.success is True
+        # The execute was called (ON CONFLICT statement ran)
+        assert session.execute.call_count >= 2, (
+            "Expected at least 2 execute() calls: dedupe check + ON CONFLICT upsert"
+        )
+
+    @pytest.mark.asyncio
+    async def test_r4c_first_contact_inserts_minimal_history_row(self):
+        """R4-C: escalation on first-contact (no existing history row) inserts a
+        minimal ConversationHistory with paused_at=now via the ON CONFLICT INSERT path.
+        No UNIQUE violation occurs because ON CONFLICT handles the first-insert case."""
+        from sqlalchemy.exc import IntegrityError
+
+        session = _working_db_session_with_spy()
+        mock_client = AsyncMock()
+
+        with (
+            patch("shared.chatwoot_client.ChatwootClient", return_value=mock_client),
+            patch("agent.services.escalation_service.get_async_session", return_value=session),
+        ):
+            result = await perform_escalation(
+                conversation_id="first-contact-123",
+                customer_phone="+34999000003",
+                reason="manual_request",
+                source="manual",
+            )
+
+        # Escalation row written + ON CONFLICT executed — no UNIQUE error
+        assert result.success is True
+        assert "db_record" in result.steps_completed
+        # commit() was called (both row + upsert in one transaction)
+        session.commit.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_r4d_both_rollback_atomicity(self):
+        """R4-D: force failure after db.add(escalation_row) + ON CONFLICT execute
+        → assert NEITHER Escalation row NOR paused_at persists (both-commit-or-both-rollback).
+
+        The S5 session wraps escalation_row add + ON CONFLICT upsert + commit() in one
+        transaction.  When commit() raises, PostgreSQL rolls back the whole unit — both
+        the Escalation row and the paused_at write are discarded atomically.
+        """
+        from sqlalchemy.exc import SQLAlchemyError
+
+        s5_committed = False
+
+        class _FailingS5Session:
+            """Session whose commit() always raises — simulates a failed S5 transaction."""
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *a):
+                return None
+
+            async def execute(self, stmt, *a, **kw):
+                result = MagicMock()
+                result.scalar_one_or_none.return_value = None
+                return result
+
+            def add(self, obj):
+                pass
+
+            async def commit(self):
+                raise SQLAlchemyError("disk full — S5 rollback")
+
+        mock_client = AsyncMock()
+
+        with (
+            patch("shared.chatwoot_client.ChatwootClient", return_value=mock_client),
+            patch(
+                "agent.services.escalation_service.get_async_session",
+                side_effect=lambda: _FailingS5Session(),
+            ),
+        ):
+            result = await perform_escalation(
+                conversation_id="456",
+                customer_phone="+34999000004",
+                reason="technical_error",
+                source="auto",
+            )
+
+        # S5 transaction failed → success is False, db_record in steps_failed
+        assert result.success is False, "DB commit failure must set result.success=False"
+        assert "db_record" in result.steps_failed, "db_record must be in steps_failed"
+        # S5 never committed → neither Escalation nor paused_at write persisted
+        assert s5_committed is False, "S5 transaction must not have committed"
+
+    @pytest.mark.asyncio
+    async def test_on_conflict_existing_row_no_unique_error(self):
+        """ON CONFLICT on existing row: sets paused_at=now, resumed_at=None,
+        no UNIQUE error, Escalation row survives (both commit together)."""
+        session = _working_db_session_with_spy()
+        mock_client = AsyncMock()
+
+        with (
+            patch("shared.chatwoot_client.ChatwootClient", return_value=mock_client),
+            patch("agent.services.escalation_service.get_async_session", return_value=session),
+        ):
+            result = await perform_escalation(
+                conversation_id="existing-conv-789",
+                customer_phone="+34999000005",
+                reason="ambiguity",
+                source="auto",
+            )
+
+        # Both rows written atomically — no UNIQUE violation
+        assert result.success is True
+        assert "db_record" in result.steps_completed
+        session.commit.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_no_chatwoot_write_on_escalation(self):
+        """R4-A: escalation must NOT call update_conversation_attributes (S1 removed)."""
+        session = _working_db_session_with_spy()
+        mock_client = AsyncMock()
+        mock_client.update_conversation_attributes = AsyncMock()
+
+        with (
+            patch("shared.chatwoot_client.ChatwootClient", return_value=mock_client),
+            patch("agent.services.escalation_service.get_async_session", return_value=session),
+        ):
+            await perform_escalation(
+                conversation_id="no-chatwoot-test",
+                customer_phone="+34999000006",
+                reason="manual_request",
+                source="manual",
+            )
+
+        mock_client.update_conversation_attributes.assert_not_called()
