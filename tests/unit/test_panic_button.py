@@ -68,9 +68,25 @@ class TestPanicButtonWebhook:
     """Tests for the system-wide AI toggle check in the webhook handler."""
 
     def test_webhook_continues_when_ai_enabled(self):
-        """When ai_agent_enabled=True, message continues to processing."""
+        """When ai_agent_enabled=True, message continues to processing.
+
+        After T-04 the gate (Step 9) reads paused_at/resumed_at from DB.
+        We supply a mock session returning paused_at=None so the gate passes
+        (R8-A: global gate fires BEFORE Step 9; Step 9 only reached when global=True).
+        """
         mock_settings_service = AsyncMock()
         mock_settings_service.get = AsyncMock(return_value=True)
+
+        # Mock gate session: paused_at=None → is_paused=False → continue
+        gate_row = MagicMock()
+        gate_row.paused_at = None
+        gate_row.resumed_at = None
+        gate_result = MagicMock()
+        gate_result.fetchone = MagicMock(return_value=gate_row)
+        gate_session = AsyncMock()
+        gate_session.__aenter__ = AsyncMock(return_value=gate_session)
+        gate_session.__aexit__ = AsyncMock(return_value=False)
+        gate_session.execute = AsyncMock(return_value=gate_result)
 
         with (
             patch(
@@ -89,7 +105,8 @@ class TestPanicButtonWebhook:
                 "api.routes.chatwoot.check_conversation_rate_limit",
                 AsyncMock(return_value=False),
             ),
-            patch("api.routes.chatwoot.add_to_stream", AsyncMock()),
+            patch("api.routes.chatwoot.upsert_conversation_history", AsyncMock()),
+            patch("api.routes.chatwoot.add_to_stream", AsyncMock(return_value="1-0")) as mock_stream,
             patch(
                 "api.routes.chatwoot.get_redis_client",
                 MagicMock(
@@ -102,6 +119,11 @@ class TestPanicButtonWebhook:
                 "api.routes.chatwoot.get_settings_service",
                 AsyncMock(return_value=mock_settings_service),
             ),
+            patch("database.connection.get_async_session", return_value=gate_session),
+            patch(
+                "api.services.resume_injection.maybe_inject_pending_context",
+                AsyncMock(return_value=False),
+            ),
         ):
             client = TestClient(app)
             payload = _make_webhook_payload()
@@ -113,6 +135,8 @@ class TestPanicButtonWebhook:
             assert response.status_code == 200
             data = response.json()
             assert data.get("status") != "ignored_ai_disabled"
+            # Global gate passed → message was published
+            mock_stream.assert_called_once()
 
     def test_webhook_ignores_when_ai_disabled(self):
         """When ai_agent_enabled=False, message is silently ignored."""
