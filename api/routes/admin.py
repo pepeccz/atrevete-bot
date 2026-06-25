@@ -60,6 +60,7 @@ from database.models import (
     RecurringBlockingSeries,
     Service,
     Stylist,
+    compute_is_paused,
 )
 from shared.cache_signals import publish_cache_invalidation
 from shared.config import get_settings
@@ -282,7 +283,7 @@ def _resolve_conversation_list_item(
     # Only treat as a real datetime when the value is a datetime instance.
     paused_at = paused_at_raw if isinstance(paused_at_raw, datetime) else None
     resumed_at = resumed_at_raw if isinstance(resumed_at_raw, datetime) else None
-    is_paused = paused_at is not None and (resumed_at is None or resumed_at < paused_at)
+    is_paused = compute_is_paused(paused_at, resumed_at)
 
     # R1/R3a: real escalation signal — join result from escalated_conv_map.
     # Escalations are keyed by Chatwoot numeric ID string (row.conversation_id),
@@ -5678,9 +5679,7 @@ async def get_conversation(
         # without a more recent resumed_at means the bot is paused. It maps to
         # Chatwoot's custom attribute of the same name, which our pause/resume
         # service keeps in sync.
-        is_paused = conversation.paused_at is not None and (
-            conversation.resumed_at is None or conversation.resumed_at < conversation.paused_at
-        )
+        is_paused = compute_is_paused(conversation.paused_at, conversation.resumed_at)
 
         # R3a: fetch the active triggered escalation for this conversation (if any)
         # so the PausedBanner can show reason + source.
