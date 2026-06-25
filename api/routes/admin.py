@@ -6893,7 +6893,7 @@ async def inbox_pause(
     body: PauseRequest,
     current_user: Annotated[AdminUser, Depends(require_permission("bot:pause"))],
 ) -> PauseResponse:
-    """Pause the bot for a conversation (sets atencion_automatica=False in Chatwoot).
+    """Pause the bot for a conversation (sets paused_at in DB).
 
     When source='manual' (takeover modal confirmed), creates an Escalation row.
     Returns 409 if the conversation is already paused.
@@ -6914,8 +6914,6 @@ async def inbox_pause(
             )
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
-        except RuntimeError as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
 
         return PauseResponse(
             paused_at=result["paused_at"],
@@ -6928,7 +6926,7 @@ async def inbox_resume(
     conversation_id: str,
     current_user: Annotated[AdminUser, Depends(require_permission("bot:resume"))],
 ) -> ResumeResponse:
-    """Resume the bot for a conversation (sets atencion_automatica=True in Chatwoot).
+    """Resume the bot for a conversation (sets resumed_at + clears paused_at in DB).
 
     Sets a Redis flag pending_injection:v2:{conversation_id} (TTL 600s) so the
     next customer inbound triggers LangGraph state injection (ADR-2).
@@ -6952,8 +6950,6 @@ async def inbox_resume(
             )
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
-        except RuntimeError as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
 
         return ResumeResponse(
             resumed_at=result["resumed_at"],
