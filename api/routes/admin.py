@@ -5678,7 +5678,7 @@ async def get_conversation(
         # atencion_automatica is derived from paused_at: a non-null paused_at
         # without a more recent resumed_at means the bot is paused. It maps to
         # Chatwoot's custom attribute of the same name, which our pause/resume
-        # service keeps in sync.
+        # service writes directly to DB (ADR-3).
         is_paused = compute_is_paused(conversation.paused_at, conversation.resumed_at)
 
         # R3a: fetch the active triggered escalation for this conversation (if any)

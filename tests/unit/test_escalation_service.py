@@ -379,7 +379,7 @@ class TestTriggerEscalation:
         mock_result = EscalationResult(
             success=True,
             escalation_id=escalation_id,
-            steps_completed=["disable_bot", "labels", "private_note", "db_record"],
+            steps_completed=["labels", "private_note", "db_record"],
         )
         with patch(
             "agent.services.escalation_service.perform_escalation",
@@ -392,17 +392,16 @@ class TestTriggerEscalation:
                 customer_phone="+34612345678",
             )
 
-        assert result["chatwoot_disabled"] is True
         assert result["notification_id"] == escalation_id
         assert result["webhooks_triggered"] == []
 
     @pytest.mark.asyncio
     async def test_trigger_escalation_disable_bot_failed(self):
-        """chatwoot_disabled is False when disable_bot step failed."""
+        """trigger_escalation no longer emits a chatwoot_disabled key."""
         mock_result = EscalationResult(
             success=False,
             steps_completed=["labels"],
-            steps_failed=["disable_bot"],
+            steps_failed=[],
         )
         with patch(
             "agent.services.escalation_service.perform_escalation",
@@ -415,7 +414,7 @@ class TestTriggerEscalation:
                 customer_phone="+34612345678",
             )
 
-        assert result["chatwoot_disabled"] is False
+        assert "chatwoot_disabled" not in result
 
     @pytest.mark.asyncio
     async def test_trigger_escalation_notification_fails(self):
@@ -423,7 +422,7 @@ class TestTriggerEscalation:
         mock_result = EscalationResult(
             success=True,
             escalation_id=None,
-            steps_completed=["disable_bot"],
+            steps_completed=[],
             steps_failed=["db_record"],
         )
         with patch(
@@ -437,7 +436,6 @@ class TestTriggerEscalation:
                 customer_phone="+34612345678",
             )
 
-        assert result["chatwoot_disabled"] is True
         assert result["notification_id"] is None
 
     @pytest.mark.asyncio
@@ -447,7 +445,7 @@ class TestTriggerEscalation:
             success=False,
             escalation_id=None,
             steps_completed=[],
-            steps_failed=["disable_bot", "db_record"],
+            steps_failed=["db_record"],
         )
         with patch(
             "agent.services.escalation_service.perform_escalation",
@@ -460,7 +458,6 @@ class TestTriggerEscalation:
                 customer_phone="+34612345678",
             )
 
-        assert result["chatwoot_disabled"] is False
         assert result["notification_id"] is None
         assert result["webhooks_triggered"] == []
 
@@ -472,7 +469,7 @@ class TestTriggerEscalation:
             {"role": "assistant", "content": "Te ayudo"},
         ]
         mock_perform = AsyncMock(
-            return_value=EscalationResult(success=True, steps_completed=["disable_bot"])
+            return_value=EscalationResult(success=True, steps_completed=[])
         )
         with patch("agent.services.escalation_service.perform_escalation", mock_perform):
             await trigger_escalation(
@@ -487,11 +484,11 @@ class TestTriggerEscalation:
 
     @pytest.mark.asyncio
     async def test_trigger_escalation_returns_legacy_shape(self):
-        """trigger_escalation always returns dict with chatwoot_disabled, notification_id, webhooks_triggered."""
+        """trigger_escalation returns dict with notification_id and webhooks_triggered."""
         mock_result = EscalationResult(
             success=True,
             escalation_id=None,
-            steps_completed=["disable_bot"],
+            steps_completed=[],
         )
         with patch(
             "agent.services.escalation_service.perform_escalation",
@@ -504,7 +501,7 @@ class TestTriggerEscalation:
                 customer_phone="+34612345678",
             )
 
-        assert "chatwoot_disabled" in result
+        assert "chatwoot_disabled" not in result
         assert "notification_id" in result
         assert "webhooks_triggered" in result
 
@@ -521,7 +518,7 @@ class TestEscalationReasons:
     async def test_medical_consultation_escalation(self):
         """Test escalation for medical consultation passes reason to perform_escalation."""
         mock_perform = AsyncMock(
-            return_value=EscalationResult(success=True, steps_completed=["disable_bot"])
+            return_value=EscalationResult(success=True, steps_completed=[])
         )
         with patch("agent.services.escalation_service.perform_escalation", mock_perform):
             await trigger_escalation(
@@ -537,7 +534,7 @@ class TestEscalationReasons:
     async def test_auto_escalation_reason(self):
         """Test auto-escalation reason is forwarded."""
         mock_perform = AsyncMock(
-            return_value=EscalationResult(success=True, steps_completed=["disable_bot"])
+            return_value=EscalationResult(success=True, steps_completed=[])
         )
         with patch("agent.services.escalation_service.perform_escalation", mock_perform):
             await trigger_escalation(
@@ -553,7 +550,7 @@ class TestEscalationReasons:
     async def test_technical_error_escalation(self):
         """Test technical error reason is forwarded."""
         mock_perform = AsyncMock(
-            return_value=EscalationResult(success=True, steps_completed=["disable_bot"])
+            return_value=EscalationResult(success=True, steps_completed=[])
         )
         with patch("agent.services.escalation_service.perform_escalation", mock_perform):
             await trigger_escalation(
@@ -1111,23 +1108,23 @@ class TestEscalationPausedAtAtomicity:
 
     @pytest.mark.asyncio
     async def test_r4a_compute_is_paused_true_after_escalation(self):
-        """R4-A (variant): after the ON CONFLICT write, the row has paused_at set
-        so compute_is_paused would return True for that conversation."""
-        from database.models import ConversationHistory
+        """R4-A (variant): the paused_at written by the ON CONFLICT statement is a
+        timezone-aware datetime such that compute_is_paused(paused_at, None) returns
+        True — i.e. a just-escalated conversation is treated as paused."""
+        from datetime import datetime as _datetime
 
-        now = None
         captured_paused_at = None
 
         async def _spy_execute(stmt, *args, **kwargs):
             nonlocal captured_paused_at
-            # Inspect the compiled statement values for ON CONFLICT inserts
             try:
-                # For SQLAlchemy Insert objects
                 if hasattr(stmt, "table") and stmt.table.name == "conversation_history":
-                    # Extract paused_at from the insert values
-                    for col, val in stmt._values.items() if hasattr(stmt, "_values") else []:
-                        if "paused_at" in str(col):
-                            captured_paused_at = val
+                    for col, val in (stmt._values.items() if hasattr(stmt, "_values") else []):
+                        col_name = getattr(col, "key", None) or getattr(col, "name", None)
+                        if col_name == "paused_at":
+                            # Unwrap BindParameter; fall back to raw value
+                            captured_paused_at = getattr(val, "value", val)
+                            break
             except Exception:
                 pass
             result = MagicMock()
@@ -1155,9 +1152,21 @@ class TestEscalationPausedAtAtomicity:
             )
 
         assert result.success is True
-        # The execute was called (ON CONFLICT statement ran)
         assert session.execute.call_count >= 2, (
             "Expected at least 2 execute() calls: dedupe check + ON CONFLICT upsert"
+        )
+        # The ON CONFLICT stmt sets paused_at=datetime.now(UTC) — verify the captured value
+        assert captured_paused_at is not None, (
+            f"paused_at was not captured from ON CONFLICT stmt "
+            f"(execute called {session.execute.call_count} times)"
+        )
+        assert isinstance(captured_paused_at, _datetime), (
+            f"paused_at must be a datetime, got {type(captured_paused_at)}"
+        )
+        assert captured_paused_at.tzinfo is not None, "paused_at must be timezone-aware"
+        # Truth-table: paused_at=<now>, resumed_at=None → compute_is_paused must return True
+        assert compute_is_paused(captured_paused_at, None) is True, (
+            "compute_is_paused(paused_at, None) must return True for a just-escalated conversation"
         )
 
     @pytest.mark.asyncio
@@ -1189,19 +1198,29 @@ class TestEscalationPausedAtAtomicity:
 
     @pytest.mark.asyncio
     async def test_r4d_both_rollback_atomicity(self):
-        """R4-D: force failure after db.add(escalation_row) + ON CONFLICT execute
-        → assert NEITHER Escalation row NOR paused_at persists (both-commit-or-both-rollback).
+        """R4-D: single-transaction grouping + commit-failure handling.
 
-        The S5 session wraps escalation_row add + ON CONFLICT upsert + commit() in one
-        transaction.  When commit() raises, PostgreSQL rolls back the whole unit — both
-        the Escalation row and the paused_at write are discarded atomically.
+        Verifies that BOTH session.add(escalation_row) AND session.execute(ON CONFLICT
+        stmt) are issued on the SAME session instance BEFORE the single commit(), and
+        that when commit() raises, perform_escalation reports success=False with
+        db_record in steps_failed.
+
+        NOTE: True rollback atomicity (that neither row actually persists in Postgres)
+        belongs to an integration test against a real database — mocks cannot simulate
+        DB rollback.
         """
         from sqlalchemy.exc import SQLAlchemyError
 
-        s5_committed = False
+        sessions_created: list = []
 
         class _FailingS5Session:
-            """Session whose commit() always raises — simulates a failed S5 transaction."""
+            """Recording session spy: tracks add/execute per instance, raises on commit."""
+
+            def __init__(self):
+                self.add_calls: list = []
+                self.execute_calls: list = []
+                self.commit_attempted: bool = False
+                sessions_created.append(self)
 
             async def __aenter__(self):
                 return self
@@ -1210,14 +1229,16 @@ class TestEscalationPausedAtAtomicity:
                 return None
 
             async def execute(self, stmt, *a, **kw):
+                self.execute_calls.append(stmt)
                 result = MagicMock()
                 result.scalar_one_or_none.return_value = None
                 return result
 
             def add(self, obj):
-                pass
+                self.add_calls.append(obj)
 
             async def commit(self):
+                self.commit_attempted = True
                 raise SQLAlchemyError("disk full — S5 rollback")
 
         mock_client = AsyncMock()
@@ -1236,11 +1257,17 @@ class TestEscalationPausedAtAtomicity:
                 source="auto",
             )
 
-        # S5 transaction failed → success is False, db_record in steps_failed
+        # Commit failure propagates to the result
         assert result.success is False, "DB commit failure must set result.success=False"
         assert "db_record" in result.steps_failed, "db_record must be in steps_failed"
-        # S5 never committed → neither Escalation nor paused_at write persisted
-        assert s5_committed is False, "S5 transaction must not have committed"
+
+        # The S5 session is the second one created (first = dedupe check, no commit there)
+        assert len(sessions_created) >= 2, "Expected at least two sessions: dedupe + S5"
+        s5 = sessions_created[1]
+        # Both add() and execute() ran on the S5 session before commit() — single-tx grouping
+        assert len(s5.add_calls) >= 1, "S5 session.add() must have been called (Escalation row)"
+        assert len(s5.execute_calls) >= 1, "S5 session.execute() must have been called (ON CONFLICT)"
+        assert s5.commit_attempted, "S5 session.commit() must have been attempted before raising"
 
     @pytest.mark.asyncio
     async def test_on_conflict_existing_row_no_unique_error(self):

@@ -2,8 +2,8 @@
 Escalation Service - Handles human escalation workflow.
 
 This service is responsible for:
-1. Disabling bot in Chatwoot (atencion_automatica = false) — CRITICAL step
-2. Deduplication (5-minute window per conversation)
+1. Deduplication (5-minute window per conversation)
+2. Writing paused_at atomically via ON CONFLICT on ConversationHistory (ADR-3)
 3. Adding Chatwoot labels and private notes
 4. Assigning conversation to a team (if CHATWOOT_TEAM_ID is configured)
 5. Recording the escalation in the database
@@ -14,8 +14,10 @@ properly transferred to human agents with full context preserved.
 Architecture (N2 — DB-record-first):
 - The escalation DB record (S5) is written FIRST and is the source of truth.
   success=True means the escalation IS recorded; success=False means it is NOT.
-- All Chatwoot steps (disable bot, labels, note, team assign) are best-effort.
+- All Chatwoot steps (labels, note, team assign) are best-effort.
   A Chatwoot outage or non-integer conversation_id never prevents the record.
+- paused_at is written to ConversationHistory via ON CONFLICT upsert (DB-only
+  SSOT — no Chatwoot atencion_automatica sync).
 
 Entry points:
 - perform_escalation(): Central entrypoint (new, recommended)
@@ -443,7 +445,6 @@ async def trigger_escalation(
         conversation_context=conversation_context,
     )
     return {
-        "chatwoot_disabled": "disable_bot" in result.steps_completed,
         "notification_id": result.escalation_id,
         "webhooks_triggered": [],
     }

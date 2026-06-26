@@ -384,7 +384,7 @@ async def receive_chatwoot_webhook(
     Gate refactor (FR-WEBHOOK-1 through FR-WEBHOOK-5 — PR-2):
     - DB upsert and audio transcription ALWAYS run (before any gate check).
     - Global AI off: persists DB row then returns WITHOUT publishing to Redis.
-    - Per-conversation gate (atencion_automatica=False): only gates the Redis publish.
+    - Per-conversation gate: fresh scalar read of paused_at/resumed_at from DB (ADR-3).
     - Resume injection: checked between DB upsert and Redis publish.
 
     Args:
