@@ -282,6 +282,7 @@ async def update_booking(
             customer_id=_state.get("customer_id"),
             conversation_id=_state.get("conversation_id"),
             recently_offered_slots=_state.get("recently_offered_slots") or [],
+            customer_memories=_state.get("customer_memories"),
         )
         # N3 — strike layer: the 2nd consecutive identical rejection becomes an
         # explicit escalation directive (deterministic exit from rejection loops).
@@ -317,6 +318,7 @@ async def _update_booking_impl(
     customer_id: str | None = None,
     conversation_id: str | None = None,
     recently_offered_slots: list[dict] | None = None,
+    customer_memories: dict | None = None,
 ) -> str:
     from agent.booking.resolvers.time_resolver import MIN_BOOKING_DAYS
     from agent.tools._booking_helpers import (
@@ -328,6 +330,7 @@ async def _update_booking_impl(
         _resolve_service_ids_strict,
         _resolve_stylist,
         _validate_full_name,
+        gendered_service_without_audience_source,
     )
     from database.connection import get_async_session
 
@@ -556,6 +559,50 @@ async def _update_booking_impl(
                 },
                 errors=["No puedo combinar peluquería y estética en una misma cita."],
             ).model_dump_json()
+
+        # ── Step 1.6: audience-source gate (deterministic cold-guess catch) ──
+        # A GENDERED service (a principal in a multi-audience dimension whose own
+        # audience is set, e.g. "Corte de Mujer") resolved with audience=None is
+        # only legitimate when the customer has a real audience SOURCE: memory
+        # backing (typical_services/agent_notes) or a prior appointment with that
+        # audience. With a source it is the loyal-customer echo ("lo de siempre")
+        # and must NOT be re-asked. Without a source it is a cold GUESS by the
+        # model → ask. This closes the residual path where the model passes
+        # services=["corte de mujer"] straight into update_booking. The neutral
+        # family token ("corte") is already handled earlier (Step 1.7). See R32.
+        if audience is None and resolved_ids:
+            try:
+                _gendered = await gendered_service_without_audience_source(
+                    session,
+                    resolved_ids,
+                    customer_memories=customer_memories,
+                    customer_id=customer_id,
+                )
+            except Exception as exc:
+                # Fail-open: an auxiliary source check must never kill a booking
+                # turn. On error we skip the gate (the resolution query already
+                # succeeded, so this path is normally healthy).
+                logger.error(
+                    "update_booking: audience-source gate failed (fail-open): %s",
+                    exc,
+                    exc_info=True,
+                )
+                _gendered = None
+            if _gendered is not None:
+                _family_label, _candidates = _gendered
+                logger.info(
+                    "tool.response.rejected",
+                    extra={
+                        "tool_name": "update_booking",
+                        "next_step": "audience_required",
+                        "reason": "no_audience_source",
+                    },
+                )
+                return ToolResponse(
+                    status="rejected",
+                    next_step="audience_required",
+                    payload={"variants": _candidates, "family": _family_label},
+                ).model_dump_json()
 
         # ── Step 1: audience disambiguation (only when audience unknown) ─────
         # kind=="audience" → multi-PRINCIPAL same-dimension, ask for audience.

@@ -12,8 +12,9 @@ SIEMPRE llama `check_availability` ANTES de proponer un slot concreto al cliente
 
 **Paso 1 — Servicios**: el cliente enumera los servicios que quiere. Llama `update_booking(services=[...])` ANTES de pedir nada más.
 Si `next_step` trae `*_required`, haz esa pregunta exacta antes de avanzar.
+Si el cliente pide VARIOS servicios (p. ej. "un corte para un niño y un pelado"), rastrea CADA uno por separado en `services=[...]`: nunca los fusiones ni descartes uno. Si uno necesita desambiguación, resuélvelo sin perder los demás.
 
-**Paso 2 — Desambiguación** (`audience_required` / `variant_required`): si `next_step` lo pide, pregunta la dimensión faltante (audiencia o variante) en un solo turno antes de continuar. Ver R9b.
+**Paso 2 — Desambiguación** (`audience_required` / `variant_required`): si `next_step` lo pide, pregunta la dimensión faltante (audiencia o variante) en un solo turno antes de continuar. Ver R9b. Una petición NEUTRA de corte/peinado/color sin género (p. ej. "quiero cortarme el pelo") es la FAMILIA con audiencia ambigua: pregunta la audiencia ANTES de resolver un servicio con género u ofrecer horarios; no elijas tú "corte de mujer".
 
 **Mapeo calificador → audience**: si las PALABRAS DEL CLIENTE ya contienen un calificador de audiencia, pásalo directamente en `update_booking(audience=…)` y NUNCA vuelvas a preguntar la audiencia:
 - dama / mujer / señora / chica → `adult_female`
