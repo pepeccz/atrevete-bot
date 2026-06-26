@@ -9,7 +9,9 @@ Deploy order (ADR-4 / pause-state-internal-ssot):
 
     # Final pre-flip SEED — run idempotent seed IMMEDIATELY before image swap to
     # capture any conversation escalated under the old code during Phase A.
-    python scripts/backfill_paused_at.py --phase seed
+    # Use --no-resume so it always full-rescans from page 1 (a resumed page-offset
+    # over Chatwoot's activity-ordered list can skip newly-active drift rows).
+    python scripts/backfill_paused_at.py --phase seed --no-resume
 
     # Deploy the new api/agent images (DB gate goes live, fail-closed).
     # Zero-leak alternative: hold settings.ai_agent_enabled=False across the entire
@@ -379,6 +381,8 @@ async def run_clear(
 
         for conv in payload:
             conv_id = conv.get("id")
+            if conv_id is None:
+                continue
             conv_url = f"{base_url}/api/v1/accounts/{account_id}/conversations/{conv_id}"
 
             # GET fresh custom_attributes — not from page payload (may be stale)

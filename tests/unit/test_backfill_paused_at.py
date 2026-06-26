@@ -24,11 +24,9 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from scripts.backfill_paused_at import (
-    load_checkpoint,
     run_clear,
     run_seed,
     save_checkpoint,
-    clear_checkpoint,
 )
 
 

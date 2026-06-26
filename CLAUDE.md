@@ -861,6 +861,10 @@ python scripts/backfill_paused_at.py --phase seed --no-resume
 #
 # (value column is JSONB — SettingsService reads ai_agent_enabled from
 #  system_settings.value with value_type='boolean')
+# NOTE: SettingsService caches settings for up to 60s (CACHE_TTL_SECONDS) and
+#  the cache is NOT invalidated by a raw psql UPDATE. After running the blackout
+#  SQL, wait >=60s (or restart the api container) before trusting the blackout —
+#  the running image may keep serving ai_agent_enabled=true until the cache expires.
 # This trades a full bot blackout for absolute ordering safety.
 # -------------------------------------------------------------------
 docker compose -f /home/pepe/Proyectos/atrevete-bot/docker-compose.yml up -d --build api agent
