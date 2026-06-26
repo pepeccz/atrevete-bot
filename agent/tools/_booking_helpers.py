@@ -194,6 +194,36 @@ def dimension_audience_is_ambiguous(principal_rows: list[dict]) -> bool:
 _DIMINUTIVE_RE = re.compile(r"(c?it[oa]s?)$")
 """Matches Spanish diminutive suffixes: -ito, -ita, -itos, -itas, -cito, -cita, -citos, -citas."""
 
+# ---------------------------------------------------------------------------
+# Colloquial synonym map (ADR-2 — multi-service-resolution PR 1)
+# ---------------------------------------------------------------------------
+# Maps normalized colloquial terms → INTERNAL Service.name strings.
+# Applied BEFORE by_internal / by_display / diminutive lookup in
+# _resolve_service_ids_strict so _AUDIENCE_SUFFIX_REPLACEMENTS is never
+# re-applied (double-transform guard).
+#
+# Values are internal names (e.g. "Corte de Hombre"), NOT customer-safe
+# display names (e.g. "corte de caballero"). Audience inference on the
+# internal name (e.g. "hombre" → adult_male) then self-pins the audience
+# so the audience_required gate does NOT fire for these synonyms.
+#
+# Seed: Rioplatense colloquialisms for a male haircut. Extend by adding more
+# entries here — no other code change required.
+#
+# CAUTION: each value MUST stay an exact, currently-active internal Service.name.
+# If a mapped name is renamed/deactivated in the catalog, the synonym resolves to
+# a name that no longer matches by_internal/by_display → the term is SILENTLY
+# DROPPED (not resolved, not in unknown_names, no error to the model). Keep this
+# map in sync with database/seeds/services.py when renaming services.
+_COLLOQUIAL_SYNONYM_MAP: dict[str, str] = {
+    "pelado": "Corte de Hombre",
+    "rapado": "Corte de Hombre",
+    "pelao": "Corte de Hombre",
+    "rapao": "Corte de Hombre",
+    "pelaito": "Corte de Hombre",
+    "rapadito": "Corte de Hombre",
+}
+
 
 def _strip_diminutive(normalized: str) -> str | None:
     """Return the stem if the word ends in a Spanish diminutive suffix, else None.
@@ -815,23 +845,28 @@ async def _resolve_service_ids_strict(
     for name in service_names:
         normalized = _normalize_name(name)
 
-        # Resolve to internal service name first
-        matched_internal: str | None = None
-        if normalized in by_internal:
-            matched_internal = internal_name_by_norm.get(normalized)
-        elif normalized in by_display:
-            matched_internal = internal_name_by_norm.get(normalized)
-        else:
-            # Try diminutive stripping
-            stem = _strip_diminutive(normalized)
-            if stem is not None:
-                for candidate in [stem, stem + "o", stem + "a", stem + "e"]:
-                    if candidate in by_internal:
-                        matched_internal = internal_name_by_norm.get(candidate)
-                        break
-                    if candidate in by_display:
-                        matched_internal = internal_name_by_norm.get(candidate)
-                        break
+        # Resolve to internal service name first.
+        # Step 1 (ADR-2): colloquial synonym map — checked BEFORE by_internal/display/diminutive
+        # so _AUDIENCE_SUFFIX_REPLACEMENTS is never re-applied (double-transform guard).
+        matched_internal: str | None = _COLLOQUIAL_SYNONYM_MAP.get(normalized)
+
+        if matched_internal is None:
+            # Step 2: exact internal / display name lookup
+            if normalized in by_internal:
+                matched_internal = internal_name_by_norm.get(normalized)
+            elif normalized in by_display:
+                matched_internal = internal_name_by_norm.get(normalized)
+            else:
+                # Step 3: diminutive stripping
+                stem = _strip_diminutive(normalized)
+                if stem is not None:
+                    for candidate in [stem, stem + "o", stem + "a", stem + "e"]:
+                        if candidate in by_internal:
+                            matched_internal = internal_name_by_norm.get(candidate)
+                            break
+                        if candidate in by_display:
+                            matched_internal = internal_name_by_norm.get(candidate)
+                            break
 
         if matched_internal is None:
             # Neutral family-token fallback: a bare "corte" has no principal to
@@ -872,14 +907,20 @@ async def _resolve_service_ids_strict(
         # attempt to infer audience from qualifier tokens in the service name itself.
         # This covers memory-stored names like "Corte de Mujer" (adult_female) so that
         # the audience_required gate does not fire for already-specific service names.
+        # ADR-2 extension: if `name` yields no audience token (e.g. "pelado"), also try
+        # `matched_internal` ("Corte de Hombre" → "hombre" → adult_male) so that
+        # synonym-resolved services self-pin without triggering audience_required.
         effective_audience = audience
         if effective_audience is None:
             effective_audience = _infer_audience_from_service_name(name)
+            if effective_audience is None and matched_internal is not None:
+                effective_audience = _infer_audience_from_service_name(matched_internal)
             if effective_audience is not None:
                 logger.debug(
-                    "_resolve_service_ids_strict: inferred audience=%s from name=%r",
+                    "_resolve_service_ids_strict: inferred audience=%s from name=%r (matched=%r)",
                     effective_audience,
                     name,
+                    matched_internal,
                 )
 
         # Check for ambiguity before committing UUID.
