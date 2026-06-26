@@ -815,6 +815,22 @@ class ConversationHistory(Base):
         )
 
 
+def compute_is_paused(paused_at: datetime | None, resumed_at: datetime | None) -> bool:
+    """Determine whether a conversation's bot is currently paused.
+
+    Single SSOT for the paused-state boolean (ADR-2).  Accepts bare
+    datetime values or ORM attributes; works for scalars, ORM rows, and
+    mocks alike.
+
+    Truth table:
+      paused_at=None                 → False  (never paused, or paused_at cleared by resume)
+      paused_at set, resumed_at=None → True   (paused, not yet resumed)
+      resumed_at >= paused_at        → False  (bot was resumed after pause)
+      resumed_at <  paused_at        → True   (re-paused after resume)
+    """
+    return paused_at is not None and (resumed_at is None or resumed_at < paused_at)
+
+
 class ConversationMessageRole(str, PyEnum):
     """Allowed values for ConversationMessage.role.
 

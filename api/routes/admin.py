@@ -60,6 +60,7 @@ from database.models import (
     RecurringBlockingSeries,
     Service,
     Stylist,
+    compute_is_paused,
 )
 from shared.cache_signals import publish_cache_invalidation
 from shared.config import get_settings
@@ -282,7 +283,7 @@ def _resolve_conversation_list_item(
     # Only treat as a real datetime when the value is a datetime instance.
     paused_at = paused_at_raw if isinstance(paused_at_raw, datetime) else None
     resumed_at = resumed_at_raw if isinstance(resumed_at_raw, datetime) else None
-    is_paused = paused_at is not None and (resumed_at is None or resumed_at < paused_at)
+    is_paused = compute_is_paused(paused_at, resumed_at)
 
     # R1/R3a: real escalation signal — join result from escalated_conv_map.
     # Escalations are keyed by Chatwoot numeric ID string (row.conversation_id),
@@ -5677,10 +5678,8 @@ async def get_conversation(
         # atencion_automatica is derived from paused_at: a non-null paused_at
         # without a more recent resumed_at means the bot is paused. It maps to
         # Chatwoot's custom attribute of the same name, which our pause/resume
-        # service keeps in sync.
-        is_paused = conversation.paused_at is not None and (
-            conversation.resumed_at is None or conversation.resumed_at < conversation.paused_at
-        )
+        # service writes directly to DB (ADR-3).
+        is_paused = compute_is_paused(conversation.paused_at, conversation.resumed_at)
 
         # R3a: fetch the active triggered escalation for this conversation (if any)
         # so the PausedBanner can show reason + source.
@@ -6894,7 +6893,7 @@ async def inbox_pause(
     body: PauseRequest,
     current_user: Annotated[AdminUser, Depends(require_permission("bot:pause"))],
 ) -> PauseResponse:
-    """Pause the bot for a conversation (sets atencion_automatica=False in Chatwoot).
+    """Pause the bot for a conversation (sets paused_at in DB).
 
     When source='manual' (takeover modal confirmed), creates an Escalation row.
     Returns 409 if the conversation is already paused.
@@ -6915,8 +6914,6 @@ async def inbox_pause(
             )
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
-        except RuntimeError as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
 
         return PauseResponse(
             paused_at=result["paused_at"],
@@ -6929,7 +6926,7 @@ async def inbox_resume(
     conversation_id: str,
     current_user: Annotated[AdminUser, Depends(require_permission("bot:resume"))],
 ) -> ResumeResponse:
-    """Resume the bot for a conversation (sets atencion_automatica=True in Chatwoot).
+    """Resume the bot for a conversation (sets resumed_at + clears paused_at in DB).
 
     Sets a Redis flag pending_injection:v2:{conversation_id} (TTL 600s) so the
     next customer inbound triggers LangGraph state injection (ADR-2).
@@ -6953,8 +6950,6 @@ async def inbox_resume(
             )
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
-        except RuntimeError as exc:
-            raise HTTPException(status_code=502, detail=str(exc)) from exc
 
         return ResumeResponse(
             resumed_at=result["resumed_at"],

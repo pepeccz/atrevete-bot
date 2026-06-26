@@ -271,11 +271,10 @@ class ConversationInboxService:
         source: str,
         author: AdminUser,
     ) -> dict[str, Any]:
-        """Pause the bot for a conversation (toggle atencion_automatica=False).
+        """Pause the bot for a conversation.
 
         Business rules:
-        - Calls ``ChatwootClient.update_conversation_attributes(atencion_automatica=False)``.
-        - Sets ``ConversationHistory.paused_at = now()`` in DB.
+        - Sets ``ConversationHistory.paused_at = now()`` in DB (SSOT for pause state).
         - Creates ``Escalation(source='manual')`` row ONLY when ``source == 'manual'``
           (i.e., the takeover modal was confirmed by the user).
         - Commits and returns ``{paused_at, escalation_id?}``.
@@ -291,23 +290,11 @@ class ConversationInboxService:
 
         Raises:
             ValueError: If the conversation is already paused (409 territory).
-            RuntimeError: If the Chatwoot API call fails.
         """
         history = await self._get_history(conversation_id)
 
         if history.paused_at is not None and history.resumed_at is None:
             raise ValueError(f"Conversation '{conversation_id}' is already paused.")
-
-        cw_conv_id = int(history.conversation_id)
-        try:
-            await self._chatwoot.update_conversation_attributes(
-                conversation_id=cw_conv_id,
-                attributes={"atencion_automatica": False},
-            )
-        except Exception as exc:
-            raise RuntimeError(
-                f"Chatwoot API failed to set atencion_automatica=False: {exc}"
-            ) from exc
 
         now = datetime.now(tz=UTC)
         history.paused_at = now
@@ -351,11 +338,11 @@ class ConversationInboxService:
         author: AdminUser,
         redis_client: Any | None = None,
     ) -> dict[str, Any]:
-        """Resume the bot for a conversation (toggle atencion_automatica=True).
+        """Resume the bot for a conversation.
 
         Business rules:
-        - Calls ``ChatwootClient.update_conversation_attributes(atencion_automatica=True)``.
-        - Sets ``ConversationHistory.resumed_at = now()``, clears ``paused_at = NULL``.
+        - Sets ``ConversationHistory.resumed_at = now()`` and clears ``paused_at = NULL``
+          in DB (SSOT for pause state).
         - Auto-resolves any open ``Escalation`` row
           (``status='resolved', resolved_by_user_id=author.id, resolved_at=now()``).
         - Sets Redis key ``pending_injection:v2:{conversation_id}`` with TTL 600s
@@ -372,23 +359,11 @@ class ConversationInboxService:
 
         Raises:
             ValueError: If the conversation is not currently paused (409 territory).
-            RuntimeError: If the Chatwoot API call or Redis write fails.
         """
         history = await self._get_history(conversation_id)
 
         if history.paused_at is None:
             raise ValueError(f"Conversation '{conversation_id}' is not currently paused.")
-
-        cw_conv_id = int(history.conversation_id)
-        try:
-            await self._chatwoot.update_conversation_attributes(
-                conversation_id=cw_conv_id,
-                attributes={"atencion_automatica": True},
-            )
-        except Exception as exc:
-            raise RuntimeError(
-                f"Chatwoot API failed to set atencion_automatica=True: {exc}"
-            ) from exc
 
         now = datetime.now(tz=UTC)
         history.resumed_at = now

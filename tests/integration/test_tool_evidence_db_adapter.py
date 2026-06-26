@@ -97,19 +97,17 @@ async def test_conversation_turn_adapter_reads_tool_calls() -> None:
 
     try:
         async with engine.begin() as conn:
-            # Insert a minimal ConversationHistory row
+            # Insert a minimal ConversationHistory row (valid columns only — F6)
             await conn.execute(
                 text("""
                     INSERT INTO conversation_history
-                        (id, conversation_id, chatwoot_conversation_id, atencion_automatica,
-                         started_at, last_activity_at)
+                        (id, conversation_id, started_at, ended_at, message_count, metadata)
                     VALUES
-                        (:id, :conv_id, :cw_id, true, now(), now())
+                        (:id, :conv_id, now(), now(), 0, '{}'::jsonb)
                     """),
                 {
                     "id": history_id,
                     "conv_id": test_conv_id,
-                    "cw_id": 999999,
                 },
             )
 

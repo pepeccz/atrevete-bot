@@ -20,6 +20,7 @@ from api.models.chatwoot_webhook import (
     ChatwootMessageEvent,
     ChatwootWebhookPayload,
 )
+from database.models import ConversationHistory, compute_is_paused
 from shared.audio_conversion import convert_ogg_to_wav
 from shared.audio_transcription import get_transcription_service
 from shared.chatwoot_client import ChatwootClient
@@ -383,7 +384,7 @@ async def receive_chatwoot_webhook(
     Gate refactor (FR-WEBHOOK-1 through FR-WEBHOOK-5 — PR-2):
     - DB upsert and audio transcription ALWAYS run (before any gate check).
     - Global AI off: persists DB row then returns WITHOUT publishing to Redis.
-    - Per-conversation gate (atencion_automatica=False): only gates the Redis publish.
+    - Per-conversation gate: fresh scalar read of paused_at/resumed_at from DB (ADR-3).
     - Resume injection: checked between DB upsert and Redis publish.
 
     Args:
@@ -765,52 +766,63 @@ async def receive_chatwoot_webhook(
             content={"status": "ignored_ai_disabled"},
         )
 
-    # Step 9: Per-conversation gate — Check atencion_automatica custom attribute
-    # This allows toggling AI bot on/off per conversation.
-    # Only the Redis publish step is gated (FR-WEBHOOK-3).
-    atencion_automatica = payload.conversation.custom_attributes.get("atencion_automatica")
+    # Step 9: Per-conversation gate — fresh scalar read of paused_at/resumed_at from DB.
+    # The read is in its OWN session and OWN try/except (ADR-1 — fail-closed policy
+    # isolation: this try/except must NOT entangle with Step-7's fail-open upsert).
+    # Wraps ONLY the SELECT + compute_is_paused call (not Steps 10 or 11).
+    conversation_id_str = str(payload.conversation.id)
+    gate_db_error = False
+    is_paused = False
+    try:
+        from database.connection import get_async_session as _get_gate_session
 
-    if atencion_automatica is None:
-        # First message from this customer - enable bot and continue processing
-        logger.info(
-            f"First message for conversation {payload.conversation.id}: "
-            f"setting atencion_automatica=true",
-            extra={
-                "conversation_id": str(payload.conversation.id),
-                "customer_phone": payload.sender.phone_number,
-            },
+        async with _get_gate_session() as _gate_db:
+            _gate_result = await _gate_db.execute(
+                select(
+                    ConversationHistory.paused_at,
+                    ConversationHistory.resumed_at,
+                ).where(ConversationHistory.conversation_id == conversation_id_str)
+            )
+            _gate_row = _gate_result.fetchone()
+            if _gate_row is None:
+                # No row yet (first message) — fail-OPEN (spec R5-B)
+                logger.warning(
+                    "No conversation_history row for gate read — defaulting is_paused=False",
+                    extra={"conversation_id": conversation_id_str},
+                )
+                is_paused = False
+            else:
+                is_paused = compute_is_paused(_gate_row.paused_at, _gate_row.resumed_at)
+                logger.debug(
+                    "Gate read: is_paused=%s",
+                    is_paused,
+                    extra={"conversation_id": conversation_id_str},
+                )
+    except Exception as _gate_exc:
+        # Fail-CLOSED: DB outage → treat conversation as paused, do NOT publish.
+        # Emit a structured ERROR with a stable greppable marker so log-based alerting
+        # catches a persistent gate-mute (every inbound silently dropped).
+        logger.error(
+            "Gate DB read failed — failing closed (not publishing)",
+            extra={"event": "gate_db_error", "conversation_id": conversation_id_str},
+            exc_info=True,
         )
+        gate_db_error = True
 
-        # Update conversation to enable bot
-        try:
-            chatwoot_client = ChatwootClient()
-            await chatwoot_client.update_conversation_attributes(
-                conversation_id=payload.conversation.id, attributes={"atencion_automatica": True}
-            )
-            logger.info(f"Successfully enabled bot for conversation {payload.conversation.id}")
-        except Exception as e:
-            # Log warning but continue processing - don't block first message
-            logger.warning(
-                f"Failed to set atencion_automatica for conversation {payload.conversation.id}: {e}",
-                extra={
-                    "conversation_id": str(payload.conversation.id),
-                    "error": str(e),
-                },
-                exc_info=True,
-            )
+    if gate_db_error:
+        return JSONResponse(status_code=200, content={"status": "ignored_gate_db_error"})
 
     # Step 10: Resume injection hook (FR-WEBHOOK-5)
     # Check if a pending injection flag exists and inject paused-window messages
     # into LangGraph state before publishing to the Redis Stream.
-    conversation_id_str = str(payload.conversation.id)
-    if atencion_automatica is not False:
-        # Only attempt injection when bot is ON (or just enabled above)
+    if not is_paused:
+        # Only attempt injection when bot is active
         try:
             redis_client = get_redis_client()
             from api.services.resume_injection import maybe_inject_pending_context
-            from database.connection import get_async_session as _get_session
+            from database.connection import get_async_session as _get_inject_session
 
-            async with _get_session() as inject_session:
+            async with _get_inject_session() as inject_session:
                 await maybe_inject_pending_context(
                     conversation_id=conversation_id_str,
                     session=inject_session,
@@ -824,27 +836,22 @@ async def receive_chatwoot_webhook(
                 extra={"conversation_id": conversation_id_str},
             )
 
-    # Step 11: Per-conversation gate — only Redis publish is gated (FR-WEBHOOK-3)
-    if atencion_automatica is False:
-        # Bot is disabled for this conversation - message was persisted but NOT published
+    # Step 11: Per-conversation short-circuit — message persisted but NOT published
+    if is_paused:
         logger.info(
-            f"Bot paused for conversation {payload.conversation.id}: "
-            f"message persisted to DB but NOT published to Redis",
+            "Bot paused for conversation %s: message persisted to DB but NOT published to Redis",
+            conversation_id_str,
             extra={
-                "conversation_id": str(payload.conversation.id),
+                "conversation_id": conversation_id_str,
                 "customer_phone": payload.sender.phone_number,
             },
         )
         return JSONResponse(status_code=200, content={"status": "ignored_auto_attention_disabled"})
 
-    # If atencion_automatica is True or was just set, continue to publish
     logger.debug(
-        f"Processing message for conversation {payload.conversation.id}: "
-        f"atencion_automatica={atencion_automatica}",
-        extra={
-            "conversation_id": str(payload.conversation.id),
-            "atencion_automatica": atencion_automatica,
-        },
+        "Processing message for conversation %s: is_paused=False",
+        conversation_id_str,
+        extra={"conversation_id": conversation_id_str},
     )
 
     # Step 12: Create message event for Redis and publish

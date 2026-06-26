@@ -2,8 +2,8 @@
 Escalation Service - Handles human escalation workflow.
 
 This service is responsible for:
-1. Disabling bot in Chatwoot (atencion_automatica = false) — CRITICAL step
-2. Deduplication (5-minute window per conversation)
+1. Deduplication (5-minute window per conversation)
+2. Writing paused_at atomically via ON CONFLICT on ConversationHistory (ADR-3)
 3. Adding Chatwoot labels and private notes
 4. Assigning conversation to a team (if CHATWOOT_TEAM_ID is configured)
 5. Recording the escalation in the database
@@ -14,8 +14,10 @@ properly transferred to human agents with full context preserved.
 Architecture (N2 — DB-record-first):
 - The escalation DB record (S5) is written FIRST and is the source of truth.
   success=True means the escalation IS recorded; success=False means it is NOT.
-- All Chatwoot steps (disable bot, labels, note, team assign) are best-effort.
+- All Chatwoot steps (labels, note, team assign) are best-effort.
   A Chatwoot outage or non-integer conversation_id never prevents the record.
+- paused_at is written to ConversationHistory via ON CONFLICT upsert (DB-only
+  SSOT — no Chatwoot atencion_automatica sync).
 
 Entry points:
 - perform_escalation(): Central entrypoint (new, recommended)
@@ -30,9 +32,10 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from database.connection import get_async_session
-from database.models import Customer, Notification, NotificationType
+from database.models import ConversationHistory, Customer, Notification, NotificationType
 
 logger = logging.getLogger(__name__)
 
@@ -113,38 +116,6 @@ async def _check_duplicate_escalation(conversation_id: str, db: Any) -> "Any | N
 # ============================================================================
 # Legacy helpers (kept for backward compatibility)
 # ============================================================================
-
-
-async def disable_bot_in_chatwoot(conversation_id: str) -> bool:
-    """
-    Disable bot for a Chatwoot conversation.
-
-    Sets atencion_automatica = false so the webhook will ignore future messages
-    until a human agent manually re-enables it.
-
-    Args:
-        conversation_id: Chatwoot conversation ID (numeric string)
-
-    Returns:
-        True if successful, False if failed (logged, not raised)
-    """
-    try:
-        from shared.chatwoot_client import ChatwootClient
-
-        client = ChatwootClient()
-        await client.update_conversation_attributes(
-            conversation_id=int(conversation_id),
-            attributes={"atencion_automatica": False},
-        )
-        logger.info(f"Bot disabled for conversation | conversation_id={conversation_id}")
-        return True
-    except Exception as e:
-        logger.error(
-            f"Failed to disable bot in Chatwoot | conversation_id={conversation_id} | "
-            f"error={str(e)}",
-            exc_info=True,
-        )
-        return False
 
 
 async def create_escalation_notification(
@@ -334,6 +305,26 @@ async def perform_escalation(
 
         async with get_async_session() as db:
             db.add(escalation_row)
+            # ON CONFLICT upsert — sets paused_at atomically with the Escalation row (R4/ADR-3).
+            # Existing row: updates paused_at=now, resumed_at=NULL (re-pauses cleanly).
+            # Absent row (first-contact): inserts a minimal ConversationHistory with paused_at=now.
+            # Because this is ON CONFLICT (not a bare INSERT), a concurrent insert from the
+            # webhook Step-7 upsert can no longer raise a UNIQUE violation that rolls back and
+            # discards the Escalation record.
+            now = datetime.now(tz=UTC)
+            _pause_stmt = pg_insert(ConversationHistory).values(
+                id=uuid_module.uuid4(),
+                conversation_id=conversation_id,
+                started_at=now,
+                ended_at=now,
+                message_count=0,
+                paused_at=now,
+                metadata_={},
+            ).on_conflict_do_update(
+                index_elements=[ConversationHistory.conversation_id],
+                set_={"paused_at": now, "resumed_at": None},
+            )
+            await db.execute(_pause_stmt)
             await db.commit()
             result.escalation_id = escalation_row.id
             result.steps_completed.append("db_record")
@@ -355,31 +346,13 @@ async def perform_escalation(
         logger.warning(
             f"[escalation] Chatwoot phase skipped for conversation {conversation_id}: {e}"
         )
-        result.steps_failed.extend(["disable_bot", "labels", "private_note", "team_assign"])
+        result.steps_failed.extend(["labels", "private_note", "team_assign"])
 
     # W2 / V6: skip the entire Chatwoot notification phase when the DB record
-    # failed. Running disable_bot after a failed write would gate the customer
-    # off Chatwoot while the tool returns ESCALATION_FAILED to the LLM — the
-    # bot would be disabled in Chatwoot but the LLM would keep serving, leaving
-    # the customer in an inconsistent state. Bot state must follow DB truth.
+    # failed. Bot state must follow DB truth.
     db_write_ok = "db_record" in result.steps_completed
 
     if client is not None and conv_id_int is not None and db_write_ok:
-        # S1 — Disable bot in Chatwoot
-        try:
-            await client.update_conversation_attributes(
-                conversation_id=conv_id_int,
-                attributes={"atencion_automatica": False},
-            )
-            result.steps_completed.append("disable_bot")
-            logger.info(f"[escalation] Bot disabled for conversation {conversation_id}")
-        except Exception as e:
-            logger.critical(
-                f"[escalation] CRITICAL: Failed to disable bot for {conversation_id}: {e}"
-            )
-            result.steps_failed.append("disable_bot")
-            # Continue anyway — the escalation is already recorded
-
         # S2 — best-effort: Add labels
         try:
             labels = ["escalado", "error-tecnico"] if is_technical_error else ["escalado"]
@@ -471,7 +444,6 @@ async def trigger_escalation(
         conversation_context=conversation_context,
     )
     return {
-        "chatwoot_disabled": "disable_bot" in result.steps_completed,
         "notification_id": result.escalation_id,
         "webhooks_triggered": [],
     }
