@@ -813,6 +813,108 @@ Rollback: `git revert` the inbox-reliability commits + rebuild admin-panel image
 
 ---
 
+### Deploy Runbook (pause-state-internal-ssot)
+
+Replaces Chatwoot `atencion_automatica` as the pause-state SSOT with `conversation_history.paused_at` (DB-only gate). **No DB migration needed** — `paused_at` / `resumed_at` columns already exist from prior changes. Two-phase cutover keeps the bot serving active conversations throughout; a `ai_agent_enabled=False` blackout is the zero-leak alternative.
+
+**Phase ordering matters.** The old gate reads Chatwoot; the new gate reads DB. Seeding paused_at BEFORE the new images go live is harmless (old gate ignores DB). Clearing Chatwoot BEFORE the new images go live would un-pause bot conversations since the old gate still reads Chatwoot.
+
+```bash
+# Prerequisites: venv activated, DATABASE_URL set, CHATWOOT_* env vars set.
+# The script reads all config from shared/config.py — never set them inline.
+
+# -------------------------------------------------------------------
+# Phase A — SEED (run BEFORE deploying new images)
+# Old gate ignores DB; seeding paused_at is completely harmless.
+# -------------------------------------------------------------------
+
+# Dry-run first to review scope:
+python scripts/backfill_paused_at.py --phase seed --dry-run
+
+# Seed paused_at for all conversations where atencion_automatica=false:
+python scripts/backfill_paused_at.py --phase seed
+
+# -------------------------------------------------------------------
+# Final pre-flip SEED — run IMMEDIATELY before the image swap.
+# Captures any conversation escalated under the OLD code between
+# the Phase A scan and the image swap (admin pauses are already safe —
+# pause() writes paused_at to DB directly).
+# ALWAYS use --no-resume here: the page-offset checkpoint is ordered by
+# Chatwoot's mutable activity list and can skip newly-active drift rows
+# on a resumed run.  Full rescan guarantees nothing is missed.
+# -------------------------------------------------------------------
+python scripts/backfill_paused_at.py --phase seed --no-resume
+
+# -------------------------------------------------------------------
+# Deploy new api/agent images (new DB gate goes live, fail-closed).
+# Zero-leak alternative: engage a bot blackout BEFORE Phase A via:
+#
+#   psql: UPDATE system_settings
+#           SET value = 'false'::jsonb
+#           WHERE key = 'ai_agent_enabled';
+#
+# Then flip it back after Phase A + deploy + Phase B complete:
+#
+#   psql: UPDATE system_settings
+#           SET value = 'true'::jsonb
+#           WHERE key = 'ai_agent_enabled';
+#
+# (value column is JSONB — SettingsService reads ai_agent_enabled from
+#  system_settings.value with value_type='boolean')
+# NOTE: SettingsService caches settings for up to 60s (CACHE_TTL_SECONDS) and
+#  the cache is NOT invalidated by a raw psql UPDATE. After running the blackout
+#  SQL, wait >=60s (or restart the api container) before trusting the blackout —
+#  the running image may keep serving ai_agent_enabled=true until the cache expires.
+# This trades a full bot blackout for absolute ordering safety.
+# -------------------------------------------------------------------
+docker compose -f /home/pepe/Proyectos/atrevete-bot/docker-compose.yml up -d --build api agent
+
+# -------------------------------------------------------------------
+# Phase B — CLEAR (run AFTER deploy)
+# New gate ignores Chatwoot; clearing atencion_automatica can no longer
+# un-pause anything.
+# -------------------------------------------------------------------
+
+# Dry-run first to review scope:
+python scripts/backfill_paused_at.py --phase clear --dry-run
+
+# Remove atencion_automatica from all Chatwoot conversations:
+python scripts/backfill_paused_at.py --phase clear
+```
+
+**Verification queries (run after Phase B):**
+
+```sql
+-- How many conversations have paused_at set (expect > 0 if any were paused)
+SELECT COUNT(*) AS paused_count
+FROM conversation_history
+WHERE paused_at IS NOT NULL;
+
+-- Spot-check: verify no paused_at is incorrectly NULL for known-paused conversations
+-- (run immediately after Phase A, before Phase B)
+SELECT conversation_id, paused_at, resumed_at
+FROM conversation_history
+WHERE paused_at IS NULL
+ORDER BY created_at DESC
+LIMIT 20;
+```
+
+**Chatwoot cleanup verification** (confirm atencion_automatica is cleared — run via Chatwoot API or admin panel; there is no DB table for Chatwoot custom_attributes):
+
+```bash
+# Quick sample: fetch a known conversation and inspect custom_attributes
+curl -s -H "api_access_token: $CHATWOOT_API_TOKEN" \
+  "$CHATWOOT_API_URL/api/v1/accounts/$CHATWOOT_ACCOUNT_ID/conversations/<id>" \
+  | python3 -m json.tool | grep atencion_automatica
+# expect: no output (key absent)
+```
+
+**Resumable runs.** If the script is interrupted, re-run the same command — it resumes from the last completed page via a checkpoint file (`.backfill_paused_at_checkpoint.json` in the cwd). Use `--max-pages N` to bound a run for testing. Use `--no-resume` to force a full rescan from page 1 (ignores and clears any existing checkpoint); always use `--no-resume` for the final pre-flip seed to avoid stale page-offset drift on Chatwoot's mutable activity-ordered list.
+
+Rollback: `git revert` the pause-state-internal-ssot commits + restart api/agent. The `paused_at` column retains its seeded values (harmless if the old images are restored — the old gate ignores it). If needed, reset seeded rows: `UPDATE conversation_history SET paused_at = NULL WHERE ...` scoped to the relevant conversation IDs.
+
+---
+
 ### Service Catalog Integrity Guard
 
 CI guard that asserts 7 structural invariants over the seeded `services` table. Introduced after the orphan-variant drift found at deploy 2026-05-11 (Engram obs #5260). I7 added by disambiguation-resilience PR-1.
