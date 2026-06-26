@@ -20,11 +20,11 @@ from api.models.chatwoot_webhook import (
     ChatwootMessageEvent,
     ChatwootWebhookPayload,
 )
+from database.models import ConversationHistory, compute_is_paused
 from shared.audio_conversion import convert_ogg_to_wav
 from shared.audio_transcription import get_transcription_service
 from shared.chatwoot_client import ChatwootClient
 from shared.config import get_settings
-from database.models import ConversationHistory, compute_is_paused
 from shared.redis_client import (
     INCOMING_STREAM,
     add_to_stream,

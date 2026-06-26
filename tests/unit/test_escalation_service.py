@@ -15,7 +15,6 @@ Coverage:
 - Error handling and graceful degradation
 """
 
-from datetime import UTC
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 from zoneinfo import ZoneInfo
@@ -1058,8 +1057,6 @@ class TestEscalationPausedAtAtomicity:
     async def test_r4a_escalation_sets_paused_at_no_chatwoot(self):
         """R4-A: perform_escalation writes ConversationHistory.paused_at atomically
         with the Escalation row and does NOT call update_conversation_attributes."""
-        from database.models import ConversationHistory
-
         captured_stmts: list = []
 
         async def _capture_execute(stmt, *args, **kwargs):
@@ -1174,8 +1171,6 @@ class TestEscalationPausedAtAtomicity:
         """R4-C: escalation on first-contact (no existing history row) inserts a
         minimal ConversationHistory with paused_at=now via the ON CONFLICT INSERT path.
         No UNIQUE violation occurs because ON CONFLICT handles the first-insert case."""
-        from sqlalchemy.exc import IntegrityError
-
         session = _working_db_session_with_spy()
         mock_client = AsyncMock()
 

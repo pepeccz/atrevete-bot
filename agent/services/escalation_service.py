@@ -32,7 +32,6 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
-
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from database.connection import get_async_session

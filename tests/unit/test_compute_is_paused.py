@@ -16,8 +16,6 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 
-import pytest
-
 from database.models import compute_is_paused
 
 
