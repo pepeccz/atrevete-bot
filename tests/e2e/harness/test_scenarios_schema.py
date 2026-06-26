@@ -225,3 +225,62 @@ class TestScenariosSchemaV2:
         required = scenario["expect"].get("tool_calls_required") or []
         assert "manage_appointments" in required, f"Got: {required}"
         assert "escalate" in required, f"Got: {required}"
+
+    # ------------------------------------------------------------------
+    # Change M — audience-disambiguation guard scenarios
+    # ------------------------------------------------------------------
+
+    def test_audience_disambiguation_field_is_valid_when_present(self) -> None:
+        """M1: expect.audience_disambiguation must be 'required' | 'not_required' when set."""
+        valid_values = {"required", "not_required"}
+        bad = []
+        for s in self.all_scenarios:
+            ad = (s.get("expect") or {}).get("audience_disambiguation")
+            if ad is not None and ad not in valid_values:
+                bad.append((s.get("id"), ad))
+        assert not bad, (
+            f"Invalid audience_disambiguation values: {bad}. "
+            f"Allowed values: {sorted(valid_values)}"
+        )
+
+    def test_audience_disambiguation_scenarios_exist(self) -> None:
+        """M2: Both audience-disambiguation guard scenarios must be present."""
+        required_ids = {
+            "audience-ambiguous-cold-open",
+            "multi-service-multi-audience-cold-open",
+        }
+        found_ids = {s.get("id") for s in self.all_scenarios}
+        missing = required_ids - found_ids
+        assert not missing, (
+            f"Required audience-disambiguation scenarios not found: {missing}. "
+            "Change M requires both scenarios to exist in scenarios-v2.yaml."
+        )
+
+    def test_audience_disambiguation_scenarios_have_required_field(self) -> None:
+        """M3: audience-disambiguation scenarios must declare audience_disambiguation=required."""
+        scenario_ids = {
+            "audience-ambiguous-cold-open",
+            "multi-service-multi-audience-cold-open",
+        }
+        for s in self.all_scenarios:
+            if s.get("id") in scenario_ids:
+                ad = (s.get("expect") or {}).get("audience_disambiguation")
+                assert ad == "required", (
+                    f"Scenario '{s.get('id')}' must have "
+                    f"expect.audience_disambiguation='required', got {ad!r}"
+                )
+
+    def test_audience_disambiguation_scenarios_use_sandbox_phones(self) -> None:
+        """M4: audience-disambiguation scenarios must use phones in +34999000046..047 range."""
+        expected_phones = {"+34999000046", "+34999000047"}
+        ad_scenarios = [
+            s
+            for s in self.v2_scenarios
+            if (s.get("expect") or {}).get("audience_disambiguation") == "required"
+        ]
+        found_phones = {s.get("persona", {}).get("phone", "") for s in ad_scenarios}
+        missing = expected_phones - found_phones
+        assert not missing, (
+            f"Expected phones {missing} to be in audience-disambiguation scenarios. "
+            "Change M requires phones +34999000046 and +34999000047."
+        )

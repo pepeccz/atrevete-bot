@@ -742,3 +742,84 @@
     tool_calls_required: [manage_appointments, check_availability, book]
     tool_calls_forbidden: []
     tags: [cancel, reschedule, multi-intent, multi_completed, change-h]
+
+# ===========================================================================
+# Change M — Audience disambiguation guard scenarios (phones 046..047)
+#
+# These scenarios test the audience-disambiguation path-level guard:
+# the agent MUST ask who a haircut is for BEFORE resolving to a gendered
+# service ("Corte Dama" / "Corte Caballero"). They are evaluated with
+# assert_audience_disambiguation.py on turn 1.
+#
+# Bug baseline (reproduced 2026-06-25): on "quiero cortarme el pelo" the
+# agent called update_booking(services=["corte de mujer"]) on turn 1 and
+# offered availability for "Corte Dama" without asking for audience.
+#
+# expect.audience_disambiguation = required signals the runner to invoke
+# assert_audience_disambiguation.py on turn 1 and fail the scenario if the
+# check returns verdict=fail, even if the final booking eventually succeeds.
+# ===========================================================================
+
+- id: audience-ambiguous-cold-open
+  description: >
+    Gender-neutral haircut request on a cold open. Customer says "quiero
+    cortarme el pelo" without specifying who it is for. The agent MUST ask
+    for audience clarification (woman / man / child) on turn 1 — it must NOT
+    call update_booking / check_availability / get_next_available_options with
+    a gendered service, and must NOT offer concrete slot times, before the
+    customer has stated the audience. Persona is male and has been explicitly
+    instructed NOT to volunteer gender until asked. This is the exact scenario
+    where the reproduced bug fires.
+  tags: [v2, audience, disambiguation, change-m]
+  persona:
+    name: Pepe Ruiz
+    phone: "+34999000046"
+    style: >
+      Hombre que quiere cortarse el pelo. No menciona si es para él ni su
+      género hasta que el bot SE LO PREGUNTE EXPLÍCITAMENTE. Si el bot
+      asume que es para mujer y ofrece "corte de dama", responde con
+      confusión: "Eh, yo soy hombre." Si el bot pregunta correctamente,
+      responde: "Es para mí, soy hombre." Luego acepta la primera
+      disponibilidad que le ofrezcan y confirma la cita.
+  intent: "Hola, quiero cortarme el pelo"
+  max_turns: 10
+  expect:
+    outcome: booked
+    audience_disambiguation: required
+    db_appointment:
+      status: confirmed
+    tool_calls_required: [check_availability, book]
+    tool_calls_forbidden: []
+    tags: [audience, disambiguation, cold-open, gendered-service-guard]
+
+- id: multi-service-multi-audience-cold-open
+  description: >
+    Multi-service, multi-audience haircut request on a cold open. Customer
+    says they want a haircut for a child AND a "pelado" (cropped/shaved cut —
+    gender-neutral term that typically implies adult male). The agent MUST NOT
+    collapse both items into a single gendered service, must NOT call a booking
+    or availability tool with a gendered service before audience is confirmed
+    for each item, and should ask for clarification on the second item's
+    audience if not obvious from context. Tests that the disambiguation guard
+    holds across parallel service slots.
+  tags: [v2, audience, disambiguation, multi-service, change-m]
+  persona:
+    name: Roberto Sanz
+    phone: "+34999000047"
+    style: >
+      Padre que viene con su hijo. Quiere reservar un corte para el niño
+      (dice "para un niño") y un "pelado" para él mismo (dice "y un pelado
+      para mí"). Si el bot le pide más información sobre alguno de los dos
+      servicios, responde con calma. Si el bot asume género sin preguntar
+      para el pelado, dice "sí, soy yo, soy hombre". Acepta la primera
+      disponibilidad y confirma.
+  intent: "Hola, quiero un corte para un niño y un pelado"
+  max_turns: 12
+  expect:
+    outcome: multi_completed
+    audience_disambiguation: required
+    db_appointment:
+      status: confirmed
+    tool_calls_required: [check_availability, book]
+    tool_calls_forbidden: []
+    tags: [audience, disambiguation, multi-service, cold-open, gendered-service-guard]
