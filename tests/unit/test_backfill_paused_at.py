@@ -2,15 +2,19 @@
 Unit tests for scripts/backfill_paused_at.py — two-phase cutover (ADR-4).
 
 Tests cover:
-- SEED idempotency: only seeds paused_at WHERE paused_at IS NULL AND atencion_automatica=false
+- SEED idempotency: only seeds paused_at WHERE paused_at IS NULL AND resumed_at IS NULL
 - SEED SQL guard: UPDATE includes WHERE paused_at IS NULL (not just WHERE atencion_automatica=false)
-- SEED skips conversations without atencion_automatica=false
+- SEED SQL guard: UPDATE includes WHERE resumed_at IS NULL (F2-safety: never re-pauses resumed conv)
+- C1 regression: conversation_id bound as str, not int (asyncpg String(255) type requirement)
+- SEED skips conversations without atencion_automatica=false (value normalization: "false" seeds)
+- SEED list-payload-missing fallback: falls back to per-conversation GET when custom_attributes absent
 - CLEAR merge: GET → drop atencion_automatica key → POST remainder
 - CLEAR never POSTs atencion_automatica (not even as null) — ADR-4 F2
 - --dry-run: no DB writes, no Chatwoot HTTP writes
-- 429 / 5xx: exponential backoff + asyncio.sleep call (sleep patched)
+- 429 / 5xx: exponential backoff + asyncio.sleep call (sleep patched) for all HTTP helpers
 - --max-pages: bounds pagination loop before the guard fires
-- Checkpoint/resume: checkpoint saved per page; re-run starts from next page
+- Checkpoint/resume: checkpoint saved per page (spy); re-run starts from next page
+- --no-resume: ignores existing checkpoint, scans from page 1
 
 All HTTP and DB I/O is mocked — no live DB or Chatwoot required.
 """
@@ -24,6 +28,7 @@ from scripts.backfill_paused_at import (
     run_clear,
     run_seed,
     save_checkpoint,
+    clear_checkpoint,
 )
 
 
@@ -72,11 +77,21 @@ def _conv_detail(conv_id: int, custom_attrs: dict) -> dict:
 
 
 def _conv(conv_id: int, atencion_automatica: bool | None = None) -> dict:
-    """Build a minimal conversation payload entry."""
+    """Build a minimal conversation payload entry (always includes custom_attributes key)."""
     attrs: dict = {}
     if atencion_automatica is not None:
         attrs["atencion_automatica"] = atencion_automatica
     return {"id": conv_id, "custom_attributes": attrs}
+
+
+def _conv_str_attr(conv_id: int, atencion_value) -> dict:
+    """Build a conversation payload with an arbitrary atencion_automatica value (any type)."""
+    return {"id": conv_id, "custom_attributes": {"atencion_automatica": atencion_value}}
+
+
+def _conv_no_attrs(conv_id: int) -> dict:
+    """Build a conversation payload with NO custom_attributes key (simulates stale list entry)."""
+    return {"id": conv_id}
 
 
 class _FakeSession:
@@ -120,6 +135,7 @@ def _seed_kw(
     dry_run: bool = False,
     max_pages: int | None = None,
     inbox_id: str | None = None,
+    no_resume: bool = False,
 ) -> dict:
     return dict(
         session_factory=session_factory,
@@ -130,6 +146,7 @@ def _seed_kw(
         dry_run=dry_run,
         max_pages=max_pages,
         inbox_id=inbox_id,
+        no_resume=no_resume,
         checkpoint_path=str(tmp_path / "cp.json"),
     )
 
@@ -141,6 +158,7 @@ def _clear_kw(
     dry_run: bool = False,
     max_pages: int | None = None,
     inbox_id: str | None = None,
+    no_resume: bool = False,
 ) -> dict:
     return dict(
         http_client=http_client,
@@ -150,6 +168,7 @@ def _clear_kw(
         dry_run=dry_run,
         max_pages=max_pages,
         inbox_id=inbox_id,
+        no_resume=no_resume,
         checkpoint_path=str(tmp_path / "cp.json"),
     )
 
@@ -217,10 +236,62 @@ class TestSeedIdempotency:
         # At least one SQL executed
         assert session.executed, "Expected at least one SQL execute call"
         sql_text, params = session.executed[0]
-        # Must contain the idempotency guard
-        assert "paused_at IS NULL" in sql_text.upper().replace("_", " ") or "paused_at IS NULL" in sql_text
+        # Must contain the idempotency guard (direct check — no dead .replace("_"," ") form)
+        assert "paused_at IS NULL" in sql_text
         # And it must reference conversation_id
         assert "conversation_id" in sql_text.lower() or "conversation_id" in params
+
+    async def test_seed_sql_includes_resumed_at_is_null(self, tmp_path) -> None:
+        """UPDATE SQL must include resumed_at IS NULL to avoid re-pausing resumed conversations."""
+        session = _FakeSession(rowcount=1)
+        factory = _FakeSessionFactory(session)
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(
+            side_effect=[
+                _ok(_page([_conv(102, atencion_automatica=False)])),
+                _ok(_empty_page()),
+            ]
+        )
+
+        await run_seed(**_seed_kw(mock_client, factory, tmp_path=tmp_path))
+
+        assert session.executed, "Expected at least one SQL execute call"
+        sql_text, _ = session.executed[0]
+        assert "resumed_at IS NULL" in sql_text, (
+            "F2-safety: SQL must exclude conversations where resumed_at IS NOT NULL"
+        )
+
+    async def test_seed_binds_conversation_id_as_str(self, tmp_path) -> None:
+        """C1 regression: conversation_id must be bound as str, not int.
+
+        asyncpg raises DataError for int values bound to String(255) columns.
+        Chatwoot API returns ids as int; every DB call must cast via str(conv_id).
+        """
+        session = _FakeSession(rowcount=1)
+        factory = _FakeSessionFactory(session)
+        conv_id_int = 101  # integer from Chatwoot JSON
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(
+            side_effect=[
+                _ok(_page([_conv(conv_id_int, atencion_automatica=False)])),
+                _ok(_empty_page()),
+            ]
+        )
+
+        await run_seed(**_seed_kw(mock_client, factory, tmp_path=tmp_path))
+
+        assert session.executed, "Expected at least one SQL execute call"
+        _, params = session.executed[0]
+        cid = params.get("cid")
+        assert isinstance(cid, str), (
+            f"C1: cid must be str, got {type(cid).__name__!r} — "
+            "asyncpg requires str for String(255) conversation_id column"
+        )
+        assert cid == str(conv_id_int), (
+            f"C1: cid value mismatch: expected {str(conv_id_int)!r}, got {cid!r}"
+        )
 
     async def test_seed_skips_conversations_without_atencion_false(self, tmp_path) -> None:
         """Conversations with atencion_automatica=true or absent are not seeded."""
@@ -248,6 +319,82 @@ class TestSeedIdempotency:
         assert stats["seeded"] == 1
         assert stats["skipped_no_attr"] == 2
         assert len(session.executed) == 1  # only conv 203
+
+    async def test_seed_value_normalization_string_false_seeds(self, tmp_path) -> None:
+        """atencion_automatica='false' (string) must be treated as disabled → seed.
+
+        Chatwoot's JSON encoding may return a string instead of a bool boolean.
+        """
+        session = _FakeSession(rowcount=1)
+        factory = _FakeSessionFactory(session)
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(
+            side_effect=[
+                _ok(_page([_conv_str_attr(204, "false")])),   # string "false" → seed
+                _ok(_empty_page()),
+            ]
+        )
+
+        stats = await run_seed(**_seed_kw(mock_client, factory, tmp_path=tmp_path))
+
+        assert stats["seeded"] == 1, "string 'false' must be treated as disabled and seeded"
+        assert stats["skipped_no_attr"] == 0
+
+    async def test_seed_value_normalization_true_does_not_seed(self, tmp_path) -> None:
+        """atencion_automatica=True, 'true', or absent must not seed."""
+        session = _FakeSession(rowcount=1)
+        factory = _FakeSessionFactory(session)
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(
+            side_effect=[
+                _ok(
+                    _page(
+                        [
+                            _conv(205, atencion_automatica=True),   # bool True → skip
+                            _conv_str_attr(206, "true"),            # string "true" → skip
+                            _conv(207),                             # absent → skip
+                        ]
+                    )
+                ),
+                _ok(_empty_page()),
+            ]
+        )
+
+        stats = await run_seed(**_seed_kw(mock_client, factory, tmp_path=tmp_path))
+
+        assert stats["seeded"] == 0
+        assert stats["skipped_no_attr"] == 3
+        assert session.executed == [], "must not execute any SQL for non-disabled conversations"
+
+    async def test_seed_list_payload_missing_custom_attributes_fallback(
+        self, tmp_path
+    ) -> None:
+        """When the list payload has no custom_attributes key, fall back to per-conv GET.
+
+        The fallback GET is counted in stats['fallbacks_to_get']. If the GET returns
+        atencion_automatica=false, the row is seeded.
+        """
+        session = _FakeSession(rowcount=1)
+        factory = _FakeSessionFactory(session)
+
+        conv_detail = _conv_detail(208, {"atencion_automatica": False})
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(
+            side_effect=[
+                _ok(_page([_conv_no_attrs(208)])),  # list entry — no custom_attributes key
+                _ok(conv_detail),                   # fallback GET returns real attrs
+                _ok(_empty_page()),
+            ]
+        )
+
+        stats = await run_seed(**_seed_kw(mock_client, factory, tmp_path=tmp_path))
+
+        assert stats["seeded"] == 1
+        assert stats["fallbacks_to_get"] == 1
+        assert len(session.executed) == 1
 
 
 class TestClearMerge:
@@ -444,6 +591,52 @@ class TestBackoffResilience:
         assert stats["cleared"] == 1
         mock_asyncio.sleep.assert_awaited()
 
+    async def test_get_conversation_429_triggers_retry(self, tmp_path) -> None:
+        """429 on GET single conversation (CLEAR per-conv GET) triggers exponential backoff."""
+        mock_client = AsyncMock()
+        conv_detail = _conv_detail(504, {"atencion_automatica": False})
+        mock_client.get = AsyncMock(
+            side_effect=[
+                _ok(_page([_conv(504)])),  # list page → 200
+                _err(429),                 # per-conv GET → 429
+                _ok(conv_detail),          # retry → 200
+                _ok(_empty_page()),
+            ]
+        )
+        mock_client.post = AsyncMock(return_value=_ok_post())
+
+        with patch("scripts.backfill_paused_at.asyncio") as mock_asyncio:
+            mock_asyncio.sleep = AsyncMock()
+            stats = await run_clear(**_clear_kw(mock_client, tmp_path=tmp_path))
+
+        assert stats["cleared"] == 1
+        mock_asyncio.sleep.assert_awaited()
+
+    async def test_post_custom_attrs_429_triggers_retry(self, tmp_path) -> None:
+        """429 on POST custom_attributes triggers exponential backoff."""
+        mock_client = AsyncMock()
+        conv_detail = _conv_detail(505, {"atencion_automatica": False})
+        mock_client.get = AsyncMock(
+            side_effect=[
+                _ok(_page([_conv(505)])),
+                _ok(conv_detail),
+                _ok(_empty_page()),
+            ]
+        )
+        mock_client.post = AsyncMock(
+            side_effect=[
+                _err(429),    # first POST → 429
+                _ok_post(),   # retry → 200
+            ]
+        )
+
+        with patch("scripts.backfill_paused_at.asyncio") as mock_asyncio:
+            mock_asyncio.sleep = AsyncMock()
+            stats = await run_clear(**_clear_kw(mock_client, tmp_path=tmp_path))
+
+        assert stats["cleared"] == 1
+        mock_asyncio.sleep.assert_awaited()
+
 
 class TestMaxPages:
     """--max-pages N stops pagination after N pages."""
@@ -536,17 +729,10 @@ class TestCheckpointResume:
         assert stats["seeded"] == 1
 
     async def test_checkpoint_saved_per_page(self, tmp_path) -> None:
-        """After run_seed with max_pages=1, checkpoint reflects page 1 processed.
+        """save_checkpoint is called exactly once per processed page.
 
-        NOTE: clear_checkpoint runs at end of function (even with max_pages guard).
-        The checkpoint is therefore cleaned up after any successful run.
-        We verify per-page save was called by checking it before clear fires:
-        with max_pages=1 and a page with data, the function completes page 1, calls
-        save_checkpoint("seed",1,...), then hits max_pages guard at page 2 and breaks,
-        then calls clear_checkpoint.  We verify via load_checkpoint that it was written
-        (the clear fires after the load attempt here won't matter because the test
-        calls load_checkpoint AFTER run_seed has already cleared it — so we verify
-        save happened by checking the stats).
+        Patches save_checkpoint to verify it was invoked with the correct args
+        after page 1 completes — not just that the file was eventually cleared.
         """
         cp = str(tmp_path / "cp.json")
         session = _FakeSession(rowcount=1)
@@ -555,25 +741,66 @@ class TestCheckpointResume:
         mock_client = AsyncMock()
         mock_client.get = AsyncMock(
             side_effect=[
-                _ok(_page([_conv(901, atencion_automatica=False)])),
+                _ok(_page([_conv(901, atencion_automatica=False)])),  # page 1
+                _ok(_empty_page()),                                    # stop
             ]
         )
 
-        stats = await run_seed(
-            session_factory=factory,
-            http_client=mock_client,
-            account_id="999",
-            base_url="https://chatwoot.test",
-            api_headers={"api_access_token": "tok"},
-            dry_run=False,
-            max_pages=1,
-            inbox_id=None,
-            checkpoint_path=cp,
-        )
+        with patch("scripts.backfill_paused_at.save_checkpoint") as mock_save:
+            stats = await run_seed(
+                session_factory=factory,
+                http_client=mock_client,
+                account_id="999",
+                base_url="https://chatwoot.test",
+                api_headers={"api_access_token": "tok"},
+                dry_run=False,
+                max_pages=None,
+                inbox_id=None,
+                checkpoint_path=cp,
+            )
 
-        # page 1 processed and seeded
         assert stats["pages_processed"] == 1
         assert stats["seeded"] == 1
-        # After a complete run (even partial via max_pages), checkpoint is cleared
-        # load_checkpoint returns 0 (no file or different phase)
-        assert load_checkpoint("seed", cp) == 0
+        # save_checkpoint must have been called once, for page 1
+        mock_save.assert_called_once_with("seed", 1, cp)
+
+    async def test_no_resume_ignores_checkpoint(self, tmp_path) -> None:
+        """no_resume=True ignores an existing checkpoint and scans from page 1.
+
+        Pre-saves a checkpoint claiming page 5 was done. With no_resume=True the
+        function must start at page 1 (not page 6) and overwrite the checkpoint.
+        """
+        cp = str(tmp_path / "cp.json")
+        # Simulate a previous partial run that finished page 5
+        save_checkpoint("seed", 5, cp)
+
+        session = _FakeSession(rowcount=1)
+        factory = _FakeSessionFactory(session)
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(
+            side_effect=[
+                _ok(_page([_conv(1001, atencion_automatica=False)])),  # page 1 fetched
+                _ok(_empty_page()),
+            ]
+        )
+
+        with patch("scripts.backfill_paused_at.save_checkpoint") as mock_save:
+            stats = await run_seed(
+                session_factory=factory,
+                http_client=mock_client,
+                account_id="999",
+                base_url="https://chatwoot.test",
+                api_headers={"api_access_token": "tok"},
+                dry_run=False,
+                max_pages=None,
+                inbox_id=None,
+                checkpoint_path=cp,
+                no_resume=True,
+            )
+
+        # Started from page 1 (not page 6); one page processed
+        assert stats["pages_processed"] == 1
+        assert stats["seeded"] == 1
+        # save_checkpoint called for page 1 (not page 6)
+        mock_save.assert_called_once_with("seed", 1, cp)

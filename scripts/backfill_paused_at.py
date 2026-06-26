@@ -49,6 +49,9 @@ logger = logging.getLogger(__name__)
 CHECKPOINT_FILE = ".backfill_paused_at_checkpoint.json"
 _RETRY_BASE_DELAY: float = 1.0
 _MAX_RETRIES: int = 5
+# Values of atencion_automatica that mean "bot disabled" — tolerant check against
+# Chatwoot's loose JSON encoding (may return bool False, string "false"/"False", or int 0).
+_DISABLED_VALUES: tuple = (False, "false", "False", 0)
 
 
 # ---------------------------------------------------------------------------
@@ -190,25 +193,35 @@ async def run_seed(
     dry_run: bool,
     max_pages: int | None,
     inbox_id: str | None,
+    no_resume: bool = False,
     checkpoint_path: str = CHECKPOINT_FILE,
 ) -> dict[str, int]:
     """Phase A: set paused_at for conversations whose atencion_automatica=false.
 
-    Idempotent guard: UPDATE ... WHERE paused_at IS NULL — never overwrites an
-    operator-set paused_at, and re-running produces zero additional changes once
-    all NULL rows have been seeded.
+    Idempotent guard: UPDATE ... WHERE paused_at IS NULL AND resumed_at IS NULL —
+    never overwrites an operator-set paused_at, and never re-pauses a conversation
+    that was already resumed (resumed_at set, paused_at NULL).
+
+    If no_resume=True, any existing checkpoint is cleared and the scan starts from
+    page 1 (full rescan).  Use this for the final pre-flip seed to avoid stale
+    page-offset drift from Chatwoot's activity-ordered mutable list.
 
     Returns stats with keys: pages_processed, seeded, skipped_no_attr,
-    skipped_already_set.
+    skipped_already_set, fallbacks_to_get.
     """
     stats: dict[str, int] = {
         "pages_processed": 0,
         "seeded": 0,
         "skipped_no_attr": 0,
         "skipped_already_set": 0,
+        "fallbacks_to_get": 0,
     }
 
-    start_page = load_checkpoint("seed", checkpoint_path) + 1
+    if no_resume:
+        clear_checkpoint(checkpoint_path)
+        start_page = 1
+    else:
+        start_page = load_checkpoint("seed", checkpoint_path) + 1
     conversations_url = f"{base_url}/api/v1/accounts/{account_id}/conversations"
 
     page = start_page
@@ -234,11 +247,30 @@ async def run_seed(
 
         for conv in payload:
             conv_id = conv.get("id")
-            custom_attrs: dict[str, Any] = conv.get("custom_attributes") or {}
+            if conv_id is None:
+                continue
+
+            if "custom_attributes" not in conv:
+                # Key absent from list payload — fall back to a fresh per-conversation GET.
+                # Chatwoot's activity-ordered list may omit the field on stale entries.
+                conv_url = (
+                    f"{base_url}/api/v1/accounts/{account_id}/conversations/{conv_id}"
+                )
+                conv_data = await _get_conversation(http_client, conv_url, api_headers)
+                custom_attrs: dict[str, Any] = conv_data.get("custom_attributes") or {}
+                stats["fallbacks_to_get"] += 1
+                logger.debug(
+                    "List payload missing custom_attributes for conv=%s — fell back to GET",
+                    conv_id,
+                )
+            else:
+                custom_attrs = conv.get("custom_attributes") or {}
+
             atencion = custom_attrs.get("atencion_automatica")
 
-            if atencion is not False:
-                # Only seed conversations explicitly disabled (atencion_automatica=False)
+            if atencion not in _DISABLED_VALUES:
+                # Only seed conversations explicitly disabled (atencion_automatica=false).
+                # Treats False, "false", "False", 0 as disabled; true/absent/None → skip.
                 stats["skipped_no_attr"] += 1
                 continue
 
@@ -255,8 +287,9 @@ async def run_seed(
                         " SET paused_at = :now"
                         " WHERE conversation_id = :cid"
                         "   AND paused_at IS NULL"
+                        "   AND resumed_at IS NULL"
                     ),
-                    {"now": now, "cid": conv_id},
+                    {"now": now, "cid": str(conv_id)},
                 )
                 await session.commit()
 
@@ -295,6 +328,7 @@ async def run_clear(
     dry_run: bool,
     max_pages: int | None,
     inbox_id: str | None,
+    no_resume: bool = False,
     checkpoint_path: str = CHECKPOINT_FILE,
 ) -> dict[str, int]:
     """Phase B: remove atencion_automatica from all Chatwoot conversations.
@@ -304,6 +338,9 @@ async def run_clear(
     blindly replace the entire custom_attributes object and wipe sibling attributes
     (ADR-4 F2 / shared/chatwoot_client.py:359-361).
 
+    If no_resume=True, any existing checkpoint is cleared and the scan starts from
+    page 1 (full rescan).
+
     Returns stats with keys: pages_processed, cleared, skipped_no_attr.
     """
     stats: dict[str, int] = {
@@ -312,7 +349,11 @@ async def run_clear(
         "skipped_no_attr": 0,
     }
 
-    start_page = load_checkpoint("clear", checkpoint_path) + 1
+    if no_resume:
+        clear_checkpoint(checkpoint_path)
+        start_page = 1
+    else:
+        start_page = load_checkpoint("clear", checkpoint_path) + 1
     conversations_url = f"{base_url}/api/v1/accounts/{account_id}/conversations"
 
     page = start_page
@@ -429,6 +470,16 @@ async def main() -> None:
         default=None,
         help="Override CHATWOOT_INBOX_ID from settings.",
     )
+    parser.add_argument(
+        "--no-resume",
+        action="store_true",
+        default=False,
+        help=(
+            "Ignore any existing checkpoint and scan from page 1 (full rescan).\n"
+            "Always use this for the final pre-flip seed: the page-offset checkpoint\n"
+            "is mutable-list-ordered and can skip newly-active drift rows on a resumed run."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -462,6 +513,7 @@ async def main() -> None:
                     dry_run=args.dry_run,
                     max_pages=args.max_pages,
                     inbox_id=inbox_id,
+                    no_resume=args.no_resume,
                 )
             finally:
                 await engine.dispose()
@@ -474,6 +526,7 @@ async def main() -> None:
                 dry_run=args.dry_run,
                 max_pages=args.max_pages,
                 inbox_id=inbox_id,
+                no_resume=args.no_resume,
             )
 
     logger.info("Phase '%s' complete. Stats: %s", args.phase, stats)

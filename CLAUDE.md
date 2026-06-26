@@ -838,17 +838,30 @@ python scripts/backfill_paused_at.py --phase seed
 # Final pre-flip SEED — run IMMEDIATELY before the image swap.
 # Captures any conversation escalated under the OLD code between
 # the Phase A scan and the image swap (admin pauses are already safe —
-# pause() writes paused_at to DB directly).  Idempotent: only touches
-# rows where paused_at IS NULL, never overwrites an operator-set value.
+# pause() writes paused_at to DB directly).
+# ALWAYS use --no-resume here: the page-offset checkpoint is ordered by
+# Chatwoot's mutable activity list and can skip newly-active drift rows
+# on a resumed run.  Full rescan guarantees nothing is missed.
 # -------------------------------------------------------------------
-python scripts/backfill_paused_at.py --phase seed
+python scripts/backfill_paused_at.py --phase seed --no-resume
 
 # -------------------------------------------------------------------
 # Deploy new api/agent images (new DB gate goes live, fail-closed).
-# Zero-leak alternative: hold settings.ai_agent_enabled=False across
-# the entire cutover (from before Phase A through the image swap), then
-# flip it back on.  This trades a full bot blackout for absolute
-# ordering safety.
+# Zero-leak alternative: engage a bot blackout BEFORE Phase A via:
+#
+#   psql: UPDATE system_settings
+#           SET value = 'false'::jsonb
+#           WHERE key = 'ai_agent_enabled';
+#
+# Then flip it back after Phase A + deploy + Phase B complete:
+#
+#   psql: UPDATE system_settings
+#           SET value = 'true'::jsonb
+#           WHERE key = 'ai_agent_enabled';
+#
+# (value column is JSONB — SettingsService reads ai_agent_enabled from
+#  system_settings.value with value_type='boolean')
+# This trades a full bot blackout for absolute ordering safety.
 # -------------------------------------------------------------------
 docker compose -f /home/pepe/Proyectos/atrevete-bot/docker-compose.yml up -d --build api agent
 
@@ -892,7 +905,7 @@ curl -s -H "api_access_token: $CHATWOOT_API_TOKEN" \
 # expect: no output (key absent)
 ```
 
-**Resumable runs.** If the script is interrupted, re-run the same command — it resumes from the last completed page via a checkpoint file (`.backfill_paused_at_checkpoint.json` in the cwd). Use `--max-pages N` to bound a run for testing.
+**Resumable runs.** If the script is interrupted, re-run the same command — it resumes from the last completed page via a checkpoint file (`.backfill_paused_at_checkpoint.json` in the cwd). Use `--max-pages N` to bound a run for testing. Use `--no-resume` to force a full rescan from page 1 (ignores and clears any existing checkpoint); always use `--no-resume` for the final pre-flip seed to avoid stale page-offset drift on Chatwoot's mutable activity-ordered list.
 
 Rollback: `git revert` the pause-state-internal-ssot commits + restart api/agent. The `paused_at` column retains its seeded values (harmless if the old images are restored — the old gate ignores it). If needed, reset seeded rows: `UPDATE conversation_history SET paused_at = NULL WHERE ...` scoped to the relevant conversation IDs.
 
