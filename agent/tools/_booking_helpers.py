@@ -225,6 +225,142 @@ _COLLOQUIAL_SYNONYM_MAP: dict[str, str] = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Dimension-keyword map + candidate heuristic (ADR-1 — multi-service-resolution PR 2)
+# ---------------------------------------------------------------------------
+# Maps catalog dimension names → normalized keyword substrings used to infer the
+# dimension from an unrecognised customer term.  Each keyword is a substring that
+# must appear in the _normalize_name() output of the unknown term.  First dimension
+# match wins (order matters — add more specific dimensions before generic ones if
+# there is overlap risk).
+#
+# Extend by adding entries here; no other code change required.
+_DIMENSION_KEYWORD_MAP: dict[str, list[str]] = {
+    "cut": ["pel", "rap", "corte", "flequillo", "recort"],
+    "color": ["tinte", "color"],
+    "highlights": ["mecha"],
+    "manicure": ["manicura"],
+    "wax": ["depil", "cera"],
+}
+
+
+def _infer_dimension_from_term(normalized_term: str) -> str | None:
+    """Return the catalog dimension inferred from a normalized unknown term.
+
+    Iterates _DIMENSION_KEYWORD_MAP in insertion order; first dimension whose
+    keyword list contains a substring match wins. Returns None when no dimension
+    can be inferred.  Pure function — no I/O.
+
+    Design: ADR-1 (multi-service-resolution) candidate heuristic.
+    """
+    for dimension, keywords in _DIMENSION_KEYWORD_MAP.items():
+        for kw in keywords:
+            if kw in normalized_term:
+                return dimension
+    return None
+
+
+async def _find_catalog_candidates(session: AsyncSession, unknown_terms: list[str]) -> list[str]:
+    """Return up to 5 customer-safe display names for the given unknown service terms.
+
+    Heuristic (ADR-1):
+      1. Normalize each unknown term.
+      2. Infer catalog dimension via _DIMENSION_KEYWORD_MAP substring matching.
+      3. Rank PRINCIPAL display names within that dimension by token overlap with
+         the unknown term; return top 3-5.
+      4. If no dimension is inferred, fall back to top-3 token-overlap across ALL
+         principals (only entries with overlap > 0 are included).
+      5. If still none, return [].
+
+    Candidates are returned as customer-safe display names produced by
+    _derive_customer_safe_service_name so the bot can present them directly.
+
+    Only active PRINCIPAL services are considered — variants and add-ons are
+    excluded so the LLM never presents a variant name without first booking its
+    parent principal.
+
+    Pure DB-read — no writes, no state mutation.
+    Refs: design ADR-1, spec §unknown-service-suggestion.
+    """
+    from agent.prompts.catalog_builder import _derive_customer_safe_service_name
+    from database.models import Service
+
+    if not unknown_terms:
+        return []
+
+    result = await session.execute(
+        select(Service.id, Service.name, Service.metadata_).where(Service.is_active.is_(True))
+    )
+    rows = result.fetchall()
+
+    principals: list[dict] = []
+    for _sid, name, metadata in rows:
+        meta = metadata or {}
+        if meta.get("service_type") == "principal":
+            display = _derive_customer_safe_service_name(name)
+            principals.append(
+                {
+                    "name": name,
+                    "display": display,
+                    "dimension": meta.get("dimension"),
+                }
+            )
+
+    if not principals:
+        return []
+
+    all_candidates: list[str] = []
+    seen: set[str] = set()
+
+    for term in unknown_terms:
+        normalized = _normalize_name(term)
+        dimension = _infer_dimension_from_term(normalized)
+
+        if dimension:
+            dim_principals = [p for p in principals if p["dimension"] == dimension]
+            if dim_principals:
+                term_tokens = set(normalized.split())
+                # Rank by token overlap; stable secondary key is display name (deterministic)
+                scored = sorted(
+                    dim_principals,
+                    key=lambda p: (
+                        len(term_tokens & set(_normalize_name(p["display"]).split())),
+                        p["display"],
+                    ),
+                    reverse=True,
+                )
+                for p in scored[:5]:
+                    if p["display"] not in seen:
+                        all_candidates.append(p["display"])
+                        seen.add(p["display"])
+                continue
+            # Dimension recognized but no principals in catalog → fall through to global overlap
+
+        # No dimension inferred (or dimension has no principals): token-overlap fallback
+        term_tokens = set(normalized.split())
+        if term_tokens:
+            scored_all = sorted(
+                principals,
+                key=lambda p: (
+                    len(term_tokens & set(_normalize_name(p["display"]).split())),
+                    p["display"],
+                ),
+                reverse=True,
+            )
+            # Include only entries with at least 1 overlapping token
+            top = [
+                p
+                for p in scored_all[:8]
+                if len(term_tokens & set(_normalize_name(p["display"]).split())) > 0
+            ][:3]
+            for p in top:
+                if p["display"] not in seen:
+                    all_candidates.append(p["display"])
+                    seen.add(p["display"])
+
+    return all_candidates[:5]
+
+
 def _strip_diminutive(normalized: str) -> str | None:
     """Return the stem if the word ends in a Spanish diminutive suffix, else None.
 

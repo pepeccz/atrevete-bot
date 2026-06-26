@@ -322,6 +322,7 @@ async def _update_booking_impl(
 ) -> str:
     from agent.booking.resolvers.time_resolver import MIN_BOOKING_DAYS
     from agent.tools._booking_helpers import (
+        _find_catalog_candidates,
         _resolve_active_stylists,
         _resolve_audience_variants,
         _resolve_service_categories,
@@ -332,6 +333,7 @@ async def _update_booking_impl(
         _validate_full_name,
         gendered_service_without_audience_source,
     )
+    from agent.tools.next_steps import SERVICE_SUGGESTION_REQUIRED
     from database.connection import get_async_session
 
     # C1 fix: callers using pre_resolved_service_ids only may pass services=None.
@@ -367,7 +369,6 @@ async def _update_booking_impl(
     async with get_async_session() as session:
         collected: dict = {}
         missing: list[str] = []
-        errors: list[str] = []
 
         # ── AR5: validate pre_resolved_service_ids against active catalog ─────
         # UUIDs are validated BEFORE the services gate so that pre_resolved can
@@ -498,20 +499,25 @@ async def _update_booking_impl(
             ).model_dump_json()
 
         if unknown_names:
-            errors.extend([f"No reconozco el servicio: {n}" for n in unknown_names])
+            # ADR-1 (multi-service-resolution): offer dimension-aware catalog suggestions
+            # instead of a hard reject so the bot presents alternatives conversationally.
+            # `resolved_ids` contains any clean UUIDs from this resolution call; they are
+            # forwarded as `partial_resolved_ids` so the LLM can round-trip them (R-35).
+            candidates = await _find_catalog_candidates(session, unknown_names)
             logger.info(
-                "tool.response.rejected",
+                "tool.response.suggestion_required",
                 extra={
                     "tool_name": "update_booking",
-                    "next_step": "service_required",
-                    "errors": errors,
+                    "next_step": SERVICE_SUGGESTION_REQUIRED,
+                    "unknown_terms": unknown_names,
+                    "candidates_count": len(candidates),
                 },
             )
             return ToolResponse(
                 status="rejected",
-                missing=["services"],
-                next_step="service_required",
-                errors=errors,
+                next_step=SERVICE_SUGGESTION_REQUIRED,
+                payload={"unknown_terms": unknown_names, "candidates": candidates},
+                collected={"partial_resolved_ids": resolved_ids},
             ).model_dump_json()
 
         # ── ADR-DR-2: merge pre_resolved_set into resolved_ids ───────────────

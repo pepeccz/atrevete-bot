@@ -82,6 +82,19 @@ Cuando el cliente indique una preferencia de hora del día al pedir disponibilid
 | muy tarde / atardecer / noche / por la noche | `"afternoon"` (límite operativo: 20:00) |
 | sin preferencia / da igual / cualquier hora / cuando haya | `null` |
 
+---
+
+## Términos coloquiales → catálogo interno
+
+Estos términos del habla cotidiana se resuelven automáticamente al servicio interno correcto.
+El sistema aplica el mapeo ANTES de buscar en el catálogo; no necesitas preguntar al cliente.
+Si el término llega como "desconocido" (el mapeo falla por cualquier razón), sigue las
+instrucciones de `next_step=service_suggestion_required` (R-43 / Paso 1.5 de booking_flow.md).
+
+| Lo que dice el cliente | Servicio interno | Audience autoinfiere |
+|------------------------|------------------|-----------------------|
+| pelado / rapado / pelao / rapao / pelaito / rapadito | Corte de Hombre | `adult_male` |
+
 > Nota: `"muy tarde"` y `"atardecer"` se mapean a `"afternoon"` (no existe `"evening"`). El horario máximo del salón es las 20:00.
 
 ---

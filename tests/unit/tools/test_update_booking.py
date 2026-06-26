@@ -76,9 +76,7 @@ async def seeded_db(db_session):
     await db_session.execute(
         delete(Service).where(Service.name.in_(["corte dama test", "peinado test", "alisado test"]))
     )
-    await db_session.execute(
-        delete(Stylist).where(Stylist.slug.in_(["marta-test", "pilar-test"]))
-    )
+    await db_session.execute(delete(Stylist).where(Stylist.slug.in_(["marta-test", "pilar-test"])))
     # Only delete business hours we're about to insert (days 0-5) if they don't exist
     await db_session.flush()
 
@@ -121,23 +119,29 @@ async def seeded_db(db_session):
 
     # Seed business hours for Mon-Sat (days 0-5) — needed for is_date_closed validator
     from sqlalchemy import select
+
     bh_existing_days = set(
-        row[0] for row in (await db_session.execute(
-            select(BusinessHours.day_of_week).where(BusinessHours.day_of_week < 6)
-        )).all()
+        row[0]
+        for row in (
+            await db_session.execute(
+                select(BusinessHours.day_of_week).where(BusinessHours.day_of_week < 6)
+            )
+        ).all()
     )
     bh_to_add = []
     for dow in range(6):  # Mon=0 to Sat=5
         if dow not in bh_existing_days:
-            bh_to_add.append(BusinessHours(
-                id=uuid4(),
-                day_of_week=dow,
-                is_closed=False,
-                start_hour=9,
-                start_minute=0,
-                end_hour=19,
-                end_minute=0,
-            ))
+            bh_to_add.append(
+                BusinessHours(
+                    id=uuid4(),
+                    day_of_week=dow,
+                    is_closed=False,
+                    start_hour=9,
+                    start_minute=0,
+                    end_hour=19,
+                    end_minute=0,
+                )
+            )
 
     db_session.add_all([marta, pilar, corte, peinado, alisado] + bh_to_add)
     await db_session.flush()
@@ -155,9 +159,7 @@ async def seeded_db(db_session):
     await db_session.execute(
         delete(Service).where(Service.name.in_(["corte dama test", "peinado test", "alisado test"]))
     )
-    await db_session.execute(
-        delete(Stylist).where(Stylist.slug.in_(["marta-test", "pilar-test"]))
-    )
+    await db_session.execute(delete(Stylist).where(Stylist.slug.in_(["marta-test", "pilar-test"])))
     if bh_to_add:
         added_dow = [bh.day_of_week for bh in bh_to_add]
         await db_session.execute(
@@ -204,17 +206,55 @@ async def test_services_only_returns_stylist_required():
 
 
 @pytest.mark.asyncio
-async def test_unknown_service_returns_rejected():
-    """services=['peeling'] (nonexistent) → status=rejected, next_step=service_required."""
+async def test_unknown_service_returns_suggestion_required():
+    """Task 5.1 RED: unknown service → status=rejected, next_step=service_suggestion_required.
+
+    Before task 5.3 implementation this test FAILS (returns service_required instead).
+    After 5.3 this returns service_suggestion_required + payload.candidates.
+
+    Refs: design ADR-1, spec §unknown-service-suggestion.
+    """
     if not await _db_available():
         pytest.skip("Postgres not reachable")
     from agent.tools.update_booking import update_booking
 
-    raw = await update_booking.ainvoke({"services": ["servicio_inexistente_xyz"]})
+    raw = await update_booking.ainvoke({"services": ["servicio_inexistente_xyz_pr2"]})
     data = parse_response(raw)
     assert data["status"] == "rejected"
-    assert data["next_step"] == "service_required"
-    assert len(data["errors"]) > 0
+    # RED: currently returns "service_required"; must return "service_suggestion_required" after GREEN
+    assert data["next_step"] == "service_suggestion_required", (
+        f"Expected 'service_suggestion_required' but got '{data['next_step']}'. "
+        "Task 5.3 must replace the hard-reject branch with the suggestion fallback."
+    )
+    # Payload must contain unknown_terms + candidates
+    assert "payload" in data, "Response must include 'payload' key"
+    payload = data["payload"]
+    assert "unknown_terms" in payload, "payload must include 'unknown_terms'"
+    assert "candidates" in payload, "payload must include 'candidates'"
+    assert isinstance(payload["candidates"], list), "payload.candidates must be a list"
+    # partial_resolved_ids must be present (R-35 round-trip)
+    assert "collected" in data, "Response must include 'collected' key"
+    assert (
+        "partial_resolved_ids" in data["collected"]
+    ), "collected must include 'partial_resolved_ids' for R-35 round-trip"
+
+
+@pytest.mark.asyncio
+async def test_unknown_service_does_not_return_service_required():
+    """Task 5.1 companion: unknown service must NOT return next_step=service_required.
+
+    The old hard-reject branch is replaced by the suggestion fallback in task 5.3.
+    """
+    if not await _db_available():
+        pytest.skip("Postgres not reachable")
+    from agent.tools.update_booking import update_booking
+
+    raw = await update_booking.ainvoke({"services": ["servicio_inexistente_xyz_pr2"]})
+    data = parse_response(raw)
+    assert data["next_step"] != "service_required", (
+        "Unknown service must no longer return next_step='service_required'. "
+        "Task 5.3 replaces this with 'service_suggestion_required'."
+    )
 
 
 @pytest.mark.asyncio
@@ -224,13 +264,15 @@ async def test_invalid_date_returns_rejected():
         pytest.skip("Postgres not reachable")
     from agent.tools.update_booking import update_booking
 
-    raw = await update_booking.ainvoke({
-        "services": ["corte dama test"],
-        "stylist_name": "Marta Test",
-        "date_iso": "not-a-date",
-        "extras_asked": True,
-        "no_more_services": True,
-    })
+    raw = await update_booking.ainvoke(
+        {
+            "services": ["corte dama test"],
+            "stylist_name": "Marta Test",
+            "date_iso": "not-a-date",
+            "extras_asked": True,
+            "no_more_services": True,
+        }
+    )
     data = parse_response(raw)
     # With extras_asked=True and no_more_services=True, either:
     # - rejected (invalid date or unknown stylist) or partial (unknown stylist asks stylist_required)
@@ -244,11 +286,13 @@ async def test_no_preference_stylist_skips_stylist_required():
         pytest.skip("Postgres not reachable")
     from agent.tools.update_booking import update_booking
 
-    raw = await update_booking.ainvoke({
-        "services": ["corte dama test"],
-        "no_preference_stylist": True,
-        "date_iso": future_date_iso(),
-    })
+    raw = await update_booking.ainvoke(
+        {
+            "services": ["corte dama test"],
+            "no_preference_stylist": True,
+            "date_iso": future_date_iso(),
+        }
+    )
     data = parse_response(raw)
     # If services found: should be ok/booking_ready (all slots present with no_preference)
     # If services not found: rejected/service_required
@@ -261,6 +305,7 @@ async def test_no_preference_stylist_skips_stylist_required():
 async def test_tool_is_callable():
     """update_booking is importable and is a LangChain tool."""
     from agent.tools.update_booking import update_booking
+
     assert hasattr(update_booking, "ainvoke")
     assert update_booking.name == "update_booking"
 
@@ -288,15 +333,17 @@ async def test_seeded_all_slots_returns_booking_ready(seeded_db):
         pytest.skip("Postgres not reachable")
     from agent.tools.update_booking import update_booking
 
-    raw = await update_booking.ainvoke({
-        "services": ["corte dama test"],
-        "stylist_name": "Marta Test",
-        "date_iso": future_date_iso(),
-        "no_more_services": True,
-        "extras_asked": True,
-        "customer_known": True,
-        "notes_asked": True,
-    })
+    raw = await update_booking.ainvoke(
+        {
+            "services": ["corte dama test"],
+            "stylist_name": "Marta Test",
+            "date_iso": future_date_iso(),
+            "no_more_services": True,
+            "extras_asked": True,
+            "customer_known": True,
+            "notes_asked": True,
+        }
+    )
     data = parse_response(raw)
     assert data["missing"] == []
     assert data["next_step"] == "pre_book_validation_required"
@@ -309,13 +356,15 @@ async def test_seeded_unknown_stylist_returns_rejected(seeded_db):
         pytest.skip("Postgres not reachable")
     from agent.tools.update_booking import update_booking
 
-    raw = await update_booking.ainvoke({
-        "services": ["corte dama test"],
-        "stylist_name": "Estilista_Fantasma_XYZ",
-        "date_iso": future_date_iso(),
-        "extras_asked": True,
-        "no_more_services": True,
-    })
+    raw = await update_booking.ainvoke(
+        {
+            "services": ["corte dama test"],
+            "stylist_name": "Estilista_Fantasma_XYZ",
+            "date_iso": future_date_iso(),
+            "extras_asked": True,
+            "no_more_services": True,
+        }
+    )
     data = parse_response(raw)
     assert data["status"] in ("partial", "rejected")
     assert data["next_step"] == "stylist_required"
