@@ -604,21 +604,17 @@ async def _update_booking_impl(
                     payload={"variants": _candidates, "family": _family_label},
                 ).model_dump_json()
 
-        # ── Step 1: audience disambiguation (only when audience unknown) ─────
-        # kind=="audience" → multi-PRINCIPAL same-dimension, ask for audience.
-        if audience is None:
-            for service_name in services:
-                kind, family, candidates = await _resolve_audience_variants(session, service_name)
-                if kind == "audience":
-                    logger.info(
-                        "tool.response.rejected",
-                        extra={"tool_name": "update_booking", "next_step": "audience_required"},
-                    )
-                    return ToolResponse(
-                        status="rejected",
-                        next_step="audience_required",
-                        payload={"variants": candidates, "family": family},
-                    ).model_dump_json()
+        # ── Step 1 (REMOVED): the legacy memory-blind audience gate lived here ─
+        # It called `_resolve_audience_variants(service_name)` WITHOUT input_audience
+        # and re-fired `audience_required` for any multi-audience principal. That
+        # defeated the loyal-customer echo: a returning customer whose memory backs
+        # the audience passes Step 1.6 (source-aware), only to be re-asked here.
+        # The audience axis is now fully owned by:
+        #   - Step 1.7 (`_resolve_service_ids_strict`): neutral/null-audience family
+        #     tokens (e.g. "corte") → audience_required ambiguous descriptor.
+        #   - Step 1.6 (`gendered_service_without_audience_source`): gendered service
+        #     with no legitimate audience source (cold model guess) → audience_required.
+        # No remaining case relies on this blind gate; keeping it only broke source (a).
 
         # ── Step 2: variant disambiguation — UNGATED (independent of audience) ─
         # kind=="variant" → principal with active children OR child with siblings.
