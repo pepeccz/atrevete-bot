@@ -65,6 +65,129 @@ def _infer_audience_from_service_name(service_name: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# Audience-ambiguous FAMILY recognition (neutral family token → audience gate)
+# ---------------------------------------------------------------------------
+# Some audience families have NO neutral parent principal in the catalog. The
+# "cut" dimension, for example, is six gendered principals (Corte de Mujer,
+# Corte de Hombre, Corte de Niña, …) with no bare "Corte" row. A neutral
+# customer term ("corte", "corte de pelo") therefore resolves to nothing and is
+# rejected as unknown ("No reconozco el servicio: corte"), which forces the
+# model to GUESS a gendered variant. These helpers let the resolver map a
+# neutral family token to the audience-ambiguous family and raise
+# audience_required instead of rejecting — WITHOUT hard-coding any family name:
+# the index is derived from the live catalog (families where a single dimension
+# carries >1 distinct audience and the principal names share a leading token).
+# Families that already expose a resolvable neutral principal (e.g. "Tinte" in
+# the color dimension, "Manicura" in the manicure dimension) are handled by the
+# existing resolution + audience gate and do not need this fallback.
+
+_MIN_FAMILY_STEM_LEN = 4
+
+
+def _derive_family_stem(names: list[str]) -> str | None:
+    """Return the shared leading word across `names`, or None if not shared.
+
+    "Corte de Mujer"/"Corte de Hombre"/… → "corte". Names that do not share a
+    common first token (e.g. "Tinte"/"Color para Hombre") → None. The stem must
+    be at least `_MIN_FAMILY_STEM_LEN` chars to avoid matching tiny tokens.
+    Pure function — no I/O.
+
+    CAVEAT: the neutral family fallback only works while every principal in an
+    audience-ambiguous dimension shares this leading token. Adding a `cut`
+    principal that does NOT start with "Corte" (e.g. "Pelado"/"Rapado") makes the
+    whole family stem resolve to None → the family silently drops from the index
+    and neutral "corte" reverts to "No reconozco el servicio". If such names are
+    introduced, give them the shared stem or add an explicit family-key mapping.
+    """
+    first_tokens: set[str] = set()
+    for n in names:
+        tokens = _normalize_name(n).split()
+        if not tokens:
+            return None
+        first_tokens.add(tokens[0])
+    if len(first_tokens) != 1:
+        return None
+    stem = next(iter(first_tokens))
+    if len(stem) < _MIN_FAMILY_STEM_LEN:
+        return None
+    return stem
+
+
+def build_audience_family_index(principal_rows: list[dict]) -> dict[str, dict]:
+    """Build {family_stem: {dimension, candidates, by_audience}} from PRINCIPAL rows.
+
+    A family qualifies when its dimension carries >1 distinct `audience` value
+    across its principals (genuinely audience-ambiguous) AND the principal names
+    share a common leading token (the neutral family stem). Catalog-derived: no
+    family name is hard-coded, so new audience families inherit the behavior.
+    Pure function — no I/O.
+
+    Each input row is a dict: {"name": str, "audience": str | None,
+    "dimension": str | None}. `by_audience` maps each non-null audience to its
+    principal name, so a neutral family token plus an explicit audience can be
+    resolved to the specific gendered principal (e.g. "corte" + adult_male →
+    "Corte de Hombre") instead of re-asking.
+    """
+    by_dim: dict[str, list[dict]] = {}
+    for row in principal_rows:
+        dimension = row.get("dimension")
+        if not dimension:
+            continue
+        by_dim.setdefault(dimension, []).append(row)
+
+    index: dict[str, dict] = {}
+    for dimension, rows in by_dim.items():
+        if len(rows) < 2:
+            continue
+        audiences = {r.get("audience") for r in rows}
+        if len(audiences) < 2:
+            continue  # single audience → not ambiguous
+        names = sorted(r["name"] for r in rows)
+        stem = _derive_family_stem(names)
+        if stem is None or stem in index:
+            continue  # no shared stem, or cross-dimension stem collision → skip
+        by_audience = {r["audience"]: r["name"] for r in rows if r.get("audience") is not None}
+        index[stem] = {
+            "dimension": dimension,
+            "candidates": names,
+            "by_audience": by_audience,
+        }
+    return index
+
+
+def match_audience_family(term: str, index: dict[str, dict]) -> dict | None:
+    """Return the family entry whose stem appears as a whole token in `term`.
+
+    Whole-token match guards against substring false positives — "cortina" must
+    NOT match stem "corte". Returns {"stem", "dimension", "candidates"} or None.
+    Pure function — no I/O.
+    """
+    tokens = set(_normalize_name(term).split())
+    if not tokens:
+        return None
+    for stem, entry in index.items():
+        if stem in tokens:
+            return {"stem": stem, **entry}
+    return None
+
+
+def dimension_audience_is_ambiguous(principal_rows: list[dict]) -> bool:
+    """True if any dimension in `principal_rows` carries >1 distinct audience.
+
+    Pure decision helper shared by the availability audience-disambiguation
+    guard. Each row dict: {"dimension": str | None, "audience": str | None}.
+    Pure function — no I/O.
+    """
+    by_dim: dict[str, set] = {}
+    for row in principal_rows:
+        dimension = row.get("dimension")
+        if not dimension:
+            continue
+        by_dim.setdefault(dimension, set()).add(row.get("audience"))
+    return any(len(audiences) > 1 for audiences in by_dim.values())
+
+
+# ---------------------------------------------------------------------------
 # Diminutive normalization helpers (ADR-10)
 # ---------------------------------------------------------------------------
 
@@ -249,6 +372,276 @@ async def _resolve_audience_variants(
     return ("none", "", [])
 
 
+async def service_ids_require_audience(
+    session: AsyncSession, service_ids: list[str] | list[UUID]
+) -> bool:
+    """True when the given services sit in an audience-ambiguous dimension.
+
+    A dimension is audience-ambiguous when its active PRINCIPAL services carry
+    >1 distinct `audience` value (e.g. "cut": Corte de Mujer / Corte de Hombre /
+    Corte de Niña …). The availability tools call this to refuse to offer slots
+    when the audience has not been resolved (i.e. the `audience` parameter is
+    None) — the audience MUST arrive via the parameter, set from the customer's
+    explicit words or a remembered preference, never guessed from a service name
+    (R32). Returns False on empty input.
+    """
+    from database.models import Service
+
+    if not service_ids:
+        return False
+
+    # Dimensions of the requested services
+    dim_result = await session.execute(
+        select(Service.metadata_["dimension"].as_string()).where(Service.id.in_(service_ids))
+    )
+    dimensions = {row[0] for row in dim_result.fetchall() if row[0]}
+    if not dimensions:
+        return False
+
+    # Audience spread among active principals in those dimensions
+    principal_result = await session.execute(
+        select(
+            Service.metadata_["dimension"].as_string(),
+            Service.audience,
+        ).where(
+            Service.metadata_["service_type"].as_string() == "principal",
+            Service.metadata_["dimension"].as_string().in_(dimensions),
+            Service.is_active.is_(True),
+        )
+    )
+    rows = [{"dimension": d, "audience": a} for d, a in principal_result.fetchall()]
+    return dimension_audience_is_ambiguous(rows)
+
+
+def _memory_backs_audience(
+    audience: str | None,
+    service_name: str,
+    customer_memories: dict | None,
+) -> bool:
+    """True when the customer's injected memory backs `audience` (source (a)).
+
+    Legitimate when the resolved gendered service name is echoed in
+    `typical_services`, OR any remembered service name / the agent_notes text
+    infers the same audience qualifier (e.g. memory "Corte de Mujer" backs
+    audience="adult_female"). This is the "lo de siempre" loyal-customer signal
+    that must NOT be re-asked. Pure function — no I/O.
+    """
+    if not customer_memories or not audience:
+        return False
+
+    target_norm = _normalize_name(service_name)
+    typical_services = customer_memories.get("typical_services") or []
+    for remembered in typical_services:
+        if _normalize_name(remembered) == target_norm:
+            return True
+        if _infer_audience_from_service_name(remembered) == audience:
+            return True
+
+    # agent_notes is free text — strip punctuation so qualifier tokens like
+    # "mujer." are tokenized cleanly before audience inference.
+    agent_notes = customer_memories.get("agent_notes") or ""
+    if agent_notes:
+        cleaned_notes = re.sub(r"[^\w\s]", " ", agent_notes)
+        if _infer_audience_from_service_name(cleaned_notes) == audience:
+            return True
+
+    return False
+
+
+async def _customer_has_prior_audience(
+    session: AsyncSession, customer_id: str | None, audience: str | None
+) -> bool:
+    """True when the customer has a prior appointment carrying `audience` (source (b)).
+
+    Appointments store a UUID array of service_ids; a prior appointment backs the
+    audience when any of its services' `audience` column equals the target.
+    Fail-safe: returns False on missing customer_id/audience or any error.
+
+    CAVEAT: backing is audience-property-wide, not per-person. A customer with
+    mixed-audience history (e.g. prior Corte de Mujer for herself + Corte de Niño
+    for her child) backs BOTH audiences, so a cold model guess of either gendered
+    service would pass the gate without re-asking for a multi-member household.
+    Acceptable trade-off here (errs toward not re-asking returning customers);
+    revisit if per-person audience tracking is added.
+    """
+    if not customer_id or not audience:
+        return False
+    from database.models import Appointment, Service
+
+    try:
+        cid: object = UUID(customer_id) if isinstance(customer_id, str) else customer_id
+    except (ValueError, AttributeError):
+        return False
+
+    appt_result = await session.execute(
+        select(Appointment.service_ids).where(Appointment.customer_id == cid)
+    )
+    service_ids: set = set()
+    for row in appt_result.fetchall():
+        for sid in row[0] or []:
+            service_ids.add(sid)
+    if not service_ids:
+        return False
+
+    svc_result = await session.execute(
+        select(Service.id).where(Service.id.in_(service_ids), Service.audience == audience).limit(1)
+    )
+    return svc_result.first() is not None
+
+
+async def gendered_service_without_audience_source(
+    session: AsyncSession,
+    service_ids: list[str],
+    customer_memories: dict | None,
+    customer_id: str | None,
+) -> tuple[str, list[str]] | None:
+    """Return (dimension, candidate_principal_names) for the FIRST resolved service
+    that is a gendered audience-variant lacking a legitimate audience source.
+
+    A service is a "gendered audience-variant" when it is a PRINCIPAL whose own
+    `audience` column is non-null AND its dimension carries >1 distinct audience
+    among active principals (e.g. "Corte de Mujer" in the "cut" dimension). Such a
+    service resolved with `audience=None` is only legitimate when the customer has
+    a real audience SOURCE — memory backing (source (a)) or a prior appointment
+    (source (b)). Without a source it is a cold GUESS by the model and the gate
+    returns the family so the caller asks `audience_required`.
+
+    Returns None when every gendered service has a source, or none is gendered.
+    """
+    from database.models import Service
+
+    if not service_ids:
+        return None
+
+    svc_result = await session.execute(
+        select(Service.id, Service.name, Service.audience, Service.metadata_).where(
+            Service.id.in_(service_ids)
+        )
+    )
+    resolved_rows = svc_result.fetchall()
+
+    dimensions = {
+        (row[3] or {}).get("dimension")
+        for row in resolved_rows
+        if (row[3] or {}).get("service_type") == "principal" and (row[3] or {}).get("dimension")
+    }
+    if not dimensions:
+        return None
+
+    principal_result = await session.execute(
+        select(
+            Service.metadata_["dimension"].as_string(),
+            Service.name,
+            Service.audience,
+        ).where(
+            Service.metadata_["service_type"].as_string() == "principal",
+            Service.metadata_["dimension"].as_string().in_(dimensions),
+            Service.is_active.is_(True),
+        )
+    )
+    audiences_by_dim: dict[str, set] = {}
+    names_by_dim: dict[str, list[str]] = {}
+    for dim, name, audience_value in principal_result.fetchall():
+        audiences_by_dim.setdefault(dim, set()).add(audience_value)
+        names_by_dim.setdefault(dim, []).append(name)
+
+    for _sid, name, audience_value, metadata in resolved_rows:
+        meta = metadata or {}
+        if meta.get("service_type") != "principal":
+            continue
+        dimension = meta.get("dimension")
+        if not dimension or audience_value is None:
+            continue  # only gendered principals (own audience set) qualify
+        if len(audiences_by_dim.get(dimension, set())) <= 1:
+            continue  # single-audience dimension → not a gendered variant
+        if _memory_backs_audience(audience_value, name, customer_memories):
+            continue  # source (a)
+        if await _customer_has_prior_audience(session, customer_id, audience_value):
+            continue  # source (b)
+        return dimension, sorted(names_by_dim.get(dimension, []))
+
+    return None
+
+
+async def availability_requires_audience(
+    session: AsyncSession,
+    service_ids: list[str],
+    customer_memories: dict | None,
+    customer_id: str | None,
+) -> bool:
+    """Source-aware guard C: must the availability tools BLOCK to resolve audience?
+
+    Called only when the `audience` parameter is None. Returns True (BLOCK) when:
+      - a resolved PRINCIPAL sits in a multi-audience dimension and its OWN
+        `audience` is null (genuinely ambiguous — the audience cannot be derived
+        from the service alone, e.g. a neutral "Manicura" / "corte" family), OR
+      - a resolved PRINCIPAL is a gendered variant (own audience non-null in a
+        multi-audience dimension, e.g. "Corte de Mujer") with NO legitimate
+        audience source (the cold direct-to-availability bypass — stays protected).
+
+    Returns False (ALLOW) when every multi-audience principal present is a gendered
+    variant that HAS a legitimate audience source (memory backing or a prior
+    appointment — the loyal-customer echo) and no null-audience ambiguous principal
+    is present. A pinned gendered service is NOT ambiguous: its audience is
+    derivable from the service itself, so a backed loyal customer is not re-asked.
+    """
+    from database.models import Service
+
+    if not service_ids:
+        return False
+
+    svc_result = await session.execute(
+        select(Service.id, Service.name, Service.audience, Service.metadata_).where(
+            Service.id.in_(service_ids)
+        )
+    )
+    resolved_rows = svc_result.fetchall()
+
+    dimensions = {
+        (row[3] or {}).get("dimension")
+        for row in resolved_rows
+        if (row[3] or {}).get("service_type") == "principal" and (row[3] or {}).get("dimension")
+    }
+    if not dimensions:
+        return False
+
+    principal_result = await session.execute(
+        select(
+            Service.metadata_["dimension"].as_string(),
+            Service.audience,
+        ).where(
+            Service.metadata_["service_type"].as_string() == "principal",
+            Service.metadata_["dimension"].as_string().in_(dimensions),
+            Service.is_active.is_(True),
+        )
+    )
+    audiences_by_dim: dict[str, set] = {}
+    for dim, audience_value in principal_result.fetchall():
+        audiences_by_dim.setdefault(dim, set()).add(audience_value)
+
+    for _sid, name, audience_value, metadata in resolved_rows:
+        meta = metadata or {}
+        if meta.get("service_type") != "principal":
+            continue
+        dimension = meta.get("dimension")
+        if not dimension:
+            continue
+        if len(audiences_by_dim.get(dimension, set())) <= 1:
+            continue  # single-audience dimension → not ambiguous → allow
+
+        if audience_value is None:
+            return True  # neutral principal in a multi-audience dim → ambiguous → block
+
+        # Pinned gendered service: audience derivable; block only without a source.
+        if _memory_backs_audience(audience_value, name, customer_memories):
+            continue  # source (a)
+        if await _customer_has_prior_audience(session, customer_id, audience_value):
+            continue  # source (b)
+        return True  # gendered + no source → cold bypass → block
+
+    return False
+
+
 async def _resolve_service_id_to_category_map(
     session: AsyncSession, service_ids: list[str]
 ) -> dict[str, object]:
@@ -380,13 +773,16 @@ async def _resolve_service_ids_strict(
     from database.models import Service
 
     result = await session.execute(
-        select(Service.id, Service.name).where(Service.is_active.is_(True))
+        select(Service.id, Service.name, Service.audience, Service.metadata_).where(
+            Service.is_active.is_(True)
+        )
     )
 
     by_internal: dict[str, str] = {}
     by_display: dict[str, str] = {}
     internal_name_by_norm: dict[str, str] = {}  # normalized → internal Service.name
-    for service_id, service_name in result.fetchall():
+    principal_rows: list[dict] = []  # for the audience-family index (neutral-token fallback)
+    for service_id, service_name, audience_value, metadata in result.fetchall():
         sid = str(service_id)
         norm_internal = _normalize_name(service_name)
         by_internal[norm_internal] = sid
@@ -396,6 +792,20 @@ async def _resolve_service_ids_strict(
         by_display[norm_display] = sid
         if norm_display not in internal_name_by_norm:
             internal_name_by_norm[norm_display] = service_name
+        meta = metadata or {}
+        if meta.get("service_type") == "principal":
+            principal_rows.append(
+                {
+                    "name": service_name,
+                    "audience": audience_value,
+                    "dimension": meta.get("dimension"),
+                }
+            )
+
+    # Catalog-derived index of audience-ambiguous families that have NO neutral
+    # parent principal (e.g. "cut"). Lets a neutral term like "corte" raise
+    # audience_required instead of being rejected as unknown.
+    family_index = build_audience_family_index(principal_rows)
 
     resolved_ids: list[str] = []
     unknown: list[str] = []
@@ -424,7 +834,38 @@ async def _resolve_service_ids_strict(
                         break
 
         if matched_internal is None:
-            unknown.append(name)
+            # Neutral family-token fallback: a bare "corte" has no principal to
+            # resolve to, but it clearly names an audience-ambiguous family.
+            family = match_audience_family(name, family_index)
+            if family is not None:
+                # When the audience IS known (explicit param), resolve the neutral
+                # token directly to the family principal matching that audience
+                # (e.g. "corte" + adult_male → "Corte de Hombre"). Only ask when
+                # NO audience is available.
+                pinned_name = family.get("by_audience", {}).get(audience) if audience else None
+                if pinned_name is not None:
+                    pinned_norm = _normalize_name(pinned_name)
+                    if pinned_norm in by_internal:
+                        clean_uuids.append(by_internal[pinned_norm])
+                        continue
+                    if pinned_norm in by_display:
+                        clean_uuids.append(by_display[pinned_norm])
+                        continue
+                # No audience (or unresolvable audience) → ask. Emit an
+                # audience_required descriptor so the agent ASKS instead of
+                # rejecting the term (which would push the model to guess a gender).
+                ambiguous.append(
+                    {
+                        "status": "ambiguous",
+                        "axis": "audience",
+                        "service_term": name,
+                        "family_label": family["dimension"],
+                        "candidates": family["candidates"],
+                        "question_hint": "audience_required",
+                    }
+                )
+            else:
+                unknown.append(name)
             continue
 
         # Q1 (memory-service audience pinning): when no caller audience is provided,

@@ -56,6 +56,7 @@ TOOL_READ_CONTRACT: dict[str, str] = {
     "conversation_id": "graph-input (conversation setup)",
     "customer_id": "CustomerResolveMiddleware → ExtendedModelResponse Command(update=...)",
     "recently_offered_slots": "AvailabilityContextMiddleware → ExtendedModelResponse Command(update=...)",
+    "customer_memories": "CustomerResolveMiddleware → state_delta (REQ-S1-8, customer_resolve.py)",
 }
 
 

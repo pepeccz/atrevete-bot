@@ -39,7 +39,9 @@ MIN_TURNS_FOR_NEW_CUSTOMER = 10
 # mid-booking timeouts in new-customer flows (disclosure + policy gate consume
 # 2-3 extra turns). Budget raised from 250 → 260 to accommodate the legitimate
 # recalibration without blocking CI.
-MAX_TOTAL_V2_TURNS_BUDGET = 260
+# audience-disambiguation-gate: +2 cold-open scenarios (audience-ambiguous-cold-open: 10,
+# multi-service-multi-audience-cold-open: 12 = +22). Budget raised 260 → 280.
+MAX_TOTAL_V2_TURNS_BUDGET = 280
 
 
 @pytest.fixture(scope="module")

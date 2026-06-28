@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from datetime import date, timedelta
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
 from langchain_core.tools import tool
+from langgraph.prebuilt import InjectedState
 
 from agent.prompts.catalog_builder import get_service_display_label_by_ids
 from agent.services.availability_service import (
@@ -17,6 +18,7 @@ from agent.tools.check_availability import (
     _get_service_durations,
     _get_stylist_name,
     _load_lead_time_settings,
+    _requires_audience_disambiguation,
 )
 from agent.tools.schemas import ToolResponse
 
@@ -32,6 +34,7 @@ async def get_next_available_options(
     strategy: Literal["same_stylist_then_any", "any_stylist"] = "same_stylist_then_any",
     max_options: int = 3,
     search_days: int = 7,
+    state: Annotated[dict, InjectedState] = None,
 ) -> str:
     """Return bounded next-available alternatives after an empty exact-day lookup."""
     try:
@@ -79,6 +82,24 @@ async def get_next_available_options(
         ).model_dump_json()
 
     total_duration = sum(durations.values())
+
+    # --- Audience-disambiguation guard (source-aware, deterministic) ---
+    # Mirror of the check_availability guard: never offer next-available slots for
+    # an audience-ambiguous family until the audience is resolved — UNLESS the
+    # service pins a single gendered audience AND the customer has a legitimate
+    # source (memory / prior appointment), so a known customer is not re-asked.
+    # A gendered service with NO source still blocks (cold bypass). See R32 / R9b.
+    _state = state or {}
+    if audience is None and await _requires_audience_disambiguation(
+        parsed_service_ids,
+        customer_memories=_state.get("customer_memories"),
+        customer_id=_state.get("customer_id"),
+    ):
+        return ToolResponse(
+            status="rejected",
+            next_step="audience_required",
+            errors=["Necesito saber para quién es el servicio antes de mirar los horarios."],
+        ).model_dump_json()
 
     preferred_stylist_id: UUID | None = None
     if stylist_id:

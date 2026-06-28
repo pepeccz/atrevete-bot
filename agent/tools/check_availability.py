@@ -8,11 +8,12 @@ Returns JSON-serialized ToolResponse.
 
 import logging
 from datetime import date, datetime, timedelta
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from langchain_core.tools import tool
+from langgraph.prebuilt import InjectedState
 
 from agent.services.availability_service import get_available_slots
 from agent.tools.schemas import ToolResponse
@@ -91,6 +92,36 @@ async def _get_active_stylists_for_services(
         return [row[0] for row in result.fetchall()]
 
 
+async def _requires_audience_disambiguation(
+    service_ids: list[UUID],
+    customer_memories: dict | None = None,
+    customer_id: str | None = None,
+) -> bool:
+    """True when the services need an audience resolved before offering slots.
+
+    Source-aware (guard C): a pinned gendered service with a legitimate audience
+    source (memory backing or a prior appointment) is ALLOWED so a known customer
+    is not re-asked; a gendered service with NO source still BLOCKS (cold
+    direct-to-availability bypass); a genuinely ambiguous neutral principal always
+    BLOCKS. Thin DB wrapper over `availability_requires_audience`. Fail-open
+    (returns False) on any error: an availability check must never be killed by
+    this guard. Module-level so unit tests can patch it without a live catalog.
+    """
+    try:
+        from agent.tools._booking_helpers import availability_requires_audience
+        from database.connection import get_async_session
+
+        async with get_async_session() as session:
+            return await availability_requires_audience(
+                session, service_ids, customer_memories, customer_id
+            )
+    except Exception as exc:
+        logger.error(
+            "check_availability: audience-family guard failed (fail-open): %s", exc, exc_info=True
+        )
+        return False
+
+
 async def _get_stylist_name(stylist_id: UUID) -> str:
     """Fetch stylist name by ID."""
     from sqlalchemy import select
@@ -145,6 +176,7 @@ async def check_availability(
     no_preference: bool = True,
     slot_time: str | None = None,
     preferred_window: Literal["morning", "afternoon"] | None = None,
+    state: Annotated[dict, InjectedState] = None,
 ) -> str:
     """
     Check available time slots for the given services on a specific date.
@@ -270,6 +302,30 @@ async def check_availability(
         ).model_dump_json()
 
     total_duration = sum(durations.values())
+
+    # --- Audience-disambiguation guard (source-aware, deterministic) ---
+    # If the services belong to an audience-ambiguous family (e.g. the "cut"
+    # dimension: Corte de Mujer / Corte de Hombre / Corte de Niña …) and the
+    # caller has not resolved the audience, refuse to offer slots and ask first —
+    # UNLESS the service pins a single gendered audience AND the customer has a
+    # legitimate source (memory backing or a prior appointment), in which case a
+    # known customer is not re-asked. A gendered service with NO source still
+    # blocks (cold direct-to-availability bypass). See R32 / R9b.
+    _state = state or {}
+    if audience is None and await _requires_audience_disambiguation(
+        parsed_service_ids,
+        customer_memories=_state.get("customer_memories"),
+        customer_id=_state.get("customer_id"),
+    ):
+        logger.info(
+            "tool.response.rejected",
+            extra={"tool_name": "check_availability", "next_step": "audience_required"},
+        )
+        return ToolResponse(
+            status="rejected",
+            next_step="audience_required",
+            errors=["Necesito saber para quién es el servicio antes de mirar los horarios."],
+        ).model_dump_json()
 
     # --- Determine stylists to query ---
     if stylist_id:
