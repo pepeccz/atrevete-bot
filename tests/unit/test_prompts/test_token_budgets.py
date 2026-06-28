@@ -58,7 +58,11 @@ BUDGETS: dict[str, int] = {
     #   hallucinated booking confirmations; see PR #77). Actual 3708.
     # tools_contract.md: +50 for `services` field note (UUIDs-in-services defence; see
     #   uuid-reroute fix). Actual 2070 → bumped to 2100.
-    "critical_rules.md": 3800,
+    # critical_rules.md: 3800 → 4100 for R-43 (service-suggestion no-escalate) +
+    #   R-44 (multi-person sequential flows) from multi-service PR-2 (#87). Detail
+    #   lives in booking_flow.md; the R-NN rules here are the terse statements.
+    #   Reconciles the duplicate budget in test_critical_rules_content.py. Actual 4010.
+    "critical_rules.md": 4100,
     "booking_flow.md": 3050,
     "examples.md": 2600,
     "tools_contract.md": 2100,
