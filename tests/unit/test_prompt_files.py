@@ -21,19 +21,21 @@ class TestTokenBudgets:
 
     def test_critical_rules_md_token_budget(self, prompt_dir):
         content = (prompt_dir / "shared" / "critical_rules.md").read_text()
-        # Recalibrated: R-37 through R-41 were added after the ≤2200 limit was set.
-        # Actual current count: ~3201 (chars // 4). Set limit at 10% above actual.
+        # Recalibrated: R-43 (service_suggestion_required guidance) and R-44
+        # (multi-person sequential booking) added by multi-service-resolution PR 2.
+        # Actual current count: ~3954 (chars // 4). Set limit at 10% above actual.
         assert (
-            len(content) // 4 <= 3600
-        ), f"critical_rules.md exceeds token budget: {len(content) // 4} tokens (limit 3600)"
+            len(content) // 4 <= 4350
+        ), f"critical_rules.md exceeds token budget: {len(content) // 4} tokens (limit 4350)"
 
     def test_booking_flow_md_token_budget(self, prompt_dir):
         content = (prompt_dir / "shared" / "booking_flow.md").read_text()
-        # Recalibrated: policy acceptance (Paso 5.5), safety gate (Paso 5.0) added.
-        # Actual current count: ~1786 (chars // 4). Set limit at 10% above actual.
+        # Recalibrated: Paso 1.5 (service_suggestion_required) and multi-person
+        # sequential section added by multi-service-resolution PR 2.
+        # Actual current count: ~2364 (chars // 4). Set limit at 10% above actual.
         assert (
-            len(content) // 4 <= 2100
-        ), f"booking_flow.md exceeds token budget: {len(content) // 4} tokens (limit 2100)"
+            len(content) // 4 <= 2620
+        ), f"booking_flow.md exceeds token budget: {len(content) // 4} tokens (limit 2620)"
 
     def test_booking_flow_orders_pasos(self, prompt_dir):
         """Pasos must appear in order: 1 before 2 before 3 before 4.

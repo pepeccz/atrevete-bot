@@ -445,3 +445,68 @@ async def test_strict_resolver_partial_resolved_ids_empty_when_all_ambiguous(
         f"partial_resolved_ids must be [] when nothing resolved cleanly, "
         f"got: {partial_resolved_ids}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Task 5.2 — unknown + clean mix: clean UUID ends up in resolved_ids
+# (update_booking 5.3 then passes resolved_ids as partial_resolved_ids in
+#  the service_suggestion_required response — R-35 round-trip preservation)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_strict_resolver_unknown_plus_clean_clean_uuid_in_resolved_ids(
+    db_session, unambiguous_catalog
+):
+    """Task 5.2: mixed (unknown_term + clean_service) → resolved_ids=[clean_uuid],
+    unknown=[unknown_term], partial_resolved_ids=[].
+
+    This is the contract update_booking relies on for the suggestion branch:
+    `resolved_ids` contains the clean UUIDs that must be forwarded as
+    `collected.partial_resolved_ids` in the service_suggestion_required response
+    so the LLM can round-trip them on the next call (R-35).
+    """
+    from agent.tools._booking_helpers import _resolve_service_ids_strict
+
+    unknown_term = "servicio_xyz_absolutamente_desconocido"
+    resolved_ids, unknown, ambiguous_descs, partial_resolved_ids = (
+        await _resolve_service_ids_strict(db_session, [unknown_term, unambiguous_catalog])
+    )
+
+    # Clean service UUID must be in resolved_ids (update_booking will use this
+    # as partial_resolved_ids in the suggestion response)
+    assert len(resolved_ids) == 1, (
+        f"Expected resolved_ids=[clean_uuid] when one service resolves and one is unknown, "
+        f"got resolved_ids={resolved_ids}"
+    )
+    assert isinstance(resolved_ids[0], str), "UUID must be a string"
+
+    # Unknown term goes to unknown list
+    assert unknown_term in unknown, f"Unknown term must be in unknown list, got unknown={unknown}"
+
+    # No ambiguity — these must be empty
+    assert ambiguous_descs == [], f"Expected no ambiguous descriptors, got: {ambiguous_descs}"
+    assert partial_resolved_ids == [], (
+        f"partial_resolved_ids must be [] when there are no ambiguous descriptors, "
+        f"got: {partial_resolved_ids}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_strict_resolver_pure_unknown_returns_empty_resolved_ids(
+    db_session,
+):
+    """Task 5.2 companion: purely unknown service → resolved_ids=[], unknown=[term].
+
+    No clean UUIDs → update_booking suggestion response has empty partial_resolved_ids.
+    """
+    from agent.tools._booking_helpers import _resolve_service_ids_strict
+
+    resolved_ids, unknown, ambiguous_descs, partial_resolved_ids = (
+        await _resolve_service_ids_strict(db_session, ["servicio_xyz_absolutamente_desconocido"])
+    )
+
+    assert resolved_ids == [], f"All-unknown input must yield resolved_ids=[], got: {resolved_ids}"
+    assert unknown == ["servicio_xyz_absolutamente_desconocido"]
+    assert ambiguous_descs == []
+    assert partial_resolved_ids == []
