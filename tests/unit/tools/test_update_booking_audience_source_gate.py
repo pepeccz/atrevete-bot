@@ -246,9 +246,14 @@ async def cut_family(db_session):
             )
         )
     await db_session.flush()
+    # _update_booking_impl opens its own session via get_async_session(); under
+    # READ COMMITTED it only sees committed rows, so a bare flush() leaves the
+    # seeded services invisible. Commit so the tool's session can resolve them.
+    await db_session.commit()
     yield {"names": names}
     await db_session.execute(delete(Service).where(Service.name.in_(names)))
     await db_session.flush()
+    await db_session.commit()
 
 
 @pytest.mark.asyncio

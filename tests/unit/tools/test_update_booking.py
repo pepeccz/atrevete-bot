@@ -22,8 +22,15 @@ def parse_response(raw: str) -> dict:
 
 
 def future_date_iso(days_ahead: int = 14) -> str:
-    """Return a future date as ISO string (date only)."""
+    """Return a future date as ISO string (date only), guaranteed Mon–Sat.
+
+    The seeded_db fixture only opens business hours Mon–Sat, so a date landing on
+    a Sunday would be rejected as a closed day. Shift forward off Sundays to keep
+    this helper deterministic regardless of which weekday `days_ahead` lands on.
+    """
     dt = (datetime.now(UTC) + timedelta(days=days_ahead)).date()
+    while dt.weekday() == 6:  # 6 == Sunday
+        dt += timedelta(days=1)
     return dt.isoformat()
 
 
