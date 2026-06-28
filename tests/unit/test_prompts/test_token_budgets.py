@@ -62,7 +62,9 @@ BUDGETS: dict[str, int] = {
     #   R-44 (multi-person sequential flows) from multi-service PR-2 (#87). Detail
     #   lives in booking_flow.md; the R-NN rules here are the terse statements.
     #   Reconciles the duplicate budget in test_critical_rules_content.py. Actual 4010.
-    "critical_rules.md": 4100,
+    # critical_rules.md: 4100 → 4200 for R-45 (returning-customer propose-the-usual
+    #   with confirmation — closes the loyal-echo prompt gap). Actual 4145.
+    "critical_rules.md": 4200,
     "booking_flow.md": 3050,
     "examples.md": 2600,
     "tools_contract.md": 2100,
