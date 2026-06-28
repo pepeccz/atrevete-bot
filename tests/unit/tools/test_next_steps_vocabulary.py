@@ -28,6 +28,8 @@ EXPECTED_NEXT_STEP_VALUES = {
     # Policy gate values added in policy-acceptance change
     "policy_acceptance_required",
     "policy_escalation_required",
+    # multi-service-resolution: conversational suggestion fallback for unknown services
+    "service_suggestion_required",
 }
 
 # R10: no imperative verb prefix
@@ -65,15 +67,16 @@ class TestVocabularyCompleteness:
 
         assert set(NextStep.__args__) == EXPECTED_NEXT_STEP_VALUES
 
-    def test_next_step_literal_has_14_values(self):
-        """NextStep now has 14 values: original 12 + policy_acceptance_required + policy_escalation_required.
+    def test_next_step_literal_has_15_values(self):
+        """NextStep now has 15 values: original 12 + policy (2) + service_suggestion_required (1).
 
         NOTE: policy_acceptance_required and policy_escalation_required were added in the
-        policy-acceptance change. Updated from 12 to 14.
+        policy-acceptance change (12→14). service_suggestion_required added in
+        multi-service-resolution (14→15).
         """
         from agent.tools.next_steps import NextStep
 
-        assert len(NextStep.__args__) == 14
+        assert len(NextStep.__args__) == 15
 
 
 class TestNoImperativeVerbs:

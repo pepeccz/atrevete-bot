@@ -34,6 +34,10 @@ _STRIKE_EXEMPT_NEXT_STEPS: frozenset[str] = frozenset(
         "pre_book_validation_required",
         # Policy gate has its own deterministic escalation path (R36) — exempt as before.
         "policy_acceptance_required",
+        # multi-service-resolution ADR-3: suggestion turns are recoverable (the customer
+        # picks a candidate on the next turn). Counting them escalates before the fallback
+        # has a chance to resolve — defeats the purpose of the suggestion flow.
+        "service_suggestion_required",
     }
 )
 """next_step values exempt from the forced-escalation strike counter.

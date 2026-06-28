@@ -27,7 +27,11 @@ NextStep = Literal[
     "booking_complete",  # book — success; payload: appointment_id, calendar_link
     "policy_acceptance_required",  # update_booking — customer must accept policy before booking; payload: policy_url, policy_version, policy_rejection_count
     "policy_escalation_required",  # update_booking — 2 consecutive rejections; LLM calls escalate(reason="policy_rejection"); payload: reason, policy_rejection_count
+    "service_suggestion_required",  # update_booking — unknown service term; payload: unknown_terms, candidates (PR 2 emits this; PR 1 registers vocab + strike exemption)
 ]
+
+# Constant alias — prefer this over the raw string in implementation code.
+SERVICE_SUGGESTION_REQUIRED: str = "service_suggestion_required"
 
 # Required payload keys per next_step value.
 # Values NOT listed here require no specific payload keys.
@@ -41,4 +45,6 @@ NEXT_STEP_PAYLOAD_CONTRACT: dict[str, tuple[str, ...]] = {
     "booking_complete": ("appointment_id", "calendar_link"),
     "policy_acceptance_required": ("policy_url", "policy_version", "policy_rejection_count"),
     "policy_escalation_required": ("reason", "policy_rejection_count"),
+    # multi-service-resolution ADR-1: suggestion fallback payload (PR 2 emits; PR 1 registers)
+    "service_suggestion_required": ("unknown_terms", "candidates"),
 }
