@@ -101,13 +101,18 @@ def test_r41_prohibits_preference_inference(rules_text: str) -> None:
 
 
 def test_r41_references_empty_slots(rules_text: str) -> None:
-    """R-41 must reference customer_memories or past_appointments slots being empty."""
+    """R-41 must reference the real memory/history slots being empty.
+
+    The rendered slot tags are <customer> (memory: Visitas previas / Servicios
+    habituales) and <upcoming_appointments> — NOT the never-rendered
+    <customer_memories>/<past_appointments> the rule used to cite.
+    """
     r41_start = rules_text.find("[R-41]")
     assert r41_start != -1, "R-41 entry missing"
     next_rule = rules_text.find("[R-", r41_start + 5)
     r41_block = rules_text[r41_start:next_rule] if next_rule != -1 else rules_text[r41_start:]
-    has_memory_ref = "customer_memories" in r41_block or "past_appointments" in r41_block
-    assert has_memory_ref, "R-41 must reference <customer_memories> or <past_appointments> slots"
+    has_memory_ref = "<customer>" in r41_block or "<upcoming_appointments>" in r41_block
+    assert has_memory_ref, "R-41 must reference <customer> or <upcoming_appointments> slots"
 
 
 def test_r41_has_example(rules_text: str) -> None:
@@ -172,9 +177,9 @@ def test_r41_applies_when_both_slots_empty(rules_text: str) -> None:
     assert r41_start != -1, "R-41 entry missing"
     next_rule = rules_text.find("[R-", r41_start + 5)
     r41_block = rules_text[r41_start:next_rule] if next_rule != -1 else rules_text[r41_start:]
-    # Both slots must be mentioned
-    has_both = "customer_memories" in r41_block and "past_appointments" in r41_block
-    assert has_both, "R-41 must reference both <customer_memories> and <past_appointments>"
+    # Both real slots must be mentioned: <customer> (memory) and <upcoming_appointments>
+    has_both = "<customer>" in r41_block and "<upcoming_appointments>" in r41_block
+    assert has_both, "R-41 must reference both <customer> and <upcoming_appointments>"
 
 
 # ---------------------------------------------------------------------------
