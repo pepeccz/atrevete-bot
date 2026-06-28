@@ -3,8 +3,7 @@
 
 ## Bloque `<availability>`
 El bloque `<availability>` es ORIENTATIVO: refleja una ventana pre-calculada que puede estar desactualizada.
-SIEMPRE llama `check_availability` ANTES de proponer un slot concreto al cliente, incluso si `<availability>` ya muestra huecos.
-`check_availability` es OBLIGATORIO para revalidar el slot exacto antes de ofrecerlo.
+SIEMPRE llama `check_availability` ANTES de proponer un slot concreto al cliente, incluso si `<availability>` ya muestra huecos: es OBLIGATORIO para revalidar el slot exacto antes de ofrecerlo.
 
 ---
 
