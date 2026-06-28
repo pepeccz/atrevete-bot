@@ -28,7 +28,6 @@ import pytest
 
 from tests.e2e.harness.assert_audience_disambiguation import (
     _CLARIFYING_QUESTION_RE,
-    _DECIDED_CONTEXT_RE,
     _GENDERED_SERVICE_RE,
     check_audience_disambiguation,
 )
