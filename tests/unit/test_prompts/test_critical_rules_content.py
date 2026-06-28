@@ -36,6 +36,28 @@ def test_r23_update_booking_present():
 
 
 # ---------------------------------------------------------------------------
+# R-45: Returning-customer propose-the-usual (loyal-echo prompt gap)
+# ---------------------------------------------------------------------------
+
+
+def test_r45_returning_customer_propose_usual_present():
+    """R-45 must instruct the model to propose 'Servicios habituales' with confirmation.
+
+    Closes the loyal-echo prompt gap: memory is in <customer> but no rule told the
+    model to use it for a vague / 'lo de siempre' request.
+    """
+    content = _read("critical_rules.md")
+    assert "[R-45]" in content, "R-45 not found in critical_rules.md"
+    assert "Servicios habituales" in content, (
+        "R-45 must reference the <customer> 'Servicios habituales' field"
+    )
+    assert "lo de siempre" in content, "R-45 must cover the 'lo de siempre' phrasing"
+    assert "CONFIRMA" in content or "confirma" in content.lower(), (
+        "R-45 must require confirmation before update_booking (no silent assume)"
+    )
+
+
+# ---------------------------------------------------------------------------
 # T-04b: Numbered-List Stylist Rule R-24
 # ---------------------------------------------------------------------------
 
@@ -100,9 +122,9 @@ def test_booking_flow_references_payload_stylists():
 def test_critical_rules_token_budget():
     """critical_rules.md must stay within the token budget.
 
-    Budget reconciled to 4100 to match test_token_budgets.py (the canonical
-    budget table) after R-43/R-44 (multi-service PR-2) landed. Both tests now
-    enforce the same ceiling.
+    Budget 4200, matching test_token_budgets.py (the canonical budget table)
+    after R-43/R-44 (multi-service PR-2) and R-45 (returning-customer
+    propose-the-usual) landed. Both tests enforce the same ceiling.
     """
     try:
         import tiktoken
@@ -113,6 +135,6 @@ def test_critical_rules_token_budget():
 
     content = _read("critical_rules.md")
     count = len(enc.encode(content))
-    assert count <= 4100, (
-        f"critical_rules.md exceeds token budget: {count} tokens > 4100 allowed"
+    assert count <= 4200, (
+        f"critical_rules.md exceeds token budget: {count} tokens > 4200 allowed"
     )
