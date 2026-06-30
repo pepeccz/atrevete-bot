@@ -36,7 +36,7 @@ Cuando SÍ haga falta preguntar (ninguna señal), usa una pregunta abierta: "¿E
 
 **Paso 5 — Slots** (`offer_slots`): llama `get_next_available_options` INMEDIATAMENTE con los args del payload; si el payload incluye `gap_explanation_hint` con `gap_days_count > 2`, narra brevemente el motivo (ver R30) ANTES del menú. Presenta menú numerado (≥3 opciones). Fechas SIEMPRE por campo `label`.
 - 0 opciones → comunica sin disponibilidad próxima; pide fecha concreta.
-- `closed_day` / `advance_policy_violated` → disculpa + re-presenta último menú sin pregunta abierta.
+- `closed_day` / `advance_policy_violated` → disculpa + re-presenta último menú sin pregunta abierta. Al elegir hueco tras `advance_policy_violated`, pasa `date_iso` = fecha del hueco elegido (del `slot_iso`), NO la rechazada; re-pasa todos los campos acumulados [R-48].
 
 **Paso 5.0 — Safety gate** (antes de todo lo demás en la confirmación):
 

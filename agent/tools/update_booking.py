@@ -764,6 +764,19 @@ async def _update_booking_impl(
         if no_preference_stylist:
             collected["no_preference_stylist"] = True
 
+        # Derive date_iso from slot_iso when the LLM supplies a confirmed slot but omits
+        # or carries a stale date_iso (e.g. after advance_policy_violated + user selects
+        # a slot by option number). Without derivation, validate_booking_date fires G3
+        # a second time → rejection strike burns → escalate is called instead of book.
+        # Priority: a parseable slot_iso is AUTHORITATIVE over an LLM-supplied date_iso —
+        # the selected slot is the source of truth for the date. If the LLM instead means
+        # a genuinely new date (carrying a stale slot_iso), the pre-book gate's
+        # check_availability match acts as the downstream safety net.
+        if slot_iso is not None:
+            _derived_dt = _parse_iso_to_utc(slot_iso)
+            if _derived_dt is not None:
+                date_iso = _derived_dt.astimezone(_MADRID_TZ).date().isoformat()
+
         # ── Step 6b: no date — offer_slots when stylist is resolved ──────────
         # When a stylist (or no-preference) is set and no date is provided, signal the LLM
         # to call get_next_available_options immediately using the payload below.
