@@ -113,18 +113,29 @@ def format_date_spanish(dt: datetime) -> str:
 # =============================================================================
 
 
-async def _safe_delete_gcal_event(stylist_id: UUID, event_id: str) -> None:
+async def _safe_delete_gcal_event(
+    stylist_id: UUID,
+    event_id: str,
+    appointment_id: UUID | None = None,
+) -> None:
     """
     Fire-and-forget wrapper for GCal event deletion.
 
     This function is designed to be used with asyncio.create_task() to avoid
     blocking the HTTP response while waiting for Google Calendar API calls.
     Failures are logged but don't affect the caller.
+
+    Args:
+        stylist_id: UUID of the stylist (to select the correct calendar).
+        event_id: Google Calendar event ID to delete.
+        appointment_id: When provided, gcal_push_service writes gcal_sync_status
+                        back to the appointment row after the operation (consistent
+                        with the auto_cancel handler which always passes it).
     """
     from shared.gcal_push_service import delete_gcal_event
 
     try:
-        await delete_gcal_event(stylist_id, event_id)
+        await delete_gcal_event(stylist_id, event_id, appointment_id=appointment_id)
         logger.info(f"GCal event {event_id} deleted successfully")
     except Exception as e:
         logger.warning(f"Failed to delete GCal event {event_id}: {e}")
@@ -2672,6 +2683,10 @@ async def list_appointments(
                     "first_name": a.first_name,
                     "last_name": a.last_name,
                     "notes": a.notes,
+                    "confirmation_sent_at": (
+                        a.confirmation_sent_at.isoformat() if a.confirmation_sent_at else None
+                    ),
+                    "cancellation_reason": a.cancellation_reason,
                     "created_at": a.created_at.isoformat(),
                     "updated_at": a.updated_at.isoformat(),
                 }
@@ -2821,6 +2836,12 @@ async def get_pending_actions(
                     "first_name": appt.first_name
                     or (appt.customer.first_name if appt.customer else "Cliente"),
                     "last_name": appt.last_name,
+                    "confirmation_sent_at": (
+                        appt.confirmation_sent_at.isoformat()
+                        if appt.confirmation_sent_at
+                        else None
+                    ),
+                    "cancellation_reason": appt.cancellation_reason,
                     "stylist": (
                         {
                             "id": str(appt.stylist.id),
@@ -3250,6 +3271,24 @@ async def update_appointment(
             appointment.start_time = request.start_time
 
         if request.status is not None:
+            # Transition guards (S2-R3, S2-R4)
+            requested = request.status
+            if requested == "confirmed" and old_status not in (
+                AppointmentStatus.PENDING,
+                AppointmentStatus.CONFIRMED,
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail="Cannot confirm: appointment is already in a terminal state",
+                )
+            if requested == "cancelled" and old_status in (
+                AppointmentStatus.CANCELLED,
+                AppointmentStatus.COMPLETED,
+            ):
+                raise HTTPException(
+                    status_code=409,
+                    detail="Cannot cancel: appointment already in terminal state",
+                )
             try:
                 appointment.status = AppointmentStatus(request.status)
             except ValueError:
@@ -3257,6 +3296,10 @@ async def update_appointment(
                     status_code=400,
                     detail=f"Invalid status: {request.status}. Must be pending, confirmed, completed, cancelled, or no_show",
                 )
+            # Set cancellation metadata when operator cancels (S2-R4)
+            if appointment.status == AppointmentStatus.CANCELLED:
+                appointment.cancelled_at = datetime.now(UTC)
+                appointment.cancellation_reason = "operator_cancelled"
 
         if request.first_name is not None:
             appointment.first_name = request.first_name
@@ -3301,45 +3344,67 @@ async def update_appointment(
         service_names = ", ".join(s.name for s in services)
 
         if appointment.google_calendar_event_id:
-            # Update existing event (fire-and-forget)
-            from shared.gcal_push_service import update_appointment_in_gcal
-
-            asyncio.create_task(
-                update_appointment_in_gcal(
-                    appointment_id=appointment.id,
-                    stylist_id=appointment.stylist_id,
-                    event_id=appointment.google_calendar_event_id,
-                    customer_name=customer_name,
-                    service_names=service_names,
-                    start_time=appointment.start_time,
-                    duration_minutes=appointment.duration_minutes,
-                    status=appointment.status.value,
-                    notes=appointment.notes,
+            if appointment.status == AppointmentStatus.CANCELLED:
+                # Delete GCal event on operator cancel (S2-R9).
+                # Pass appointment_id so gcal_sync_status is tracked (consistent with
+                # auto_cancel handler — SUGGESTION-1).
+                asyncio.create_task(
+                    _safe_delete_gcal_event(
+                        appointment.stylist_id,
+                        appointment.google_calendar_event_id,
+                        appointment.id,
+                    )
                 )
-            )
-            logger.info(f"Triggered Google Calendar update for appointment {appointment.id}")
+                logger.info(
+                    f"Triggered Google Calendar delete for cancelled appointment {appointment.id}"
+                )
+            else:
+                # Update existing event (fire-and-forget)
+                from shared.gcal_push_service import update_appointment_in_gcal
+
+                asyncio.create_task(
+                    update_appointment_in_gcal(
+                        appointment_id=appointment.id,
+                        stylist_id=appointment.stylist_id,
+                        event_id=appointment.google_calendar_event_id,
+                        customer_name=customer_name,
+                        service_names=service_names,
+                        start_time=appointment.start_time,
+                        duration_minutes=appointment.duration_minutes,
+                        status=appointment.status.value,
+                        notes=appointment.notes,
+                    )
+                )
+                logger.info(f"Triggered Google Calendar update for appointment {appointment.id}")
         else:
-            # Create new event if missing (immediate push)
-            from shared.gcal_push_service import push_appointment_to_gcal
+            # Create new event if missing (immediate push) — skip for cancelled appointments
+            if appointment.status != AppointmentStatus.CANCELLED:
+                from shared.gcal_push_service import push_appointment_to_gcal
 
-            try:
-                event_id = await push_appointment_to_gcal(
-                    appointment_id=appointment.id,
-                    stylist_id=appointment.stylist_id,
-                    customer_name=customer_name,
-                    service_names=service_names,
-                    start_time=appointment.start_time,
-                    duration_minutes=appointment.duration_minutes,
-                    status=appointment.status.value,
-                )
-                if event_id:
-                    appointment.google_calendar_event_id = event_id
-                    await session.commit()
-                    logger.info(f"Created GCal event {event_id} for appointment {appointment.id}")
-                else:
-                    logger.warning(f"GCal push returned None for appointment {appointment.id}")
-            except Exception as e:
-                logger.error(f"Failed to create GCal event for appointment {appointment.id}: {e}")
+                try:
+                    event_id = await push_appointment_to_gcal(
+                        appointment_id=appointment.id,
+                        stylist_id=appointment.stylist_id,
+                        customer_name=customer_name,
+                        service_names=service_names,
+                        start_time=appointment.start_time,
+                        duration_minutes=appointment.duration_minutes,
+                        status=appointment.status.value,
+                    )
+                    if event_id:
+                        appointment.google_calendar_event_id = event_id
+                        await session.commit()
+                        logger.info(
+                            f"Created GCal event {event_id} for appointment {appointment.id}"
+                        )
+                    else:
+                        logger.warning(
+                            f"GCal push returned None for appointment {appointment.id}"
+                        )
+                except Exception as e:
+                    logger.error(
+                        f"Failed to create GCal event for appointment {appointment.id}: {e}"
+                    )
 
         return {
             "id": str(appointment.id),
@@ -3349,6 +3414,10 @@ async def update_appointment(
             "start_time": appointment.start_time.astimezone(MADRID_TZ).isoformat(),
             "duration_minutes": appointment.duration_minutes,
             "status": appointment.status.value,
+            "cancelled_at": (
+                appointment.cancelled_at.isoformat() if appointment.cancelled_at else None
+            ),
+            "cancellation_reason": appointment.cancellation_reason,
             "google_calendar_event_id": appointment.google_calendar_event_id,
             "first_name": appointment.first_name,
             "last_name": appointment.last_name,

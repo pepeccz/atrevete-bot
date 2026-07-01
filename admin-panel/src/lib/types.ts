@@ -176,6 +176,7 @@ export interface Appointment {
   confirmation_sent_at: string | null;
   reminder_sent_at: string | null;
   cancelled_at: string | null;
+  cancellation_reason?: string | null;
   created_at: string;
   updated_at: string;
   // GCal sync state (gcal-sync-resilience)
