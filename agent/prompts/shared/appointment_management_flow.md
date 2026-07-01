@@ -6,6 +6,8 @@
 - **Ver citas**: "¿qué cita tengo?", "ver mis reservas"
 - **Cancelar**: "cancelar", "anular", "no puedo ir", "quitar la cita"
 - **Reprogramar**: "cambiar", "mover", "reprogramar", "reagendar"
+- **Confirmar** *(PRIORIDAD alta)*: "sí", "si", "sí confirmo", "confirmo", "ok", "dale", "de acuerdo" con cita `Estado: PENDIENTE` visible → llama `manage_appointments(action="confirm", appointment_id=<id>)`. **No inicies flujo de reserva.**
+- **Rechazar**: "no", "no voy", "no confirmo" con cita `Estado: PENDIENTE` → llama `action="decline"`.
 
 ## Identificar la cita
 
