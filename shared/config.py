@@ -398,6 +398,57 @@ class Settings(BaseSettings):
             "Populated post template approval."
         ),
     )
+    WHATSAPP_TEMPLATE_FINAL_WARNING: str = Field(
+        default="",
+        description=(
+            "Meta-approved WhatsApp template name for the final-warning message sent before "
+            "auto-cancel fires. Populated post Meta approval. Must be set before "
+            "AUTO_CANCEL_ENABLED=true is activated (Slice 3, S3-R2)."
+        ),
+    )
+
+    # Auto-cancel tail (Slice 3) — all gated by AUTO_CANCEL_ENABLED
+    AUTO_CANCEL_ENABLED: bool = Field(
+        default=False,
+        description=(
+            "Feature flag for the auto-cancel destructive tail. When True, the "
+            "final-warning and auto-cancel handlers are added to the active handler set "
+            "in notifications_worker.py. Separate from NOTIFICATIONS_WORKER_ENABLED — "
+            "the base worker can run without the destructive tail. Default False until "
+            "WHATSAPP_TEMPLATE_FINAL_WARNING is Meta-approved and owner confirms timing "
+            "defaults (Slice 3, S3-R1)."
+        ),
+    )
+    AUTO_CANCEL_GRACE_BEFORE_WARNING_HOURS: int = Field(
+        default=12,
+        ge=1,
+        le=36,
+        description=(
+            "Hours after confirmation_sent_at before the final-warning handler fires. "
+            "Conservative default: 12h. Confirm with owner before Slice 3 activation. "
+            "Range [1, 36] (S3-R15)."
+        ),
+    )
+    AUTO_CANCEL_GRACE_BEFORE_CANCEL_HOURS: int = Field(
+        default=6,
+        ge=1,
+        le=24,
+        description=(
+            "Hours after final_warning_sent_at before the auto-cancel handler fires. "
+            "Conservative default: 6h. Confirm with owner before Slice 3 activation. "
+            "Range [1, 24] (S3-R15)."
+        ),
+    )
+    AUTO_CANCEL_MIN_LEAD_HOURS: int = Field(
+        default=24,
+        ge=12,
+        le=48,
+        description=(
+            "Minimum hours before appointment start_time; auto-cancel and final-warning "
+            "never fire within this window (blast-radius cap). Conservative default: 24h. "
+            "Confirm with owner before Slice 3 activation. Range [12, 48] (S3-R15)."
+        ),
+    )
 
     # Admin Panel Authentication
     ADMIN_USERNAME: str = Field(default="admin", description="Admin panel username")

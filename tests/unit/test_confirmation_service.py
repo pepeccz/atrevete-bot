@@ -117,6 +117,9 @@ async def test_decline_pending_appointment():
     assert result.success is True
     assert appt.status == AppointmentStatus.CANCELLED
     assert appt.cancelled_at is not None
+    assert appt.cancellation_reason == "customer_declined", (
+        "S3-R4: cancellation_reason must be 'customer_declined' for all customer-decline paths"
+    )
     mock_delete_gcal.assert_awaited()
 
 

@@ -441,6 +441,7 @@ async def _execute_cancellation(
     # Update appointment status
     appt.status = AppointmentStatus.CANCELLED
     appt.cancelled_at = now
+    appt.cancellation_reason = "customer_declined"  # S3-R4 / WARNING-2 consistency fix
     await session.commit()
 
     # Delete Google Calendar event
@@ -927,6 +928,7 @@ async def _process_all_appointments(
                     else:
                         appt.status = AppointmentStatus.CANCELLED
                         appt.cancelled_at = now
+                        appt.cancellation_reason = "customer_declined"  # S3-R4 / WARNING-2
 
                     await session.commit()
 
@@ -1262,6 +1264,7 @@ async def handle_tool_action(
 
             appt.status = AppointmentStatus.CANCELLED
             appt.cancelled_at = now
+            appt.cancellation_reason = "customer_declined"  # S3-R12 / S3-R4
             await session.commit()
 
             if appt.google_calendar_event_id:

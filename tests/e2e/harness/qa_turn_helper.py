@@ -643,6 +643,28 @@ async def _cmd_burst(args: Any) -> int:
         await client.aclose()
 
 
+async def _cmd_seed_appointment(args: Any) -> None:
+    """Seed a future appointment for notification worker QA testing."""
+    from tests.e2e.harness.seed_customer import seed_future_appointment
+
+    try:
+        result = await seed_future_appointment(
+            phone=args.phone,
+            customer_name=args.customer_name,
+            hours_ahead=args.hours_ahead,
+            status=args.status,
+            service_name=args.service_name or None,
+            stylist_name=args.stylist_name or None,
+        )
+        _json_out(result)
+    except ValueError as exc:
+        _json_err("phone_guard_failed", str(exc))
+    except RuntimeError as exc:
+        _json_err("seed_failed", str(exc))
+    except Exception as exc:
+        _json_err("seed_failed", str(exc))
+
+
 async def _cmd_seed(args: Any) -> None:
     """Seed a returning customer with memories and an optional past appointment."""
     from tests.e2e.harness.seed_customer import seed_returning_customer
@@ -869,6 +891,52 @@ def _build_parser() -> argparse.ArgumentParser:
         help=("Optional JSON object with keys: days_ago, service_name, stylist_name, status"),
     )
 
+    # seed-appointment — future appointment for notification worker QA
+    p_seedappt = sub.add_parser(
+        "seed-appointment",
+        help=(
+            "Seed a future appointment (now + --hours-ahead) for notification worker QA. "
+            "Phone must start with TEST_PHONE_PREFIX."
+        ),
+    )
+    p_seedappt.add_argument(
+        "--phone", required=True, help="Customer phone (E.164, must start with +349)"
+    )
+    p_seedappt.add_argument(
+        "--customer-name",
+        required=True,
+        dest="customer_name",
+        help="Full customer name (e.g. 'Test User')",
+    )
+    p_seedappt.add_argument(
+        "--hours-ahead",
+        required=True,
+        type=float,
+        dest="hours_ahead",
+        help=(
+            "Hours from now(UTC) for the appointment start. "
+            "Use 24 for reminder_24h window (23–25 h), 48 for confirm_48h window (47–49 h)."
+        ),
+    )
+    p_seedappt.add_argument(
+        "--status",
+        default="confirmed",
+        choices=["confirmed", "pending"],
+        help="AppointmentStatus (confirm_48h handler only queries 'pending').",
+    )
+    p_seedappt.add_argument(
+        "--service-name",
+        default=None,
+        dest="service_name",
+        help="Service name (case-insensitive). Falls back to first DB row when omitted.",
+    )
+    p_seedappt.add_argument(
+        "--stylist-name",
+        default=None,
+        dest="stylist_name",
+        help="Stylist name (case-insensitive). Falls back to first DB row when omitted.",
+    )
+
     # detect-repeats (L5 — auditor entry point for the repeated-sentence detector)
     p_repeats = sub.add_parser(
         "detect-repeats", help="Report repeated sentences in a scenario run JSON file"
@@ -974,6 +1042,8 @@ def main() -> None:
         asyncio.run(_cmd_state(args))
     elif args.command == "seed":
         asyncio.run(_cmd_seed(args))
+    elif args.command == "seed-appointment":
+        asyncio.run(_cmd_seed_appointment(args))
     elif args.command == "detect-repeats":
         _cmd_detect_repeats(args.run_file)
     elif args.command == "service-check":
