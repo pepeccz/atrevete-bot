@@ -8,8 +8,7 @@ per spec obs #7262.
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
@@ -131,7 +130,7 @@ async def test_send_fn_cancels_pending_appointment(monkeypatch):
     """send_fn sets status=CANCELLED, cancellation_reason='auto_cancelled_no_confirmation',
     cancelled_at, then creates an AUTO_CANCELLED Notification (S3-R7, S3-R4)."""
     from agent.workers.notification_handlers import auto_cancel
-    from database.models import AppointmentStatus, NotificationType
+    from database.models import AppointmentStatus
 
     appt = _make_pending_appt()
     ctx, session = _make_fake_session(appt)

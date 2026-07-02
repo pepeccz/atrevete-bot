@@ -24,8 +24,8 @@ from uuid import UUID, uuid4
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from agent.workers.notification_handlers.base import NotificationHandler
 from agent.services.gcal_push_service import delete_gcal_event
+from agent.workers.notification_handlers.base import NotificationHandler
 from database.connection import get_async_session
 from database.models import Appointment, AppointmentStatus, Notification, NotificationType
 from shared.config import get_settings
