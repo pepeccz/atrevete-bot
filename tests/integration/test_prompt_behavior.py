@@ -167,6 +167,24 @@ def test_appt_mgmt_line_count() -> None:
     ), f"appointment_management_flow.md has {line_count} lines — must be ≤ 35 (T2.6)"
 
 
+def test_appt_mgmt_confirm_priority_rule() -> None:
+    """[R-SPEC-7] appointment_management_flow.md must contain the PENDING-confirm priority rule.
+
+    When a customer has a PENDING appointment and sends a short affirmation, the agent
+    must route to manage_appointments(action="confirm"), not start a new booking flow.
+    This test guards against accidental removal of that priority instruction.
+    """
+    content = _load_prompt_file("appointment_management_flow.md")
+    assert "PRIORIDAD" in content, (
+        "appointment_management_flow.md is missing the PENDING-confirm priority rule — "
+        "add a 'PRIORIDAD alta' bullet to ## Cuándo usar with action=\"confirm\" instruction"
+    )
+    assert 'action="confirm"' in content, (
+        "appointment_management_flow.md must explicitly mention action=\"confirm\" "
+        "in the Confirmar bullet so the LLM has a clear tool-call target for PENDING affirmations"
+    )
+
+
 # ---------------------------------------------------------------------------
 # BATCH 3 — Anchor scheme (RED before T3.2 lands)
 # ---------------------------------------------------------------------------

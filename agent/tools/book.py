@@ -466,6 +466,15 @@ async def _book_impl(
                     )
                     _consent_written = True
 
+            # Compute initial status based on advance lead time (S1-R1, S1-R2, S1-R3).
+            # Strict: exactly 48h is CONFIRMED (boundary belongs to the ≤48h side).
+            lead = start_time - datetime.now(UTC)
+            initial_status = (
+                AppointmentStatus.PENDING
+                if lead > timedelta(hours=48)
+                else AppointmentStatus.CONFIRMED
+            )
+
             # Insert appointment
             appointment = Appointment(
                 id=appointment_id,
@@ -474,7 +483,7 @@ async def _book_impl(
                 service_ids=parsed_service_ids,
                 start_time=start_time,
                 duration_minutes=total_duration,
-                status=AppointmentStatus.CONFIRMED,
+                status=initial_status,
                 first_name=first_name,
                 last_name=last_name,
                 notes=notes,
@@ -529,7 +538,9 @@ async def _book_impl(
             service_names=service_names,
             start_time=start_time,
             duration_minutes=total_duration,
-            status="pending",
+            # S1-R5: pass the appointment's actual status so GCal event color matches DB.
+            # Pre-existing bug N1b: this was hardcoded "pending" regardless of actual status.
+            status="pending" if initial_status == AppointmentStatus.PENDING else "confirmed",
             notes=notes,
         )
     except Exception as exc:
@@ -588,5 +599,9 @@ async def _book_impl(
             "end_iso": end_time.isoformat(),
             "stylist_id": stylist_id,
             "calendar_link": calendar_link,
+            # S1-R4: expose initial status so the agent can adapt its confirmation copy
+            # without a DB re-query. "pending" → >48h, customer will receive confirm template.
+            "appointment_status": initial_status.value,
+            "requires_confirmation": initial_status == AppointmentStatus.PENDING,
         },
     ).model_dump_json()

@@ -915,6 +915,78 @@ Rollback: `git revert` the pause-state-internal-ssot commits + restart api/agent
 
 ---
 
+### Deploy Runbook (reactivate-confirmation-lifecycle Slice 3)
+
+Flag-gated auto-cancel tail: `final_warning` + `auto_cancel` notification handlers,
+`_active_handlers()` refactor in `notifications_worker.py`, `final_warning_sent_at` column,
+and 5 new config settings. **Slices 1 and 2 must be live before this deploy.** `AUTO_CANCEL_ENABLED`
+defaults to `false` — handlers register but never fire until explicitly enabled.
+
+**Pre-condition**: The Meta template `whatsapp_template_final_warning` MUST be approved and
+its name configured in `system_settings` BEFORE setting `AUTO_CANCEL_ENABLED=true`. Enabling
+the flag with an empty/missing template causes `final_warning` to apply backoff (appointments
+remain PENDING) instead of sending the warning — auto-cancel will never fire without a
+successful warning send.
+
+```bash
+# Step 1: Apply the migration (revision f1a2b3c4d5e6, parent e1f2a3b4c5d6)
+DATABASE_URL="postgresql+psycopg://atrevete:changeme_min16chars_secure_password@localhost:5432/atrevete_db" \
+  ./venv/bin/alembic upgrade head
+
+# Step 2: Verify the column was added
+PGPASSWORD="changeme_min16chars_secure_password" psql -h localhost -U atrevete -d atrevete_db -c \
+  "SELECT column_name FROM information_schema.columns
+   WHERE table_name='appointments' AND column_name='final_warning_sent_at';"
+# expect: 1 row
+
+# Step 3: Deploy the new agent image (AUTO_CANCEL_ENABLED=false — handlers are registered
+# in the worker but _active_handlers() excludes them until the flag is toggled)
+docker compose -f /home/pepe/Proyectos/atrevete-bot/docker-compose.yml restart agent
+
+# Step 4 (after Meta approval): Set the template name in system_settings
+# Run via psql or the admin API:
+#   INSERT INTO system_settings (key, value, value_type, description)
+#   VALUES ('whatsapp_template_final_warning', '"<approved-template-name>"', 'string',
+#           'Meta-approved template for the auto-cancel final warning')
+#   ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
+
+# Step 5 (after Meta approval + Step 4): Enable the flag and restart agent
+# In production .env:
+#   AUTO_CANCEL_ENABLED=true
+docker compose -f /home/pepe/Proyectos/atrevete-bot/docker-compose.yml restart agent
+# No migration needed for the flag change.
+# NOTE: Toggling AUTO_CANCEL_ENABLED requires a notifications-worker restart.
+# Settings are process-cached via lru_cache (shared/config.py get_settings).
+# This is acceptable because the flag is enabled as part of a coordinated deploy
+# alongside the Meta-approved template — both steps happen in the same runbook.
+# Do NOT expect the flag change to take effect without restarting the agent container.
+```
+
+Verification queries (run after Step 5 — agent restarted with AUTO_CANCEL_ENABLED=true):
+
+```sql
+-- Confirm final_warning_sent_at is being stamped (after ~12h grace elapses on PENDING appts)
+SELECT id, confirmation_sent_at, final_warning_sent_at, status
+FROM appointments
+WHERE final_warning_sent_at IS NOT NULL
+ORDER BY final_warning_sent_at DESC
+LIMIT 10;
+
+-- Confirm auto-cancel is running (cancellation_reason distinguishes auto vs operator vs customer)
+SELECT id, status, cancellation_reason, cancelled_at
+FROM appointments
+WHERE cancellation_reason = 'auto_cancelled_no_confirmation'
+ORDER BY cancelled_at DESC
+LIMIT 10;
+```
+
+Rollback: Set `AUTO_CANCEL_ENABLED=false` in `.env` + restart agent — no migration needed,
+no checkpoint flush required. Already-CANCELLED appointments remain cancelled (terminal state).
+To roll back the schema: `alembic downgrade -1`. Existing PENDING rows are unaffected (column
+is nullable).
+
+---
+
 ### Service Catalog Integrity Guard
 
 CI guard that asserts 7 structural invariants over the seeded `services` table. Introduced after the orphan-variant drift found at deploy 2026-05-11 (Engram obs #5260). I7 added by disambiguation-resilience PR-1.
@@ -1008,19 +1080,73 @@ mypy .
 
 ### Confirmation Flow
 
-The bot (Maite) is the canonical confirmation channel for new bookings.
+`agent/tools/book.py` applies a lead-time gate at appointment creation:
 
-- `agent/tools/book.py` creates appointments with `AppointmentStatus.CONFIRMED` directly.
-  There is NO pending state for newly created bookings — confirmation happens implicitly
-  via the WhatsApp conversation the customer is already in.
-- `agent/services/confirmation_service.py` contains an SMS/notification path that is
-  **DORMANT** — no cron job, no worker, and no runtime caller invokes it for new bookings.
-  Do NOT call it from any new code.
-- Appointment reminders are also out of scope for `confirmation_service.py`. Future
-  reminder delivery (if implemented) should go through the WhatsApp/bot channel, not SMS.
+- **> 48h before the appointment** → `AppointmentStatus.PENDING`. The `notifications_worker`
+  (via the `confirm_48h` handler) sends a WhatsApp confirmation request (template
+  `atrevete_confirm_48h`) approximately 48h before the appointment. The customer replies "sí" and `manage_appointments_tool` routes
+  it through `confirmation_service.handle_tool_action(CONFIRM_APPOINTMENT)`, which
+  transitions the appointment to `AppointmentStatus.CONFIRMED`.
+- **≤ 48h before the appointment** → `AppointmentStatus.CONFIRMED` directly. No separate
+  confirmation request is sent — the live WhatsApp booking conversation is sufficient.
 
-**Rule**: never set `status=AppointmentStatus.PENDING` when creating a new appointment
-in `book.py`. New appointments are CONFIRMED from the moment of creation.
+`book()` includes `appointment_status` (`"pending"` or `"confirmed"`) and
+`requires_confirmation` (bool) in its response payload so the agent can adapt its reply
+without a DB re-query. No checkpoint flush required when deploying this change.
+
+`agent/services/confirmation_service.py` contains an SMS/notification path that is
+**DORMANT** — no cron job, no worker, and no runtime caller invokes it for new bookings.
+Do NOT call it from any new code.
+
+Appointment reminders (24h before) are handled by the `reminder_24h` notification handler
+and delivered via the WhatsApp/bot channel, not SMS.
+
+#### Auto-cancel tail (Slice 3, flag-gated)
+
+When `AUTO_CANCEL_ENABLED=true`, the `notifications_worker` runs a two-phase proactive tail
+for PENDING appointments that receive no reply to the confirmation request:
+
+| Phase | Action | Default trigger |
+|-------|--------|-----------------|
+| `confirm_48h` | Sends `atrevete_confirm_48h` WhatsApp template | ~48h before appointment |
+| `final_warning` | Sends `whatsapp_template_final_warning` Meta template | ≥12h after `confirmation_sent_at` (`AUTO_CANCEL_GRACE_BEFORE_WARNING_HOURS=12`) |
+| `auto_cancel` | Sets `status=CANCELLED`, frees the slot | ≥6h after `final_warning_sent_at` (`AUTO_CANCEL_GRACE_BEFORE_CANCEL_HOURS=6`) |
+
+The `AUTO_CANCEL_MIN_LEAD_HOURS=24` guard prevents both `final_warning` and `auto_cancel`
+from firing within 24h of the appointment start time — imminent appointments are left
+untouched and must be handled manually by the operator.
+
+**Kill switch**: `AUTO_CANCEL_ENABLED` defaults to `False` and is separate from
+`NOTIFICATIONS_WORKER_ENABLED`. Setting it to `false` stops both `final_warning` and
+`auto_cancel` after restarting the agent container (settings are lru_cache-d at process
+start — a process restart is required for the flag change to take effect). Already-CANCELLED
+appointments remain cancelled (terminal state). No checkpoint flush required.
+
+**`cancellation_reason` marker values**:
+
+| Value | Set by |
+|-------|--------|
+| `'auto_cancelled_no_confirmation'` | `auto_cancel` handler (worker, Slice 3) |
+| `'operator_cancelled'` | Admin `PUT /appointments/{id}` with `status=cancelled` |
+| `'customer_declined'` | `manage_appointments_tool` → `confirmation_service.handle_tool_action(DECLINE_APPOINTMENT)` |
+
+**Meta template dependency**: `AUTO_CANCEL_ENABLED` MUST NOT be set to `true` until the
+`whatsapp_template_final_warning` Meta template is approved and its name stored in
+`system_settings` (key: `whatsapp_template_final_warning`). An empty/missing setting causes
+`final_warning.send_fn` to return `False` and apply exponential backoff
+(`notification_failed=True`) — the appointment stays PENDING and auto-cancel never fires.
+
+**Configurable timing settings** (confirm with owner before activation):
+
+| Setting | Default | Range |
+|---------|---------|-------|
+| `AUTO_CANCEL_GRACE_BEFORE_WARNING_HOURS` | 12h | 1–36h |
+| `AUTO_CANCEL_GRACE_BEFORE_CANCEL_HOURS` | 6h | 1–24h |
+| `AUTO_CANCEL_MIN_LEAD_HOURS` | 24h | 12–48h |
+
+See `shared/config.py` for all five `AUTO_CANCEL_*` settings introduced in Slice 3.
+The deploy runbook for Slice 3 is in the `### Deploy Runbook (reactivate-confirmation-lifecycle Slice 3)`
+section above.
 
 ---
 
