@@ -9,13 +9,9 @@ GREEN contract: all assertions pass AFTER T4 is applied.
 
 from __future__ import annotations
 
-import uuid
 from datetime import UTC, datetime
 
-import pytest
-
 from database.models import Appointment, AppointmentStatus
-
 
 # ---------------------------------------------------------------------------
 # T3-A: final_warning_sent_at attribute exists and defaults to None

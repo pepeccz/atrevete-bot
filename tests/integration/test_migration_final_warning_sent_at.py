@@ -82,21 +82,27 @@ def _run_alembic(command: list[str]) -> subprocess.CompletedProcess:
     if not os.path.exists(alembic_bin):
         alembic_bin = "alembic"  # fall back to PATH
 
+    # Repo root = three levels up from tests/integration/<this file> so that
+    # alembic.ini is found. (Four dirname() calls overshot to the repo's PARENT,
+    # where alembic.ini is absent — alembic then exits 255 with
+    # "No 'script_location' key found in configuration".)
+    repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
     result = subprocess.run(
         [alembic_bin] + command,
         capture_output=True,
         text=True,
         env=env,
-        cwd=os.path.dirname(  # run from repo root so alembic.ini is found
-            os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-        ),
+        cwd=repo_root,
     )
     if result.returncode != 0:
+        # Surface alembic's stderr in the failure message — a silent 255 (empty
+        # captured stderr) previously hid a cwd bug for a whole release cycle.
         raise subprocess.CalledProcessError(
             result.returncode,
             result.args,
             output=result.stdout,
-            stderr=result.stderr,
+            stderr=f"{result.stderr}\n{result.stdout}",
         )
     return result
 

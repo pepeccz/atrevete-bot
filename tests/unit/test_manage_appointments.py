@@ -83,14 +83,25 @@ async def test_confirm_action_happy():
         appointment_id=appt_id,
         response_text="¡Perfecto! Tu cita queda confirmada.",
     )
-    with patch(
-        "agent.services.confirmation_service.handle_tool_action",
-        new=AsyncMock(return_value=fake_result),
-    ) as mock_handler:
+    mock_handler = AsyncMock(return_value=fake_result)
+    with (
+        patch(
+            "agent.tools.manage_appointments_tool.get_async_session",
+            return_value=_make_async_session_ctx(),
+        ),
+        patch(
+            "agent.tools.manage_appointments_tool.validate_appointment_belongs_to_customer",
+            new=AsyncMock(return_value=_make_idor_ok()),
+        ),
+        patch(
+            "agent.services.confirmation_service.handle_tool_action",
+            new=mock_handler,
+        ),
+    ):
         out = await manage_appointments.coroutine(
             action="confirm",
             appointment_id=str(appt_id),
-            state=_STATE_WITH_PHONE,
+            state={**_STATE_WITH_PHONE, "customer_id": str(uuid4())},
         )
     assert "confirmada" in out.lower()
     mock_handler.assert_awaited_once()
@@ -112,14 +123,25 @@ async def test_decline_action_happy():
         appointment_id=appt_id,
         response_text="Entendido. Tu cita ha sido cancelada.",
     )
-    with patch(
-        "agent.services.confirmation_service.handle_tool_action",
-        new=AsyncMock(return_value=fake_result),
-    ) as mock_handler:
+    mock_handler = AsyncMock(return_value=fake_result)
+    with (
+        patch(
+            "agent.tools.manage_appointments_tool.get_async_session",
+            return_value=_make_async_session_ctx(),
+        ),
+        patch(
+            "agent.tools.manage_appointments_tool.validate_appointment_belongs_to_customer",
+            new=AsyncMock(return_value=_make_idor_ok()),
+        ),
+        patch(
+            "agent.services.confirmation_service.handle_tool_action",
+            new=mock_handler,
+        ),
+    ):
         out = await manage_appointments.coroutine(
             action="decline",
             appointment_id=str(appt_id),
-            state=_STATE_WITH_PHONE,
+            state={**_STATE_WITH_PHONE, "customer_id": str(uuid4())},
         )
     assert "cancelada" in out.lower()
     mock_handler.assert_awaited_once()
@@ -129,10 +151,12 @@ async def test_decline_action_happy():
 
 @pytest.mark.asyncio
 async def test_confirm_invalid_uuid():
+    # customer_id present so the flow passes the CUSTOMER_ID_REQUIRED (J2) gate
+    # and reaches UUID validation, which is what this test asserts.
     out = await manage_appointments.coroutine(
         action="confirm",
         appointment_id="not-a-uuid",
-        state=_STATE_WITH_PHONE,
+        state={**_STATE_WITH_PHONE, "customer_id": str(uuid4())},
     )
     assert "no es válido" in out.lower() or "inválido" in out.lower()
 

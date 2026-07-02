@@ -430,6 +430,7 @@ async def _confirm_or_decline(
     appointment_id: str,
     *,
     confirm: bool,
+    customer_id: UUID | None = None,
 ) -> dict:
     """Shared helper for tool-driven confirm/decline actions."""
     error_label = "confirmar" if confirm else "rechazar"
@@ -440,6 +441,16 @@ async def _confirm_or_decline(
             "message": f"Para {error_label} necesito el ID de la cita.",
             "error_code": "APPOINTMENT_ID_REQUIRED",
         }
+
+    # J2: customer_id must be resolved before any mutation
+    if customer_id is None:
+        return {
+            "success": False,
+            "appointment_id": appointment_id,
+            "message": "No pude verificar tu identidad. Por favor, inténtalo de nuevo.",
+            "error_code": "CUSTOMER_ID_REQUIRED",
+        }
+
     try:
         appt_uuid = UUID(appointment_id)
     except ValueError:
@@ -448,6 +459,38 @@ async def _confirm_or_decline(
             "appointment_id": appointment_id,
             "message": "El identificador de la cita no es válido.",
             "error_code": "INVALID_UUID",
+        }
+
+    # J2: IDOR guard — verify ownership before any mutation
+    try:
+        async with get_async_session() as session:
+            idor_result = await validate_appointment_belongs_to_customer(
+                session, appt_uuid, customer_id
+            )
+        if not idor_result.ok:
+            logger.warning(
+                "manage_appointments.idor_rejected",
+                extra={
+                    "action": "confirm" if confirm else "decline",
+                    "appointment_id": str(appt_uuid),
+                    "customer_id": str(customer_id),
+                    "error_code": idor_result.error_code,
+                },
+            )
+            return {
+                "success": False,
+                "appointment_id": appointment_id,
+                "message": idor_result.error_message
+                or "No encontré esa cita asociada a tu cuenta.",
+                "error_code": idor_result.error_code,
+            }
+    except Exception as exc:
+        logger.error("_confirm_or_decline idor check failed: %s", exc, exc_info=True)
+        return {
+            "success": False,
+            "appointment_id": appointment_id,
+            "message": "Hubo un problema al verificar la cita.",
+            "error_code": "SERVICE_ERROR",
         }
 
     try:
@@ -482,12 +525,20 @@ async def _confirm_or_decline(
         }
 
 
-async def _confirm_appointment(customer_phone: str, appointment_id: str) -> dict:
-    return await _confirm_or_decline(customer_phone, appointment_id, confirm=True)
+async def _confirm_appointment(
+    customer_phone: str, appointment_id: str, customer_id: UUID | None = None
+) -> dict:
+    return await _confirm_or_decline(
+        customer_phone, appointment_id, confirm=True, customer_id=customer_id
+    )
 
 
-async def _decline_appointment(customer_phone: str, appointment_id: str) -> dict:
-    return await _confirm_or_decline(customer_phone, appointment_id, confirm=False)
+async def _decline_appointment(
+    customer_phone: str, appointment_id: str, customer_id: UUID | None = None
+) -> dict:
+    return await _confirm_or_decline(
+        customer_phone, appointment_id, confirm=False, customer_id=customer_id
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -565,6 +616,7 @@ async def manage_appointments(
             result = await _confirm_appointment(
                 customer_phone=customer_phone,
                 appointment_id=appointment_id or "",
+                customer_id=_customer_id,
             )
             return result["message"]
 
@@ -572,6 +624,7 @@ async def manage_appointments(
             result = await _decline_appointment(
                 customer_phone=customer_phone,
                 appointment_id=appointment_id or "",
+                customer_id=_customer_id,
             )
             return result["message"]
 

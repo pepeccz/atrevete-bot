@@ -40,8 +40,13 @@ function formatDateRange(date: Date, view: CalendarView): DateLabelParts {
   }
 
   if (view === "month") {
-    const m = date.toLocaleDateString("es-ES", { month: "long" });
-    return { primary: m, meta: String(date.getFullYear()) };
+    // FullCalendar's activeStart (first visible grid cell) can be up to 6 trailing
+    // days into the previous month. Adding 6 days always lands in the anchor month,
+    // so the title matches the month the grid actually displays.
+    const anchor = new Date(date);
+    anchor.setDate(anchor.getDate() + 6);
+    const m = anchor.toLocaleDateString("es-ES", { month: "long" });
+    return { primary: m, meta: String(anchor.getFullYear()) };
   }
 
   // Week view: Mon – Sun of current week

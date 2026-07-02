@@ -8,8 +8,6 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-import pytest
-
 
 def _settings(auto_cancel_enabled: bool):
     return SimpleNamespace(AUTO_CANCEL_ENABLED=auto_cancel_enabled)

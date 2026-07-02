@@ -6,7 +6,7 @@ Covers S3-R2, S3-R5, S3-A, S3-B, S3-G per spec obs #7262.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4

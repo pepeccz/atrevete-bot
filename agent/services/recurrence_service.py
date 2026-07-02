@@ -18,7 +18,7 @@ from uuid import UUID
 from zoneinfo import ZoneInfo
 
 from dateutil.rrule import FR, MO, MONTHLY, SA, SU, TH, TU, WE, WEEKLY, rrule
-from sqlalchemy import and_, select
+from sqlalchemy import DateTime, and_, select, type_coerce
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.connection import get_async_session
@@ -317,7 +317,7 @@ async def _check_conflicts_internal(
                     Appointment.start_time < end_dt,
                     # Calculate end time: start_time + duration_minutes
                     Appointment.start_time + (Appointment.duration_minutes * timedelta(minutes=1))
-                    > start_dt,
+                    > type_coerce(start_dt, DateTime(timezone=True)),
                 )
             )
         )
