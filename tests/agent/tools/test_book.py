@@ -311,7 +311,9 @@ async def test_book_creates_new_customer_and_appointment(test_stylist, test_serv
     async with get_async_session() as sess:
         appt = await sess.get(Appointment, data["payload"]["appointment_id"])
         assert appt is not None
-        assert appt.status == AppointmentStatus.CONFIRMED
+        # future_start_iso(days_ahead=5) is >48h out, so the lead-time gate
+        # (agent/tools/book.py:474) creates the appointment PENDING, not CONFIRMED.
+        assert appt.status == AppointmentStatus.PENDING
 
         cust = await sess.get(Customer, data["payload"]["customer_id"])
         assert cust is not None
