@@ -462,12 +462,16 @@ class ApiClient {
     start_time: string;
     duration_minutes: number;
     status: string;
+    cancelled_at: string | null;
+    cancellation_reason: string | null;
     first_name: string;
     last_name: string | null;
     notes: string | null;
     created_at: string;
     updated_at: string;
   }> {
+    // ApiRequestError (thrown by request()) carries .status so callers
+    // can differentiate 409 (invalid transition) from 500.
     return this.request(`/api/admin/appointments/${id}`, {
       method: "PUT",
       body: JSON.stringify(data),

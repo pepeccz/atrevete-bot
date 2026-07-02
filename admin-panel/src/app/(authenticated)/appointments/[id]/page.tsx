@@ -6,8 +6,10 @@ import { format, parseISO } from "date-fns";
 import { es } from "date-fns/locale";
 import {
   ArrowLeft,
+  Ban,
   Calendar,
   CalendarClock,
+  Check,
   Clock,
   User,
   Scissors,
@@ -44,7 +46,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
-import api from "@/lib/api";
+import api, { ApiRequestError } from "@/lib/api";
 import type { Stylist, AppointmentStatus, ServiceCategory } from "@/lib/types";
 import { RescheduleModal } from "@/components/appointments/reschedule-modal";
 import { StatusBadge } from "@/components/shared/status-badge";
@@ -91,8 +93,11 @@ export default function AppointmentDetailPage() {
   const [stylists, setStylists] = useState<Stylist[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [isActionLoading, setIsActionLoading] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  // Separate state for operator "cancel appointment" action (NOT the form discard or DELETE flows)
+  const [showAppointmentCancelConfirm, setShowAppointmentCancelConfirm] = useState(false);
   const [rescheduleModalOpen, setRescheduleModalOpen] = useState(false);
 
   // Snapshot of initial form values for dirty-check
@@ -220,6 +225,49 @@ export default function AppointmentDetailPage() {
     } finally {
       setIsSaving(false);
       setShowDeleteConfirm(false);
+    }
+  };
+
+  // Operator quick-action: confirm a PENDING appointment (S2-R3)
+  const handleConfirm = async () => {
+    if (!appointment) return;
+    setIsActionLoading(true);
+    try {
+      const result = await api.updateAppointment(appointmentId, { status: "confirmed" });
+      setAppointment({ ...appointment, status: result.status as AppointmentStatus });
+      toast.success("Cita confirmada correctamente");
+    } catch (error) {
+      if (error instanceof ApiRequestError && error.status === 409) {
+        toast.error("La cita ya no está pendiente de confirmación");
+      } else {
+        console.error("Error confirming appointment:", error);
+        toast.error("Error al confirmar la cita");
+      }
+    } finally {
+      setIsActionLoading(false);
+    }
+  };
+
+  // Operator quick-action: cancel an appointment (S2-R4).
+  // Separate from the DELETE flow (handleDelete) and the form-discard flow (showCancelConfirm).
+  const handleCancelAction = async () => {
+    if (!appointment) return;
+    setIsActionLoading(true);
+    try {
+      const result = await api.updateAppointment(appointmentId, { status: "cancelled" });
+      setAppointment({ ...appointment, status: result.status as AppointmentStatus });
+      setShowAppointmentCancelConfirm(false);
+      toast.success("Cita cancelada");
+    } catch (error) {
+      if (error instanceof ApiRequestError && error.status === 409) {
+        toast.error("La cita ya está cancelada o completada");
+      } else {
+        console.error("Error cancelling appointment:", error);
+        toast.error("Error al cancelar la cita");
+      }
+      setShowAppointmentCancelConfirm(false);
+    } finally {
+      setIsActionLoading(false);
     }
   };
 
@@ -467,8 +515,80 @@ export default function AppointmentDetailPage() {
               </div>
             </CardContent>
           </Card>
+
+          {/* Acciones rápidas — Slice 2: operator confirm / cancel */}
+          {appointment.status !== "completed" && appointment.status !== "no_show" && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Acciones rápidas</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {appointment.status === "pending" && (
+                  <div className="flex flex-col gap-3 sm:flex-row">
+                    <Button
+                      onClick={handleConfirm}
+                      disabled={isActionLoading}
+                      className="flex-1"
+                    >
+                      <Check className="h-4 w-4 mr-2" />
+                      {isActionLoading ? "Procesando..." : "Confirmar cita"}
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      onClick={() => setShowAppointmentCancelConfirm(true)}
+                      disabled={isActionLoading}
+                      className="flex-1"
+                    >
+                      <Ban className="h-4 w-4 mr-2" />
+                      Cancelar cita
+                    </Button>
+                  </div>
+                )}
+                {appointment.status === "confirmed" && (
+                  <Button
+                    variant="destructive"
+                    onClick={() => setShowAppointmentCancelConfirm(true)}
+                    disabled={isActionLoading}
+                  >
+                    <Ban className="h-4 w-4 mr-2" />
+                    {isActionLoading ? "Procesando..." : "Cancelar cita"}
+                  </Button>
+                )}
+                {appointment.status === "cancelled" && (
+                  <p className="text-sm text-muted-foreground">
+                    Esta cita está cancelada y no admite más acciones.
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+          )}
         </div>
       </main>
+
+      {/* Operator cancel appointment confirmation (distinct from DELETE and form-discard dialogs) */}
+      <AlertDialog
+        open={showAppointmentCancelConfirm}
+        onOpenChange={setShowAppointmentCancelConfirm}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Cancelar esta cita?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Se marcará la cita como cancelada. Esta acción no se puede deshacer.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isActionLoading}>Volver</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={handleCancelAction}
+              disabled={isActionLoading}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isActionLoading ? "Cancelando..." : "Cancelar cita"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* Delete Confirmation Dialog */}
       <AlertDialog open={showDeleteConfirm} onOpenChange={setShowDeleteConfirm}>
