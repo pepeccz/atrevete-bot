@@ -255,11 +255,11 @@ services:
       dockerfile: docker/Dockerfile.admin-panel
       args:
         - NEXT_PUBLIC_API_URL=https://api.zonavix.com
-        - NEXT_PUBLIC_CHATWOOT_URL=${CHATWOOT_API_URL:-http://localhost:3000}
+        - NEXT_PUBLIC_CHATWOOT_URL=${NEXT_PUBLIC_CHATWOOT_URL:-https://chats.zanavix.com}
     container_name: atrevete-admin-panel
     environment:
       - NEXT_PUBLIC_API_URL=https://api.zonavix.com
-      - NEXT_PUBLIC_CHATWOOT_URL=${CHATWOOT_API_URL:-http://localhost:3000}
+      - NEXT_PUBLIC_CHATWOOT_URL=${NEXT_PUBLIC_CHATWOOT_URL:-https://chats.zanavix.com}
     ports:
       - "8001:3000"
     depends_on:
