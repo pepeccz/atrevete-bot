@@ -563,6 +563,10 @@ class Appointment(Base):
     confirmation_sent_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True
     )
+    # Slice 3 — final-warning before auto-cancel (S3-R3, migration f1a2b3c4d5e6)
+    final_warning_sent_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True), nullable=True
+    )
     reminder_sent_at: Mapped[datetime | None] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True
     )

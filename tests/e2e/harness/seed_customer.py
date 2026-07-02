@@ -213,3 +213,132 @@ async def seed_returning_customer(
         "past_appointment_id": str(appointment_id) if appointment_id is not None else None,
         "memories_written_keys": list(memories.keys()),
     }
+
+
+async def seed_future_appointment(
+    *,
+    phone: str,
+    customer_name: str,
+    hours_ahead: float,
+    status: str = "confirmed",
+    service_name: str | None = None,
+    stylist_name: str | None = None,
+) -> dict[str, Any]:
+    """Seed a sandbox appointment placed at ``now(UTC) + hours_ahead``.
+
+    Creates or reuses a Customer row for ``phone``, then inserts a future Appointment
+    with ``reminder_sent_at = NULL``, ``confirmation_sent_at = NULL``, and
+    ``gcal_sync_status = 'not_applicable'`` so the sandbox guard applies.
+
+    When ``service_name`` / ``stylist_name`` are omitted, the first available
+    Service / Stylist found in the DB are used.
+
+    Args:
+        phone: Customer phone in E.164 format.  MUST start with '+349'.
+        customer_name: Full name split on first space into first/last name.
+        hours_ahead: Offset in hours from now(UTC) for the appointment start.
+            Use 24.0 to land in the reminder_24h window (23–25h),
+            use 48.0 to land in the confirm_48h window (47–49h, PENDING only).
+        status: AppointmentStatus name, e.g. 'confirmed' or 'pending'.
+            confirm_48h handler only queries PENDING appointments.
+        service_name: Case-insensitive service lookup (falls back to first row).
+        stylist_name: Case-insensitive stylist lookup (falls back to first row).
+
+    Returns:
+        dict with keys:
+            appointment_id (str): UUID of the inserted Appointment.
+            customer_id (str): UUID of the upserted Customer.
+            start_time (str): ISO-formatted start_time (UTC).
+
+    Raises:
+        ValueError: If phone does not start with '+349'.
+        RuntimeError: If no Service or Stylist rows exist in the DB.
+    """
+    _assert_test_phone(phone)
+
+    parts = customer_name.split(" ", 1)
+    first_name = parts[0]
+    last_name = parts[1] if len(parts) > 1 else None
+
+    start_time = datetime.now(UTC) + timedelta(hours=hours_ahead)
+
+    async with AsyncSessionLocal() as session:
+        # --- Upsert Customer ---
+        stmt = select(Customer).where(Customer.phone == phone)
+        result = await session.execute(stmt)
+        customer = result.scalar_one_or_none()
+
+        if customer is None:
+            customer = Customer(
+                id=uuid4(),
+                phone=phone,
+                first_name=first_name,
+                last_name=last_name,
+                metadata_={},
+            )
+            session.add(customer)
+            await session.flush()
+            logger.info("seed_future_appointment: created Customer for %s", phone)
+        else:
+            logger.info("seed_future_appointment: found existing Customer for %s", phone)
+
+        # --- Resolve Service ---
+        if service_name:
+            svc_stmt = select(Service).where(func.lower(Service.name) == service_name.lower())
+        else:
+            svc_stmt = select(Service).limit(1)
+        svc_result = await session.execute(svc_stmt)
+        service = svc_result.scalar_one_or_none()
+        if service is None:
+            raise RuntimeError(
+                f"seed_future_appointment: no Service found "
+                f"(service_name={service_name!r}) — seed the catalog first"
+            )
+
+        # --- Resolve Stylist ---
+        if stylist_name:
+            sty_stmt = select(Stylist).where(func.lower(Stylist.name) == stylist_name.lower())
+        else:
+            sty_stmt = select(Stylist).limit(1)
+        sty_result = await session.execute(sty_stmt)
+        stylist = sty_result.scalar_one_or_none()
+        if stylist is None:
+            raise RuntimeError(
+                f"seed_future_appointment: no Stylist found "
+                f"(stylist_name={stylist_name!r}) — seed stylists first"
+            )
+
+        appt = Appointment(
+            id=uuid4(),
+            customer_id=customer.id,
+            stylist_id=stylist.id,
+            service_ids=[service.id],
+            start_time=start_time,
+            duration_minutes=service.duration_minutes,
+            status=AppointmentStatus[status.upper()],
+            gcal_sync_status="not_applicable",
+            first_name=customer.first_name,
+            last_name=customer.last_name,
+            # notification fields — explicitly NULL so handlers pick them up
+            reminder_sent_at=None,
+            confirmation_sent_at=None,
+            reminder_failed=False,
+            notification_failed=False,
+        )
+        session.add(appt)
+        await session.flush()
+        appointment_id = appt.id
+        await session.commit()
+
+    logger.info(
+        "seed_future_appointment: inserted Appointment %s for %s (start_time=%s, status=%s)",
+        appointment_id,
+        phone,
+        start_time.isoformat(),
+        status,
+    )
+    return {
+        "appointment_id": str(appointment_id),
+        "customer_id": str(customer.id),
+        "start_time": start_time.isoformat(),
+    }
