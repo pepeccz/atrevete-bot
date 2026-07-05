@@ -507,6 +507,69 @@ async def test_adapter_g2_closed_day_required_wire_format():
 
 
 @pytest.mark.asyncio
+async def test_adapter_g2_both_truths_forwards_first_valid_date():
+    """B5: closed_day date that ALSO violates the advance window must forward
+    `first_valid_date` structurally in the ToolResponse payload (R26/R27 dual-
+    condition rule), not just via the error_message text.
+    """
+    from datetime import datetime as dt_datetime
+    from datetime import timedelta
+    from zoneinfo import ZoneInfo
+
+    from agent.tools.update_booking import _update_booking_impl
+
+    madrid_tz = ZoneInfo("Europe/Madrid")
+    today = dt_datetime.now(madrid_tz).date()
+    # Tomorrow: closed (mocked) AND within the 3-day minimum advance window.
+    near_date_iso = (today + timedelta(days=1)).isoformat()
+
+    mocks = _patch_booking_helpers(
+        stylist_id=FAKE_STYLIST_ID,
+        is_date_closed_return=True,
+    )
+
+    with (
+        patch("agent.tools._booking_helpers._resolve_service_ids", mocks["agent.tools._booking_helpers._resolve_service_ids"]),
+        patch("agent.tools._booking_helpers._resolve_service_ids_strict", mocks["agent.tools._booking_helpers._resolve_service_ids_strict"]),
+        patch("agent.tools._booking_helpers._resolve_service_categories", mocks["agent.tools._booking_helpers._resolve_service_categories"]),
+        patch("agent.tools._booking_helpers._resolve_service_id_to_category_map", mocks["agent.tools._booking_helpers._resolve_service_id_to_category_map"]),
+        patch("agent.tools._booking_helpers._resolve_audience_variants", mocks["agent.tools._booking_helpers._resolve_audience_variants"]),
+        patch("agent.tools._booking_helpers._resolve_stylist", mocks["agent.tools._booking_helpers._resolve_stylist"]),
+        patch("agent.tools._booking_helpers._resolve_active_stylists", mocks["agent.tools._booking_helpers._resolve_active_stylists"]),
+        patch("agent.tools._booking_helpers._validate_full_name", mocks["agent.tools._booking_helpers._validate_full_name"]),
+        patch("database.connection.get_async_session", mocks["database.connection.get_async_session"]),
+        patch("agent.tools._booking_validators.is_date_closed", mocks["agent.tools._booking_validators.is_date_closed"]),
+        patch("agent.tools.update_booking.validate_service_ids_exist", mocks["agent.tools.update_booking.validate_service_ids_exist"]),
+        patch("agent.tools.update_booking.validate_stylist_id_exists", mocks["agent.tools.update_booking.validate_stylist_id_exists"]),
+        patch("agent.tools.update_booking._load_lead_time_min_days", mocks["agent.tools.update_booking._load_lead_time_min_days"]),
+    ):
+        raw = await _update_booking_impl(
+            services=["corte dama"],
+            stylist_name="Marta",
+            no_preference_stylist=False,
+            date_iso=near_date_iso,
+            date_text=None,
+            audience=None,
+            customer_full_name=None,
+            notes=None,
+            no_more_services=True,
+            extras_asked=True,
+        )
+
+    data = parse_response(raw)
+    assert data["next_step"] == "closed_day_required", f"Got: {data}"
+    assert data["status"] == "rejected"
+    payload = data.get("payload", {})
+    assert "rejected_date" in payload, f"payload missing rejected_date: {payload}"
+    assert "first_valid_date" in payload, (
+        f"both-truths payload must forward first_valid_date structurally: {payload}"
+    )
+    # errors[] must still carry the enriched (both-facts) message text
+    assert data.get("errors"), f"errors[] must not be empty: {data}"
+    assert "antelaci" in data["errors"][0], f"error message must cite advance policy: {data}"
+
+
+@pytest.mark.asyncio
 async def test_adapter_g3_advance_policy_violated_payload_forwarded():
     """T5 G3: advance_policy_violated → next_step=advance_policy_violated + payload intact."""
     from agent.tools.update_booking import _update_booking_impl
