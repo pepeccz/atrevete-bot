@@ -92,7 +92,13 @@ def _format_lifecycle_line(appt, now: datetime) -> str:
     else:
         reminder_part = f"recordatorio enviado {_format_relative(reminder_sent_at, now)}"
 
-    return f"Estado: {status_label} · {confirmation_part} · {reminder_part}"
+    line = f"Estado: {status_label} · {confirmation_part} · {reminder_part}"
+
+    final_warning_sent_at = getattr(appt, "final_warning_sent_at", None)
+    if final_warning_sent_at is not None:
+        line += f" · aviso final enviado {_format_relative(final_warning_sent_at, now)}"
+
+    return line
 
 
 async def _get_service_names_for_middleware(

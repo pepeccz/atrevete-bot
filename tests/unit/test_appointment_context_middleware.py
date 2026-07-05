@@ -9,6 +9,7 @@ Four cases:
 """
 
 from datetime import datetime, timedelta
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 from zoneinfo import ZoneInfo
@@ -364,3 +365,40 @@ class TestAppointmentContextLifecycleFields:
         assert "PENDIENTE" in content
         assert "confirmación pendiente" in content
         assert "recordatorio pendiente" in content
+
+
+class TestFormatLifecycleLineFinalWarning:
+    """TASK-09/10 — final_warning_sent_at must surface in the lifecycle line (D5)."""
+
+    def test_final_warning_sent_renders_aviso_final_segment(self):
+        from agent.middleware.appointment_context import _format_lifecycle_line
+        from database.models import AppointmentStatus
+
+        now = datetime.now(MADRID_TZ)
+        appt = SimpleNamespace(
+            status=AppointmentStatus.PENDING,
+            confirmation_sent_at=now - timedelta(hours=36),
+            reminder_sent_at=None,
+            final_warning_sent_at=now - timedelta(hours=3),
+        )
+
+        line = _format_lifecycle_line(appt, now)
+
+        assert "aviso final enviado" in line
+        assert "hace 3h" in line
+
+    def test_no_final_warning_sent_yet_omits_segment(self):
+        from agent.middleware.appointment_context import _format_lifecycle_line
+        from database.models import AppointmentStatus
+
+        now = datetime.now(MADRID_TZ)
+        appt = SimpleNamespace(
+            status=AppointmentStatus.PENDING,
+            confirmation_sent_at=now - timedelta(hours=36),
+            reminder_sent_at=None,
+            final_warning_sent_at=None,
+        )
+
+        line = _format_lifecycle_line(appt, now)
+
+        assert "aviso final" not in line
