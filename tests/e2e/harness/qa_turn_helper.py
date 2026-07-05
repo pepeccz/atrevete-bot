@@ -111,6 +111,195 @@ def detect_repeats_in_run(run: dict) -> dict:
     }
 
 
+def _extract_next_step_from_evidence(item: dict) -> str | None:
+    """Extract `next_step` from a single tool_evidence item, tolerating shape drift.
+
+    Primary shape (raw harness output): `result.result_summary` is a JSON
+    **string** produced by the tool's `ToolResponse.model_dump_json()`; parse it
+    and read `next_step`.
+
+    Fallback shape (some curated/manual run files): `result_next_step` sits
+    directly on the item. Tolerated for robustness; not the primary contract.
+    """
+    result = item.get("result")
+    if isinstance(result, dict):
+        summary = result.get("result_summary")
+        if isinstance(summary, str):
+            try:
+                parsed = json.loads(summary)
+            except (json.JSONDecodeError, TypeError):
+                parsed = None
+            if isinstance(parsed, dict) and "next_step" in parsed:
+                return parsed.get("next_step")
+
+    fallback = item.get("result_next_step")
+    if isinstance(fallback, str):
+        return fallback
+
+    return None
+
+
+# ---------------------------------------------------------------------------
+# A1 — Gate-flag-timing checker (findings #2/#3)
+# ---------------------------------------------------------------------------
+
+
+def detect_premature_extras_flags(run: dict) -> dict:
+    """Flag a run whose FIRST services-introducing `update_booking` call sets
+    `extras_asked`/`no_more_services` before the extras loop legitimately fired.
+
+    Rules (Requirement: Gate-flag-timing check):
+    - Walk turns in order; find the FIRST `update_booking` tool_evidence item
+      whose `arguments` carry a non-empty `services` list (the call that
+      INTRODUCES services). Because `update_booking` is stateless (R20), later
+      calls legitimately re-pass the flags — so ONLY the first
+      services-introducing call is inspected (matches the tool's own gate at
+      update_booking.py:678, `len(services)>=1 and not both flags`).
+    - Flag when: `len(services) == 1` AND (`extras_asked is True` OR
+      `no_more_services is True`).
+    - The 2+-service fast path (`len(services) >= 2`) is EXEMPT (booking_flow
+      Paso 3 legitimate path) — never flagged, regardless of the flags' values.
+
+    Tolerates malformed/partial run dicts (error outcomes, timeouts): missing
+    `turns`, non-dict turns/items, missing `arguments`, and non-JSON
+    `result_summary` values are skipped, never raised on.
+
+    Returns:
+        {
+          "scenario_id": str | None,
+          "premature_flag_detected": bool,
+          "findings": [{"turn": int | None, "services": [...],
+                        "extras_asked": bool, "no_more_services": bool}, ...]
+        }
+    """
+    findings: list[dict[str, Any]] = []
+    premature_detected = False
+    introducing_found = False
+
+    for turn in run.get("turns") or []:
+        if introducing_found:
+            break
+        if not isinstance(turn, dict):
+            continue
+        turn_num = turn.get("turn")
+        for item in turn.get("tool_evidence") or []:
+            if not isinstance(item, dict):
+                continue
+            if item.get("tool_name") != "update_booking":
+                continue
+
+            arguments = item.get("arguments")
+            services = arguments.get("services") if isinstance(arguments, dict) else None
+
+            if isinstance(services, list) and len(services) >= 1:
+                introducing_found = True
+                if len(services) == 1:
+                    extras_asked = bool(arguments.get("extras_asked"))
+                    no_more_services = bool(arguments.get("no_more_services"))
+                    if extras_asked or no_more_services:
+                        premature_detected = True
+                        findings.append(
+                            {
+                                "turn": turn_num,
+                                "services": services,
+                                "extras_asked": extras_asked,
+                                "no_more_services": no_more_services,
+                            }
+                        )
+                break  # introducing call found — stop scanning this run
+
+    return {
+        "scenario_id": run.get("scenario_id"),
+        "premature_flag_detected": premature_detected,
+        "findings": findings,
+    }
+
+
+def _find_step_from(
+    observed: list[str], step: str, start: int, end: int | None = None
+) -> int | None:
+    """Return the index of the first occurrence of `step` in observed[start:end], or None."""
+    stop = end if end is not None else len(observed)
+    for i in range(start, stop):
+        if observed[i] == step:
+            return i
+    return None
+
+
+# ---------------------------------------------------------------------------
+# A2 — step_order supersequence assertion (finding #3, premature confirmation)
+# ---------------------------------------------------------------------------
+
+
+def check_step_order(run: dict, expected_order: list[str]) -> dict:
+    """Assert the observed `next_step` sequence contains `expected_order` as an
+    ordered subsequence (order preserved, gaps allowed).
+
+    Observed sequence: for each turn, in order, extract `next_step` from every
+    `tool_evidence` item (see `_extract_next_step_from_evidence`), dropping
+    `None` and collapsing consecutive duplicates.
+
+    Catches premature confirmation: if a declared step (e.g. `booking_ready`)
+    is observed only BEFORE an earlier-declared step (e.g.
+    `policy_acceptance_required`) is matched, the subsequence match fails and
+    the step is reported in `out_of_order` (distinct from `missing_steps`,
+    which are declared steps never observed anywhere in the run).
+
+    Tolerates malformed/partial run dicts — missing `turns` yields an empty
+    observed sequence, so every declared step is reported as missing.
+
+    Returns:
+        {
+          "scenario_id": str | None,
+          "expected_order": [...],
+          "observed_order": [...],
+          "step_order_ok": bool,
+          "missing_steps": [...],   # declared steps never observed
+          "out_of_order": str | None,  # first declared step found out of order
+        }
+    """
+    observed: list[str] = []
+    for turn in run.get("turns") or []:
+        if not isinstance(turn, dict):
+            continue
+        for item in turn.get("tool_evidence") or []:
+            if not isinstance(item, dict):
+                continue
+            next_step = _extract_next_step_from_evidence(item)
+            if next_step is None:
+                continue
+            if not observed or observed[-1] != next_step:
+                observed.append(next_step)
+
+    step_order_ok = True
+    missing_steps: list[str] = []
+    out_of_order: str | None = None
+    idx = 0
+
+    for step in expected_order:
+        pos = _find_step_from(observed, step, idx)
+        if pos is not None:
+            idx = pos + 1
+            continue
+
+        step_order_ok = False
+        earlier_pos = _find_step_from(observed, step, 0, idx)
+        if earlier_pos is not None:
+            if out_of_order is None:
+                out_of_order = step
+        else:
+            missing_steps.append(step)
+
+    return {
+        "scenario_id": run.get("scenario_id"),
+        "expected_order": expected_order,
+        "observed_order": observed,
+        "step_order_ok": step_order_ok,
+        "missing_steps": missing_steps,
+        "out_of_order": out_of_order,
+    }
+
+
 def compute_l4_verdict(
     hallucination_result: dict[str, Any],
     service_match: dict[str, Any] | None,
@@ -489,6 +678,46 @@ def _cmd_detect_repeats(run_file: str) -> None:
         _json_err("run_file_unreadable", str(exc))
         return
     _json_out(detect_repeats_in_run(run))
+
+
+def _cmd_detect_gate_flags(run_file: str) -> None:
+    """Load a run JSON file and print the gate-flag-timing report (A1)."""
+    from pathlib import Path
+
+    path = Path(run_file)
+    if not path.exists():
+        _json_err("run_file_not_found", run_file)
+        return
+    try:
+        run = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        _json_err("run_file_unreadable", str(exc))
+        return
+    _json_out(detect_premature_extras_flags(run))
+
+
+def _cmd_check_step_order(run_file: str, expected_order_json: str) -> None:
+    """Load a run JSON file + expected step order and print the step_order report (A2)."""
+    from pathlib import Path
+
+    path = Path(run_file)
+    if not path.exists():
+        _json_err("run_file_not_found", run_file)
+        return
+    try:
+        run = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        _json_err("run_file_unreadable", str(exc))
+        return
+    try:
+        expected_order = json.loads(expected_order_json)
+    except (json.JSONDecodeError, TypeError) as exc:
+        _json_err("invalid_expected_order", str(exc))
+        return
+    if not isinstance(expected_order, list):
+        _json_err("invalid_expected_order", "--expected-order must be a JSON list")
+        return
+    _json_out(check_step_order(run, expected_order))
 
 
 def _json_out(data: dict[str, Any]) -> None:
@@ -945,6 +1174,33 @@ def _build_parser() -> argparse.ArgumentParser:
         "--run-file", required=True, dest="run_file", help="Path to {scenario_id}.json run file"
     )
 
+    # detect-gate-flags (A1 — gate-flag-timing checker: findings #2/#3)
+    p_gateflags = sub.add_parser(
+        "detect-gate-flags",
+        help="Report premature extras_asked/no_more_services flags in a scenario run JSON file",
+    )
+    p_gateflags.add_argument(
+        "--run-file", required=True, dest="run_file", help="Path to {scenario_id}.json run file"
+    )
+
+    # check-step-order (A2 — step_order supersequence assertion: finding #3)
+    p_steporder = sub.add_parser(
+        "check-step-order",
+        help="Assert the observed next_step sequence contains --expected-order as a subsequence",
+    )
+    p_steporder.add_argument(
+        "--run-file", required=True, dest="run_file", help="Path to {scenario_id}.json run file"
+    )
+    p_steporder.add_argument(
+        "--expected-order",
+        required=True,
+        dest="expected_order",
+        help=(
+            "JSON list of next_step values in declared order, "
+            'e.g. \'["name_required", "booking_ready"]\''
+        ),
+    )
+
     # service-check — deterministic service-type / audience validation
     p_svc = sub.add_parser(
         "service-check",
@@ -1046,6 +1302,10 @@ def main() -> None:
         asyncio.run(_cmd_seed_appointment(args))
     elif args.command == "detect-repeats":
         _cmd_detect_repeats(args.run_file)
+    elif args.command == "detect-gate-flags":
+        _cmd_detect_gate_flags(args.run_file)
+    elif args.command == "check-step-order":
+        _cmd_check_step_order(args.run_file, args.expected_order)
     elif args.command == "service-check":
         asyncio.run(_cmd_service_check(args))
     elif args.command == "reconcile":

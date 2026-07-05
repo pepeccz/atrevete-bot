@@ -18,7 +18,8 @@ Hallucination-tolerant guards (J1/J2/J3, Change J):
   validate_slot_in_offered — slot binding: start_iso must be in recently_offered_slots (state).
 
 No I/O ownership beyond calling pure helpers + is_date_closed (DB-backed).
-No dependency on ToolResponse or _booking_helpers.
+No dependency on ToolResponse. Imports the pure `_compute_first_valid_date` helper
+from _booking_helpers (no DB access) to avoid duplicating the first-valid-date formula.
 
 Design: ADR-1 (module location), ADR-2 (error codes), ADR-3 (dataclass),
         ADR-4 (injectable ref_date), ADR-5 (async), ADR-6 (adapter mapping in callers),
@@ -29,13 +30,14 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime
 from uuid import UUID
 from zoneinfo import ZoneInfo
 
 # First-party deps kept at module level so tests can patch them here
 # (agent.tools._booking_validators.{resolve_relative_date,is_date_closed,...}).
 from agent.booking.resolvers.time_resolver import MIN_BOOKING_DAYS, resolve_relative_date
+from agent.tools._booking_helpers import _compute_first_valid_date
 from shared.business_hours_validator import is_date_closed
 
 logger = logging.getLogger(__name__)
@@ -142,24 +144,41 @@ async def validate_booking_date(
             payload={"raw_text": date_text},
         )
 
+    # effective_min_days/min_date computed once, ahead of G2, so the G2 enrichment
+    # below and G3 share the same first-valid-date computation (no duplication).
+    effective_min_days: int = min_days if min_days is not None else MIN_BOOKING_DAYS
+    min_date: date = _compute_first_valid_date(ref, effective_min_days)
+
     # ── G2: Closed day ────────────────────────────────────────────────────────
     if await is_date_closed(resolved):
         weekday_name = _weekday_name_es(resolved)
+        error_message = (
+            f"El salón está cerrado el {_human_date_es(resolved)}. " "¿Te viene bien otro día?"
+        )
+        payload: dict = {
+            "closed_date": resolved.isoformat(),
+            "reason": weekday_name,
+        }
+        if resolved < min_date:
+            # Both truths: the closed date ALSO falls inside the minimum advance
+            # window. Keep error_code='closed_day' (G2 still wins on precedence)
+            # but enrich the message + payload so the customer isn't told a
+            # half-truth (fixing "cerrado" without also fixing lead-time would
+            # bounce them straight into the same rejection again).
+            payload["first_valid_date"] = min_date.isoformat()
+            error_message = (
+                f"El salón está cerrado el {_human_date_es(resolved)}. "
+                f"Además, solo reservamos con al menos {effective_min_days} días de antelación: "
+                f"la fecha más próxima disponible es {_human_date_es(min_date)}."
+            )
         return DateValidationResult(
             date_iso=None,
             error_code=ERROR_CLOSED_DAY,
-            error_message=(
-                f"El salón está cerrado el {_human_date_es(resolved)}. " "¿Te viene bien otro día?"
-            ),
-            payload={
-                "closed_date": resolved.isoformat(),
-                "reason": weekday_name,
-            },
+            error_message=error_message,
+            payload=payload,
         )
 
     # ── G3: Advance policy (lead-time) ────────────────────────────────────────
-    effective_min_days: int = min_days if min_days is not None else MIN_BOOKING_DAYS
-    min_date: date = ref + timedelta(days=effective_min_days)
     if resolved < min_date:
         return DateValidationResult(
             date_iso=None,

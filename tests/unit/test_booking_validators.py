@@ -477,6 +477,68 @@ class TestHumanizedMessages:
         assert result.payload["closed_date"] == "2026-06-15"
 
     @pytest.mark.asyncio
+    async def test_closed_day_and_under_advance_window_enriches_payload_and_message(self):
+        """Both-truths enrichment: closed day AND under the advance window at once.
+
+        error_code stays 'closed_day' (G2 precedence preserved), but payload gains
+        first_valid_date and the message states both facts.
+        """
+        from unittest.mock import AsyncMock, patch
+
+        from agent.tools import _booking_validators as bv
+
+        # ref=2026-07-05 (Sunday), requested=2026-07-06 (Monday, closed) — 1 day
+        # ahead, which is also under the default MIN_BOOKING_DAYS=3 window.
+        ref = date(2026, 7, 5)
+        with patch.object(bv, "is_date_closed", new=AsyncMock(return_value=True)):
+            result = await bv.validate_booking_date(
+                date_iso="2026-07-06",
+                date_text=None,
+                ref_date=ref,
+            )
+
+        assert result.error_code == bv.ERROR_CLOSED_DAY
+        assert result.date_iso is None
+        assert (
+            "first_valid_date" in result.payload
+        ), f"Expected first_valid_date in payload, got: {result.payload}"
+        expected_first_valid = ref + __import__("datetime").timedelta(days=bv.MIN_BOOKING_DAYS)
+        assert result.payload["first_valid_date"] == expected_first_valid.isoformat()
+        msg = result.error_message
+        assert "cerrado" in msg, f"Message must still state the closed-day fact, got: {msg}"
+        assert "antelación" in msg, f"Message must also state the advance-policy fact, got: {msg}"
+        assert "más próxima" in msg, f"Message must name the first valid date, got: {msg}"
+
+    @pytest.mark.asyncio
+    async def test_closed_day_outside_advance_window_unchanged(self):
+        """Closed day that does NOT violate the advance window: no enrichment.
+
+        payload must NOT contain first_valid_date, and the message must be the
+        original single-fact closed-day message (unchanged behavior).
+        """
+        from unittest.mock import AsyncMock, patch
+
+        from agent.tools import _booking_validators as bv
+
+        # ref=2026-06-10, requested=2026-06-15 (Monday, closed) — 5 days ahead,
+        # well past the default MIN_BOOKING_DAYS=3 window.
+        ref = date(2026, 6, 10)
+        with patch.object(bv, "is_date_closed", new=AsyncMock(return_value=True)):
+            result = await bv.validate_booking_date(
+                date_iso="2026-06-15",
+                date_text=None,
+                ref_date=ref,
+            )
+
+        assert result.error_code == bv.ERROR_CLOSED_DAY
+        assert (
+            "first_valid_date" not in result.payload
+        ), f"Did not expect first_valid_date in payload, got: {result.payload}"
+        assert result.error_message == (
+            "El salón está cerrado el lunes 15 de junio. ¿Te viene bien otro día?"
+        )
+
+    @pytest.mark.asyncio
     async def test_advance_policy_message_is_warm_and_natural(self):
         from unittest.mock import AsyncMock, patch
 

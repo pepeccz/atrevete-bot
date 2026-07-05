@@ -84,6 +84,11 @@
       service_type: principal
       audience: adult_female
       forbidden_audience: adult_male
+    # A2 (qa-loop-conversation-quality): guaranteed-to-fire next_step subsequence.
+    # Catches premature confirmation (booking_ready observed before
+    # policy_acceptance_required). audience_required is omitted — "corte de
+    # dama" states audience explicitly, so that step never fires here.
+    step_order: [name_required, policy_acceptance_required, booking_ready]
 
 - id: change-a-tz-madrid
   description: >
@@ -153,6 +158,58 @@
     tool_calls_required: [check_availability, book]
     tool_calls_forbidden: []
     tags: [change-a, injected-state]
+    # A2 (qa-loop-conversation-quality): guaranteed-to-fire next_step subsequence.
+    step_order: [name_required, policy_acceptance_required, booking_ready]
+
+# DATE-SENSITIVITY (A3, qa-loop-conversation-quality): "el lunes que viene" is
+# ALWAYS a closed day (Monday — see database/seeds/business_hours.py), so
+# error_code=closed_day (G2) always fires here — G2 fires BEFORE G3
+# (advance_policy_violated) inside _booking_validators.validate_booking_date's
+# G1 → G2 → G3 short-circuit pipeline, NOT the other way around. Whether the
+# SAME requested date also falls inside the minimum booking-advance window
+# depends on today's weekday: when today is Fri/Sat/Sun, "next Monday" is
+# typically within the 3-day advance window, so the closed_day payload is
+# enriched with `first_valid_date` and the message states BOTH facts (see
+# qa-loop-conversation-quality FIX 1, agent/tools/_booking_validators.py). On
+# other run-dates ("next Monday" already clears the advance window) the
+# rejection degrades gracefully to a pure closed_day message with no
+# enrichment — the must_contain_any assertion below will then legitimately
+# fail to find advance-policy phrasing, which is an expected, date-dependent
+# WARN/FAIL on those run-dates, not a regression.
+- id: change-a-closed-and-underadvance
+  description: >
+    Requested date ("el lunes que viene") is always a closed day (Monday) and,
+    when run on Fri/Sat/Sun, is ALSO under the minimum booking advance window.
+    The bot must not stop at "cerrado" alone — the enriched rejection message
+    must ALSO cite the advance-policy fact (first_valid_date / days), so the
+    customer isn't sent back into the same rejection after picking another
+    Monday-adjacent day. See the DATE-SENSITIVITY comment above for run-date
+    caveats.
+  tags: [change-a, min-days, closed-day, rejection-reason]
+  persona:
+    name: Nuria Vega
+    phone: "+34999000048"
+    style: >
+      Pide cita para un lunes muy próximo (dentro del mínimo de antelación).
+      El bot debe rechazar citando tanto el cierre del lunes como la antelación mínima.
+  intent: "Hola, quiero una cita para el lunes que viene, ¿me la dais?"
+  max_turns: 6
+  expect:
+    outcome: rejected
+    db_appointment: null
+    tool_calls_required: []
+    tool_calls_forbidden: [book]
+    # Accepted phrasings the rejection reason MUST contain — these must evidence
+    # the ENRICHED advance/next-valid-date part of the message. "cerrado" alone
+    # (the bare closed-day fact) must NOT satisfy this check — none of these
+    # phrases appear in the unenriched closed_day message on its own.
+    must_contain_any:
+      - "días de antelación"
+      - "con antelación"
+      - "fecha más próxima"
+      - "a partir del"
+      - "el mínimo"
+    tags: [change-a, dual-condition, advance-precedence]
 
 # ---------------------------------------------------------------------------
 # Change B regression (3 scenarios) — catalog caching / prompt pruning
@@ -255,6 +312,9 @@
     tool_calls_required: [check_availability, book]
     tool_calls_forbidden: []
     tags: [change-c, gcal]
+    # A2/FIX 3 (qa-loop-conversation-quality): no step_order here — in the Fase E
+    # run, this scenario's book() tool_evidence has arguments/result null, so
+    # policy_acceptance_required never appears (book() evidence capture gap).
 
 - id: change-c-cancel-flow
   description: >
