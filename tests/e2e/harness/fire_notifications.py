@@ -74,6 +74,7 @@ os.environ.setdefault("WHATSAPP_TEMPLATE_FINAL_WARNING", "test_final_warning_han
 import argparse
 import asyncio
 import dataclasses
+import itertools
 import json
 import logging
 import pathlib
@@ -108,6 +109,13 @@ if _AUTO_CANCEL_ENABLED:
 _TEST_TEMPLATE_REMINDER = os.environ["WHATSAPP_TEMPLATE_REMINDER_24H"]
 _TEST_TEMPLATE_CONFIRM = os.environ["WHATSAPP_TEMPLATE_CONFIRM_48H"]
 _TEST_TEMPLATE_FINAL_WARNING = os.environ["WHATSAPP_TEMPLATE_FINAL_WARNING"]
+
+# sdd/context-coherence FIX 4: a fixed sentinel id (-1) collided across every
+# fallback-create call in a batch run, silently corrupting harness signals via
+# the ConversationHistory.conversation_id unique constraint. Each capturing
+# client instance draws the next value from this shared monotonic counter
+# instead, guaranteeing uniqueness within a single harness run.
+_fallback_sentinel_ids = itertools.count(start=-1, step=-1)
 
 
 async def _patch_settings_service() -> None:
@@ -214,8 +222,10 @@ def _make_capturing_handler(handler, captures: list[dict[str, Any]]):
                 **_kw: Any,
             ) -> tuple[int | None, bool]:
                 # Fallback path (resolver miss / rejected conversation_id, D3). No new
-                # conversation is created for real — return a sentinel id so
-                # deliver_template's success path completes without a live Chatwoot call.
+                # conversation is created for real — return a unique sentinel id (FIX 4)
+                # so deliver_template's success path completes without a live Chatwoot
+                # call, and so multiple fallback-creates in the same batch don't collide
+                # on ConversationHistory.conversation_id's unique constraint.
                 call_record["customer_phone"] = customer_phone
                 call_record["template_name"] = template_name
                 call_record["body_params"] = body_params
@@ -223,7 +233,7 @@ def _make_capturing_handler(handler, captures: list[dict[str, Any]]):
                 call_record["language"] = language
                 call_record["conversation_id"] = None
                 call_record["fallback_conversation_created"] = True
-                return -1, True
+                return next(_fallback_sentinel_ids), True
 
         result = await original_send_fn(appt, _CapturingClient())
 

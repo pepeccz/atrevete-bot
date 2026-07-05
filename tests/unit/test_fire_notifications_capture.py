@@ -95,3 +95,41 @@ async def test_capturing_client_supports_fallback_create_conversation():
     # Fallback path never resolves a real conversation_id — must not be confused
     # with an existing-conversation send.
     assert captures[0]["conversation_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_fallback_create_returns_unique_sentinel_ids_across_calls():
+    """FIX 4 (sdd/context-coherence, both judges MAJOR): a fixed sentinel id
+    (-1) previously collided across every fallback-create call in a batch,
+    silently corrupting harness signals via the ConversationHistory unique
+    constraint. Each call must draw a distinct negative id."""
+
+    async def fake_send_fn(appt, client) -> bool:
+        new_id, success = await client.create_conversation_with_template(
+            customer_phone=appt.customer.phone,
+            template_name="appointment_confirmation_48h",
+            body_params={"1": "Ana"},
+            category="UTILITY",
+            language="es",
+            fallback_content="Hola Ana",
+        )
+        assert success is True
+        return new_id
+
+    async def fake_query_fn(session):
+        return []
+
+    handler = NotificationHandler(
+        name="confirm_48h",
+        query_fn=fake_query_fn,
+        send_fn=fake_send_fn,
+        mark_sent_fn=fake_query_fn,
+        mark_failed_fn=fake_query_fn,
+    )
+    captures: list[dict] = []
+    wrapped = _make_capturing_handler(handler, captures)
+
+    sentinel_ids = [await wrapped.send_fn(_make_appt(), None) for _ in range(5)]
+
+    assert len(sentinel_ids) == len(set(sentinel_ids)), "sentinel ids must be unique per call"
+    assert all(isinstance(sid, int) and sid < 0 for sid in sentinel_ids)
