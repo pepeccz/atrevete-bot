@@ -18,7 +18,7 @@ Muestra el comportamiento correcto cuando el cliente menciona una alergia u otra
 
 ```
 Cliente: "quiero un tinte con Marta el viernes"
-Bot: → update_booking(services=["tinte"], stylist_name="Marta", date_text="el viernes", extras_asked=true, no_more_services=true)
+Bot: → update_booking(services=["tinte"], stylist_name="Marta", date_text="el viernes")
      ← next_step="name_required"
 Bot: "Para registrar la cita, ¿me das tu nombre y apellido?"
 
@@ -51,6 +51,11 @@ Ilustra la ruta más habitual: estilista elegido antes que la fecha. El bot NUNC
 
 ```
 Cliente: "quiero un corte con Marta"
+Bot:     → update_booking(services=["corte dama"], stylist_name="Marta")
+         ← next_step="extras_loop_required"
+Bot:     "¿Quieres añadir algún otro servicio o solo el corte?"
+
+Cliente: "solo el corte"
 Bot:     → update_booking(services=["corte dama"], stylist_name="Marta", extras_asked=true, no_more_services=true)
          ← next_step="offer_slots", payload={stylist_id="<uuid>", service_ids=[...], from_date="2026-04-27", ...}
 
@@ -80,6 +85,7 @@ Bot:     "¡Listo! Reserva confirmada."
 ```
 
 Puntos clave:
+- En servicio ÚNICO, la pregunta de extras es un turno propio ANTES de fijar extras_asked/no_more_services; nunca los pongas en la primera llamada.
 - Tras `offer_slots`, llama `get_next_available_options` SIN preguntar fecha.
 - La pregunta de notas usa el nombre de pila de la estilista.
 - El flujo de confirmación (dos turnos) aplica siempre.
