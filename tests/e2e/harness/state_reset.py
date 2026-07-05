@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import argparse
+import asyncio
+import json
+import sys
 from collections.abc import Iterable
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -153,9 +157,11 @@ class AsyncDatabaseCleaner:
             "stylist_name": stylist.name,
             "start_datetime": appointment.start_time,
             "created_at": appointment.created_at,
-            "status": appointment.status.value
-            if hasattr(appointment.status, "value")
-            else str(appointment.status),
+            "status": (
+                appointment.status.value
+                if hasattr(appointment.status, "value")
+                else str(appointment.status)
+            ),
         }
 
     async def close(self) -> None:
@@ -346,3 +352,103 @@ class StateResetHarness:
                 seen.add(key_name)
                 deleted += await self.redis.delete(key)
         return deleted
+
+
+# --------------------------------------------------------------------------
+# CLI entrypoint (TASK-23 QA-harness continuity tooling, FIX 2).
+#
+# skills/atrevete-qa-runner/SKILL.md Steps 2/8 document invoking this module
+# directly (``python tests/e2e/harness/state_reset.py reset --conversation-id
+# X --phone Y``). The module previously exposed no ``argparse``/``__main__``
+# entrypoint, so that documented command silently exited 0 without doing
+# anything — every runner following the doc literally skipped state hygiene.
+#
+# Kept independent from qa_turn_helper.py's own ``reset`` subcommand (which
+# already calls StateResetHarness internally) — that path is untouched by
+# this fix; this is the module-level entrypoint the SKILL.md docs reference.
+# --------------------------------------------------------------------------
+
+
+def _json_out(data: dict[str, Any]) -> None:
+    """Write JSON to stdout and exit 0."""
+    print(json.dumps(data, ensure_ascii=False, default=str))
+
+
+def _json_err(error: str, details: str | None = None) -> None:
+    """Write error JSON to stderr and exit 1."""
+    payload: dict[str, Any] = {"ok": False, "error": error}
+    if details:
+        payload["details"] = details
+    print(json.dumps(payload, ensure_ascii=False, default=str), file=sys.stderr)
+    sys.exit(1)
+
+
+async def _cmd_reset(conversation_id: str, phone: str) -> None:
+    """Reset Redis checkpoints + PostgreSQL rows for a QA conversation/phone.
+
+    Refuses (via ``is_test_phone``'s +349 guard) to run against a phone that
+    does not start with the configured ``TEST_PHONE_PREFIX``.
+    """
+    try:
+        phone_is_test = is_test_phone(phone)
+    except RuntimeError as exc:
+        _json_err("phone_guard_failed", str(exc))
+        return
+    if not phone_is_test:
+        _json_err(
+            "phone_guard_failed",
+            f"phone={phone!r} does not start with the configured TEST_PHONE_PREFIX "
+            "— refusing reset",
+        )
+        return
+
+    settings = get_settings()
+    redis_kwargs: dict[str, Any] = {"decode_responses": False}
+    if settings.REDIS_PASSWORD:
+        redis_kwargs["password"] = settings.REDIS_PASSWORD
+    client = redis.from_url(settings.REDIS_URL, **redis_kwargs)
+    harness = StateResetHarness(redis_client=client)
+    try:
+        result = await harness.reset_conversation_state(
+            conversation_id=conversation_id,
+            customer_phone=phone,
+        )
+        _json_out(result)
+    except Exception as exc:
+        _json_err("reset_failed", str(exc))
+    finally:
+        await client.aclose()
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        prog="state_reset",
+        description="Reset Redis + PostgreSQL QA artifacts for a conversation/phone.",
+    )
+    sub = parser.add_subparsers(dest="command", required=True)
+
+    p_reset = sub.add_parser(
+        "reset", help="Reset Redis checkpoints + DB rows for a QA conversation/phone"
+    )
+    p_reset.add_argument(
+        "--conversation-id", required=True, dest="conversation_id", help="Conversation UUID"
+    )
+    p_reset.add_argument(
+        "--phone",
+        required=True,
+        help="QA customer phone (must start with TEST_PHONE_PREFIX, e.g. +34999)",
+    )
+
+    return parser
+
+
+def main() -> None:
+    parser = _build_parser()
+    args = parser.parse_args()
+
+    if args.command == "reset":
+        asyncio.run(_cmd_reset(conversation_id=args.conversation_id, phone=args.phone))
+
+
+if __name__ == "__main__":
+    main()

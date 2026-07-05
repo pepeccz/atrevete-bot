@@ -101,6 +101,7 @@ from agent.workers.notification_handlers.confirm_48h import HANDLER as confirm_4
 from agent.workers.notification_handlers.final_warning import HANDLER as final_warning_handler
 from agent.workers.notification_handlers.reminder_24h import HANDLER as reminder_24h_handler
 from agent.workers.notifications_worker import process_handler
+from shared.chatwoot_client import ConversationSendOutcome
 
 _ALL_HANDLERS = {
     "reminder_24h": reminder_24h_handler,
@@ -223,6 +224,31 @@ def _make_capturing_handler(handler, captures: list[dict[str, Any]]):
                 # when the customer has a resolvable canonical conversation.
                 call_record["conversation_id"] = conversation_id
                 return True
+
+            async def send_template_to_conversation_checked(
+                self,
+                conversation_id: int,
+                customer_phone: str,
+                template_name: str,
+                body_params: dict[str, str],
+                category: str = "UTILITY",
+                language: str = "es",
+                fallback_content: str | None = None,
+                **_kw: Any,
+            ) -> ConversationSendOutcome:
+                # sdd/context-coherence FIX 1 (harness): deliver_template's
+                # resolved-conversation branch calls this checked method — not
+                # send_template_message — and needs a typed ConversationSendOutcome
+                # back, not a bool. Mirrors the capture record shape of
+                # send_template_message above (including conversation_id) so the
+                # harness can exercise and assert on the threading branch.
+                call_record["customer_phone"] = customer_phone
+                call_record["template_name"] = template_name
+                call_record["body_params"] = body_params
+                call_record["category"] = category
+                call_record["language"] = language
+                call_record["conversation_id"] = conversation_id
+                return ConversationSendOutcome.SENT
 
             async def create_conversation_with_template(
                 self,

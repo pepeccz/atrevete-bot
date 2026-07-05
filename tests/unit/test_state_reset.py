@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import sys
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
 
 from database.models import AppointmentStatus
+from tests.e2e.harness import state_reset
 from tests.e2e.harness.run_models import QARunIdentity
 from tests.e2e.harness.state_reset import (
     AsyncDatabaseCleaner,
@@ -171,3 +174,79 @@ async def test_verify_appointment_returns_normalized_row(run_identity: QARunIden
         "created_at": created_at,
         "status": "pending",
     }
+
+
+class TestCliEntrypoint:
+    """FIX 2 (TASK-23 QA-harness continuity tooling): state_reset.py previously had
+    no argparse/__main__ entrypoint, so the command documented in
+    skills/atrevete-qa-runner/SKILL.md Steps 2/8
+    (``python tests/e2e/harness/state_reset.py reset --conversation-id X --phone Y``)
+    silently exited 0 without doing anything."""
+
+    def test_main_reset_invokes_cmd_reset_with_parsed_args(self, monkeypatch) -> None:
+        recorded: dict[str, Any] = {}
+
+        async def fake_cmd_reset(conversation_id: str, phone: str) -> None:
+            recorded["conversation_id"] = conversation_id
+            recorded["phone"] = phone
+
+        monkeypatch.setattr(state_reset, "_cmd_reset", fake_cmd_reset)
+        monkeypatch.setattr(
+            sys,
+            "argv",
+            [
+                "state_reset.py",
+                "reset",
+                "--conversation-id",
+                "qa-conv-123",
+                "--phone",
+                "+34999123456",
+            ],
+        )
+
+        state_reset.main()
+
+        assert recorded == {"conversation_id": "qa-conv-123", "phone": "+34999123456"}
+
+    def test_reset_missing_conversation_id_exits_nonzero(self, monkeypatch) -> None:
+        monkeypatch.setattr(sys, "argv", ["state_reset.py", "reset", "--phone", "+34999123456"])
+
+        with pytest.raises(SystemExit) as exc_info:
+            state_reset.main()
+
+        assert exc_info.value.code != 0
+
+    @pytest.mark.asyncio
+    async def test_cmd_reset_rejects_non_qa_phone(self, monkeypatch) -> None:
+        """The +349 guard must refuse a reset for a non-test phone instead of
+        silently touching production-shaped data."""
+        harness_reset = AsyncMock()
+        monkeypatch.setattr(
+            state_reset,
+            "StateResetHarness",
+            lambda redis_client: SimpleNamespace(reset_conversation_state=harness_reset),
+        )
+
+        with pytest.raises(SystemExit) as exc_info:
+            await state_reset._cmd_reset(conversation_id="qa-conv-123", phone="+34612345678")
+
+        assert exc_info.value.code == 1
+        harness_reset.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_cmd_reset_calls_harness_for_qa_phone(self, monkeypatch) -> None:
+        harness_reset = AsyncMock(return_value={"clean": True})
+        fake_client = SimpleNamespace(aclose=AsyncMock())
+        monkeypatch.setattr(state_reset.redis, "from_url", lambda *a, **k: fake_client)
+        monkeypatch.setattr(
+            state_reset,
+            "StateResetHarness",
+            lambda redis_client: SimpleNamespace(reset_conversation_state=harness_reset),
+        )
+
+        await state_reset._cmd_reset(conversation_id="qa-conv-123", phone="+34999123456")
+
+        harness_reset.assert_awaited_once_with(
+            conversation_id="qa-conv-123", customer_phone="+34999123456"
+        )
+        fake_client.aclose.assert_awaited_once()

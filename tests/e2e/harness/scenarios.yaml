@@ -492,6 +492,37 @@
 # "hoy o mañana" (~24h), not ~48h. Re-aligned to days_ahead=1 + reminder_24h
 # (23-25h window, reminder_24h.py:25-26) so the fired notification actually
 # matches the rule under test.
+#
+# !!! WARNING (TASK-23 QA-harness continuity tooling, FIX 3) !!!
+# This scenario deliberately seeds an appointment INSIDE the reminder_24h
+# live-worker window (23-25h out, see the window-math comment above). On the
+# SHARED TESTING DEPLOY (pepe@server), the real `atrevete-notifications`
+# container polls on its own schedule and can pick up this SAME seeded
+# appointment and fire a REAL WhatsApp template BEFORE the harness's own
+# `fire_notifications.py notification_pre_step` gets a chance to capture it
+# in-process — this happened during the TASK-23 live validation run
+# (2026-07-05): the live worker beat the harness to the send.
+#
+# MANDATORY PROCEDURE before seeding this scenario on the shared testing
+# deploy — choose (a), the documented default:
+#
+#   (a) DEFAULT — stop the live notifications worker for the duration of the
+#       seed + capture run, then restart it immediately after:
+#         docker compose -f docker-compose.yml stop notifications
+#         # ... seed appointment, run fire_notifications.py, run the turn ...
+#         docker compose -f docker-compose.yml start notifications
+#
+#   (b) ALTERNATIVE — seed the appointment with reminder_sent=true (so the
+#       live worker's query_fn excludes it — reminder_24h.py's query filters
+#       on reminder_sent_at IS NULL) and flip reminder_sent_at back to NULL
+#       immediately before running fire_notifications.py's capturing pre-step,
+#       so the capturing path is the only one that ever fires the send.
+#
+# Never seed this scenario's appointment on the shared deploy without one of
+# the two options above — a collision sends a REAL WhatsApp message to the
+# +34999 sandbox number and corrupts the capture JSON's send_attempts (the
+# live worker's real ChatwootClient send races the harness's in-process
+# capturing send).
 
 - id: reply-to-notification-continuity
   description: >
