@@ -90,38 +90,50 @@ def test_two_plus_service_fast_path_is_exempt() -> None:
     assert result["findings"] == []
 
 
-def test_legit_loop_after_extras_loop_required_is_not_flagged() -> None:
-    """A first single-service call that already went through extras_loop_required
-    (e.g. a re-loop within the same conversation, evidenced by an EARLIER
-    tool_evidence item reporting next_step=extras_loop_required before the
-    services-introducing call) must NOT be flagged.
+def test_missing_arguments_key_is_safe() -> None:
+    """A tool_evidence item with no `arguments` key at all (not just empty/None)
+    must not raise and must not be flagged.
     """
     run = {
-        "scenario_id": "legit-loop",
+        "scenario_id": "missing-arguments-key",
         "turns": [
             {
                 "turn": 1,
                 "tool_evidence": [
                     {
                         "tool_name": "update_booking",
-                        "arguments": {"services": []},
                         "result": {
-                            "result_summary": (
-                                '{"status":"partial","next_step":"extras_loop_required"}'
-                            )
+                            "result_summary": ('{"status":"partial","next_step":"name_required"}')
                         },
-                    },
+                    }
+                ],
+            }
+        ],
+    }
+    result = _detect_premature_extras_flags(run)
+    assert result["premature_flag_detected"] is False
+    assert result["findings"] == []
+
+
+def test_non_json_result_summary_is_safe() -> None:
+    """A tool_evidence item whose result.result_summary is not valid JSON must
+    not raise and must not be flagged.
+    """
+    run = {
+        "scenario_id": "non-json-result-summary",
+        "turns": [
+            {
+                "turn": 1,
+                "tool_evidence": [
                     {
                         "tool_name": "update_booking",
                         "arguments": {
                             "services": ["corte de mujer"],
-                            "extras_asked": True,
-                            "no_more_services": True,
+                            "extras_asked": False,
+                            "no_more_services": False,
                         },
-                        "result": {
-                            "result_summary": ('{"status":"partial","next_step":"name_required"}')
-                        },
-                    },
+                        "result": {"result_summary": "not valid json {{{"},
+                    }
                 ],
             }
         ],

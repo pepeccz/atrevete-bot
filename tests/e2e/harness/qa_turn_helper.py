@@ -156,14 +156,13 @@ def detect_premature_extras_flags(run: dict) -> dict:
       services-introducing call is inspected (matches the tool's own gate at
       update_booking.py:678, `len(services)>=1 and not both flags`).
     - Flag when: `len(services) == 1` AND (`extras_asked is True` OR
-      `no_more_services is True`) AND no EARLIER tool_evidence item (before the
-      introducing call) evidenced `next_step=extras_loop_required`.
+      `no_more_services is True`).
     - The 2+-service fast path (`len(services) >= 2`) is EXEMPT (booking_flow
       Paso 3 legitimate path) — never flagged, regardless of the flags' values.
 
     Tolerates malformed/partial run dicts (error outcomes, timeouts): missing
-    `turns`, non-dict turns/items, and missing `arguments` are skipped, never
-    raised on.
+    `turns`, non-dict turns/items, missing `arguments`, and non-JSON
+    `result_summary` values are skipped, never raised on.
 
     Returns:
         {
@@ -175,7 +174,6 @@ def detect_premature_extras_flags(run: dict) -> dict:
     """
     findings: list[dict[str, Any]] = []
     premature_detected = False
-    seen_extras_loop_required = False
     introducing_found = False
 
     for turn in run.get("turns") or []:
@@ -198,7 +196,7 @@ def detect_premature_extras_flags(run: dict) -> dict:
                 if len(services) == 1:
                     extras_asked = bool(arguments.get("extras_asked"))
                     no_more_services = bool(arguments.get("no_more_services"))
-                    if (extras_asked or no_more_services) and not seen_extras_loop_required:
+                    if extras_asked or no_more_services:
                         premature_detected = True
                         findings.append(
                             {
@@ -209,10 +207,6 @@ def detect_premature_extras_flags(run: dict) -> dict:
                             }
                         )
                 break  # introducing call found — stop scanning this run
-
-            next_step = _extract_next_step_from_evidence(item)
-            if next_step == "extras_loop_required":
-                seen_extras_loop_required = True
 
     return {
         "scenario_id": run.get("scenario_id"),
@@ -1201,7 +1195,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "--expected-order",
         required=True,
         dest="expected_order",
-        help='JSON list of next_step values in declared order, e.g. \'["name_required", "booking_ready"]\'',
+        help=(
+            "JSON list of next_step values in declared order, "
+            'e.g. \'["name_required", "booking_ready"]\''
+        ),
     )
 
     # service-check — deterministic service-type / audience validation
