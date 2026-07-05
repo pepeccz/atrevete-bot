@@ -114,11 +114,6 @@ if _AUTO_CANCEL_ENABLED:
     _ALL_HANDLERS["final_warning"] = final_warning_handler
     _ALL_HANDLERS["auto_cancel"] = auto_cancel_handler
 
-# Test template name defaults (used when env vars are absent).
-_TEST_TEMPLATE_REMINDER = os.environ["WHATSAPP_TEMPLATE_REMINDER_24H"]
-_TEST_TEMPLATE_CONFIRM = os.environ["WHATSAPP_TEMPLATE_CONFIRM_48H"]
-_TEST_TEMPLATE_FINAL_WARNING = os.environ["WHATSAPP_TEMPLATE_FINAL_WARNING"]
-
 # sdd/context-coherence FIX 4: a fixed sentinel id (-1) collided across every
 # fallback-create call in a batch run, silently corrupting harness signals via
 # the ConversationHistory.conversation_id unique constraint. Each capturing
@@ -138,26 +133,34 @@ async def _patch_settings_service() -> None:
 
     from shared.settings_service import get_settings_service
 
+    # Read lazily (not at import time) so importing this module never requires
+    # the env vars; defaults mirror _ensure_test_template_env for programmatic use.
+    template_reminder = os.environ.get("WHATSAPP_TEMPLATE_REMINDER_24H", "test_reminder_24h")
+    template_confirm = os.environ.get("WHATSAPP_TEMPLATE_CONFIRM_48H", "test_confirm_48h")
+    template_final_warning = os.environ.get(
+        "WHATSAPP_TEMPLATE_FINAL_WARNING", "test_final_warning_handler"
+    )
+
     svc = await get_settings_service()
     far_future = _dt(9999, 1, 1, tzinfo=UTC)
     async with svc._cache_lock:
         svc._cache["whatsapp_template_reminder_24h"] = {
-            "value": _TEST_TEMPLATE_REMINDER,
+            "value": template_reminder,
             "expires_at": far_future,
         }
         svc._cache["whatsapp_template_confirm_48h"] = {
-            "value": _TEST_TEMPLATE_CONFIRM,
+            "value": template_confirm,
             "expires_at": far_future,
         }
         svc._cache["whatsapp_template_final_warning"] = {
-            "value": _TEST_TEMPLATE_FINAL_WARNING,
+            "value": template_final_warning,
             "expires_at": far_future,
         }
     logger.debug(
         "Patched SettingsService cache: reminder=%r confirm=%r final_warning=%r",
-        _TEST_TEMPLATE_REMINDER,
-        _TEST_TEMPLATE_CONFIRM,
-        _TEST_TEMPLATE_FINAL_WARNING,
+        template_reminder,
+        template_confirm,
+        template_final_warning,
     )
 
 
