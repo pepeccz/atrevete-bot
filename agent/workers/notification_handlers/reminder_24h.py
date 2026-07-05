@@ -6,13 +6,13 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
-from zoneinfo import ZoneInfo
 
 from sqlalchemy import and_, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from agent.workers.notification_handlers._delivery import deliver_template
+from agent.workers.notification_handlers._render_es import MADRID_TZ, fecha_es, hora_es
 from agent.workers.notification_handlers._retry import next_retry_at
 from agent.workers.notification_handlers.base import NotificationHandler
 from database.connection import get_async_session
@@ -25,25 +25,6 @@ logger = logging.getLogger(__name__)
 WINDOW_LOWER = timedelta(hours=23)
 WINDOW_UPPER = timedelta(hours=25)
 BATCH_LIMIT = 50
-
-# Salon-local timezone + Spanish names for customer-facing rendering.
-_MADRID_TZ = ZoneInfo("Europe/Madrid")
-_DIAS = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
-_MESES = [
-    "",
-    "enero",
-    "febrero",
-    "marzo",
-    "abril",
-    "mayo",
-    "junio",
-    "julio",
-    "agosto",
-    "septiembre",
-    "octubre",
-    "noviembre",
-    "diciembre",
-]
 
 
 async def query_fn(session: AsyncSession) -> list[Appointment]:
@@ -78,7 +59,7 @@ async def _build_body_params(appt: Appointment) -> dict[str, str]:
 
     {{1}} name · {{2}} date (Madrid, Spanish) · {{3}} time · {{4}} service(s).
     """
-    start = appt.start_time.astimezone(_MADRID_TZ) if appt.start_time else None
+    start = appt.start_time.astimezone(MADRID_TZ) if appt.start_time else None
 
     service_names: list[str] = []
     async with get_async_session() as session:
@@ -88,11 +69,10 @@ async def _build_body_params(appt: Appointment) -> dict[str, str]:
             )
             service_names = [name for (name,) in rows.all()]
 
-    fecha = f"{_DIAS[start.weekday()]} {start.day} de {_MESES[start.month]}" if start else ""
     return {
         "1": appt.first_name or "",
-        "2": fecha,
-        "3": start.strftime("%H:%M") if start else "",
+        "2": fecha_es(start) if start else "",
+        "3": hora_es(start) if start else "",
         "4": ", ".join(service_names),
     }
 

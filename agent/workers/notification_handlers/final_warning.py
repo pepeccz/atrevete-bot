@@ -24,6 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from agent.workers.notification_handlers._delivery import deliver_template
+from agent.workers.notification_handlers._render_es import MADRID_TZ, fecha_es, hora_es
 from agent.workers.notification_handlers._retry import next_retry_at
 from agent.workers.notification_handlers.base import NotificationHandler
 from database.models import Appointment, AppointmentStatus
@@ -77,12 +78,13 @@ async def query_fn(session: AsyncSession) -> list[Appointment]:
 
 
 def _build_body_params(appt: Appointment) -> dict[str, str]:
-    """Build WhatsApp template body params (same shape as confirm_48h)."""
-    start = appt.start_time.astimezone(UTC) if appt.start_time else None
+    """Build WhatsApp template body params with Madrid/Spanish rendering parity
+    with confirm_48h and reminder_24h (sdd/context-coherence FIX 2)."""
+    start = appt.start_time.astimezone(MADRID_TZ) if appt.start_time else None
     return {
         "1": appt.first_name or "",
-        "2": start.strftime("%Y-%m-%d") if start else "",
-        "3": start.strftime("%H:%M") if start else "",
+        "2": fecha_es(start) if start else "",
+        "3": hora_es(start) if start else "",
     }
 
 

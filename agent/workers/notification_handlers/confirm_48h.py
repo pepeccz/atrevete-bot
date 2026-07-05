@@ -6,13 +6,13 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
-from zoneinfo import ZoneInfo
 
 from sqlalchemy import and_, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from agent.workers.notification_handlers._delivery import deliver_template
+from agent.workers.notification_handlers._render_es import MADRID_TZ, fecha_es, hora_es
 from agent.workers.notification_handlers._retry import next_retry_at
 from agent.workers.notification_handlers.base import NotificationHandler
 from database.connection import get_async_session
@@ -25,26 +25,6 @@ logger = logging.getLogger(__name__)
 WINDOW_LOWER = timedelta(hours=47)
 WINDOW_UPPER = timedelta(hours=49)
 BATCH_LIMIT = 50
-
-# Salon-local timezone for customer-facing date/time rendering.
-_MADRID_TZ = ZoneInfo("Europe/Madrid")
-# Spanish day/month names (avoid relying on system locale being installed).
-_DIAS = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
-_MESES = [
-    "",
-    "enero",
-    "febrero",
-    "marzo",
-    "abril",
-    "mayo",
-    "junio",
-    "julio",
-    "agosto",
-    "septiembre",
-    "octubre",
-    "noviembre",
-    "diciembre",
-]
 
 
 async def query_fn(session: AsyncSession) -> list[Appointment]:
@@ -74,19 +54,24 @@ async def query_fn(session: AsyncSession) -> list[Appointment]:
     return list(result.scalars().all())
 
 
-def _fecha_es(dt: datetime) -> str:
-    """Render a Madrid-local datetime as e.g. 'miércoles 8 de julio'."""
-    return f"{_DIAS[dt.weekday()]} {dt.day} de {_MESES[dt.month]}"
-
-
-async def _build_body_params(appt: Appointment) -> dict[str, str]:
+async def _build_body_params(appt: Appointment, settings: Any) -> dict[str, str]:
     """Build the 6 body params for the ``appointment_confirmation_48h`` template.
 
     {{1}} name · {{2}} date · {{3}} time · {{4}} stylist · {{5}} service(s) ·
     {{6}} auto-cancel deadline. Stylist/service names are resolved from the DB;
     dates are rendered in Europe/Madrid so the customer sees the real local time.
+
+    The {{6}} deadline is the earliest instant the auto-cancel tail could
+    actually fire, anchored on "now" (≈ ``confirmation_sent_at``, stamped right
+    after this send) — NOT a fixed T-24h offset from ``start_time``. Mirrors the
+    same two-grace-period composition the ``final_warning``/``auto_cancel``
+    handlers use: earliest final_warning = confirmation_sent_at +
+    ``AUTO_CANCEL_GRACE_BEFORE_WARNING_HOURS``; earliest auto_cancel =
+    final_warning_sent_at + ``AUTO_CANCEL_GRACE_BEFORE_CANCEL_HOURS``. A fixed
+    T-24h promise could be hours later than the real earliest cancel instant
+    with non-default settings (sdd/context-coherence FIX 3).
     """
-    start = appt.start_time.astimezone(_MADRID_TZ) if appt.start_time else None
+    start = appt.start_time.astimezone(MADRID_TZ) if appt.start_time else None
 
     stylist_name = ""
     service_names: list[str] = []
@@ -100,17 +85,18 @@ async def _build_body_params(appt: Appointment) -> dict[str, str]:
             )
             service_names = [name for (name,) in rows.all()]
 
-    deadline = start - timedelta(hours=24) if start else None
-    deadline_str = (
-        f"{_DIAS[deadline.weekday()]} {deadline.day} a las {deadline.strftime('%H:%M')}"
-        if deadline
-        else ""
+    now = datetime.now(UTC)
+    deadline_utc = now + timedelta(
+        hours=settings.AUTO_CANCEL_GRACE_BEFORE_WARNING_HOURS
+        + settings.AUTO_CANCEL_GRACE_BEFORE_CANCEL_HOURS
     )
+    deadline = deadline_utc.astimezone(MADRID_TZ)
+    deadline_str = f"{fecha_es(deadline)} a las {hora_es(deadline)}"
 
     return {
         "1": appt.first_name or "",
-        "2": _fecha_es(start) if start else "",
-        "3": start.strftime("%H:%M") if start else "",
+        "2": fecha_es(start) if start else "",
+        "3": hora_es(start) if start else "",
         "4": stylist_name,
         "5": ", ".join(service_names),
         "6": deadline_str,
@@ -147,7 +133,7 @@ async def send_fn(appt: Appointment, chatwoot_client: Any) -> bool:
         )
         return False
 
-    body_params = await _build_body_params(appt)
+    body_params = await _build_body_params(appt, settings)
     return await deliver_template(
         chatwoot_client,
         appt,
