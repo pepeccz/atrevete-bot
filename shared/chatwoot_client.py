@@ -327,6 +327,18 @@ class ChatwootClient:
                     f"Created conversation {conversation_id} with template {template_name} "
                     f"for contact {contact_id}"
                 )
+                # sdd/context-coherence D10: PII-safe structured log. Directly instruments
+                # Root Cause #1 (spurious new conversations) — should be RARE after the
+                # canonical-conversation resolver (Stream 1) lands; frequent occurrences
+                # indicate a resolver-miss or a Chatwoot rejection fallback firing often.
+                logger.warning(
+                    "new_conversation_created",
+                    extra={
+                        "type": "new_conversation_created",
+                        "conversation_id": conversation_id,
+                        "template_name": template_name,
+                    },
+                )
                 return (conversation_id, True)
 
             except httpx.HTTPError as e:

@@ -8,7 +8,9 @@ delegates to the new method (behavior-preserving refactor — still returns bool
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock
+import logging
+from contextlib import asynccontextmanager
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
@@ -249,3 +251,51 @@ class TestSendTemplateToConversationChecked:
         )
 
         assert outcome is ConversationSendOutcome.TRANSIENT
+
+
+# ---------------------------------------------------------------------------
+# sdd/context-coherence TASK-17/18 (Stream 4, D10) — new_conversation_created log
+# ---------------------------------------------------------------------------
+
+
+class TestNewConversationCreatedLog:
+    """D10: WARNING log at the success point of the internal create-conversation
+    call — directly instruments Root Cause #1 (spurious new conversations)."""
+
+    @staticmethod
+    def _mock_http_client(post_response):
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=post_response)
+
+        @asynccontextmanager
+        async def _ctx(*args, **kwargs):
+            yield mock_client
+
+        return _ctx
+
+    @pytest.mark.asyncio
+    async def test_logs_new_conversation_created_warning(self, client, caplog):
+        response = MagicMock()
+        response.raise_for_status = MagicMock()
+        response.json.return_value = {"id": 777}
+        ctx = self._mock_http_client(response)
+
+        with (
+            patch("shared.chatwoot_client.httpx.AsyncClient", ctx),
+            caplog.at_level(logging.WARNING, logger="shared.chatwoot_client"),
+        ):
+            conversation_id, success = await client._create_conversation_with_template(
+                contact_id=42,
+                phone="+34611111111",
+                template_name="appointment_confirmation_48h",
+                body_params={"1": "Ana"},
+            )
+
+        assert conversation_id == 777
+        assert success is True
+
+        matching = [r for r in caplog.records if r.getMessage() == "new_conversation_created"]
+        assert matching, f"Expected 'new_conversation_created' log record, got: {caplog.records}"
+        record = matching[0]
+        assert record.conversation_id == 777
+        assert record.template_name == "appointment_confirmation_48h"

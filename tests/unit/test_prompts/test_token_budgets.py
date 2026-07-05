@@ -68,7 +68,19 @@ BUDGETS: dict[str, int] = {
     # Budgets updated for SDD change qa-loop-conversation-quality (B5):
     # critical_rules.md: 4200 -> 4350 for the R26/R27 dual-condition cross-reference
     # (closed_day + advance_policy overlap precedence). Actual 4271.
-    "critical_rules.md": 4350,
+    #
+    # Budgets updated for SDD change context-coherence (TASK-13, PR-B):
+    # critical_rules.md: 4350 -> 4500 for the R-39 acknowledgment carve-out
+    # (Stream 3, D7) — exempts pure closings/acks ("gracias", "vale", "perfecto"...)
+    # from the clarification gate while preserving it for ambiguous inputs.
+    # Re-measured via this test's own tiktoken cl100k_base tokenizer: actual 4458.
+    #
+    # Budgets updated for SDD change context-coherence (judgment-day fix batch,
+    # FIX 3): 4500 -> 4600 for a negative mixed-message example added to the
+    # R-39 carve-out ("gracias, y una cosa..." is NOT a pure closing — the
+    # pending content must be addressed normally). Re-measured via tiktoken
+    # cl100k_base: actual 4569.
+    "critical_rules.md": 4600,
     "booking_flow.md": 3050,
     "examples.md": 2600,
     "tools_contract.md": 2100,

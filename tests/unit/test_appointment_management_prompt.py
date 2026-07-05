@@ -67,3 +67,53 @@ def test_prompt_48h_window_never_phone_redirect():
     assert (
         "canal oficial" in text or "whatsapp" in text or "nunca digas" in text or "nunca" in text
     ), "Prompt must prohibit phone redirect for 48h window escalation"
+
+
+# ---------------------------------------------------------------------------
+# sdd/context-coherence TASK-14/15 — imminent-appointment acknowledgment (D8b)
+# ---------------------------------------------------------------------------
+
+
+def _imminent_section() -> str:
+    text = _prompt()
+    start = text.find("Reconocer cita inminente")
+    assert start >= 0, "appointment_management_flow.md missing the imminent-appointment section"
+    return text[start:]
+
+
+def test_imminent_appointment_section_present():
+    """D8b: a dedicated section for imminent-appointment small-talk must exist."""
+    assert "Reconocer cita inminente" in _prompt()
+
+
+def test_imminent_appointment_section_references_upcoming_appointments_slot():
+    """The rule must anchor on the <upcoming_appointments> slot, not invented state."""
+    section = _imminent_section()
+    assert "<upcoming_appointments>" in section
+
+
+def test_imminent_appointment_section_is_day_relative_not_countdown():
+    """Gatekeeper caveat 2: NEVER a countdown ('en X horas'); day-relative only."""
+    section = _imminent_section().lower()
+    assert "en x horas" not in section
+    for forbidden in ("en 2 horas", "en 3 horas", "en 24 horas", "en unas horas"):
+        assert forbidden not in section, f"Countdown phrasing {forbidden!r} must not appear"
+
+
+def test_imminent_appointment_section_has_illustrative_examples():
+    """Q1: rule + 2-3 illustrative example phrasings (not fixed copy)."""
+    section = _imminent_section()
+    example_count = section.count("Cliente:")
+    assert example_count >= 2, f"Expected >=2 illustrative examples, found {example_count}"
+
+
+def test_imminent_appointment_examples_use_day_relative_phrasing():
+    """Examples must use day-relative phrasing (mañana / el <día de la semana>)."""
+    section = _imminent_section().lower()
+    assert "mañana" in section or "el miércoles" in section or "el jueves" in section
+
+
+def test_imminent_appointment_section_forbids_generic_open_question():
+    """Small-talk near an imminent appointment must not degrade to a generic open question."""
+    section = _imminent_section().lower()
+    assert "nunca" in section and "pregunta abierta" in section

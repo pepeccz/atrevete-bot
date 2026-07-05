@@ -53,14 +53,29 @@ Estas dos son las que el worker `notifications` necesita para operar. Hasta que 
 
 **Body sugerido** (para presentar a Meta — ajustá tono según marca):
 
+> **Actualización 2026-07-05 (sdd/context-coherence TASK-19, PR-B)**: el body
+> de abajo reemplaza la propuesta anterior (que hardcodeaba "mañana" y sólo
+> tenía 3 variables). Usa las 4 variables reales que envía el código
+> (`reminder_24h._build_body_params`) y castellano neutro sin voseo, alineado
+> con el resto del sistema de prompts. Root cause original (docs/system, obs
+> #7491 finding 5): el template EN VIVO actualmente configurado en
+> `system_settings.whatsapp_template_reminder_24h` usa una copia de countdown
+> ("En 2 horas...") heredada de un handler de 2h que ya no existe — este body
+> es la propuesta CORREGIDA para el flujo real de ~24h antes de la cita.
+
 ```
-Hola {{1}} 👋 Te recordamos tu cita mañana {{2}} a las {{3}} para {{4}} en Atrévete. ¡Te esperamos! Si necesitás cancelar o reprogramar, respondé a este mensaje.
+Hola {{1}} 🌸 Te recordamos tu cita en Atrévete el {{2}} a las {{3}} para {{4}}. Si necesitas cambiarla, respóndenos por aquí. ¡Te esperamos!
 ```
 
 **Notas**:
 - Meta exige que todas las variables estén rodeadas de texto — no empezar ni terminar con `{{n}}`.
 - Sin header, footer ni buttons (cumple UTILITY básico).
 - Si más adelante querés botones de respuesta rápida ("Confirmo" / "Cancelo"), hay que rediseñar el template y adaptar el inbound routing.
+- **Flip GATEADO (Q4, engram #7493)**: NO cambies `system_settings.whatsapp_template_reminder_24h`
+  a este nuevo nombre hasta que Pepe confirme/apruebe la plantilla corregida en el
+  portal de Meta Business Suite. Ver `CLAUDE.md § Deploy Runbook (context-coherence
+  prompts observability)` para el procedimiento de flip paso a paso (NO ejecutar
+  todavía — dependencia documentada, no una acción pendiente de este PR).
 
 ### 1.2 Petición de confirmación 48h antes
 

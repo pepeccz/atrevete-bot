@@ -226,6 +226,31 @@ DB lookups in `customer_resolve` / `appointment_context` use async SQLAlchemy.
 
 ---
 
+## Disclosure Policy — Per-Thread Firing (sdd/context-coherence, D9/Q3)
+
+`DisclosureMiddleware` fires the EU AI Act disclosure once **per thread** — its
+`is_first_turn` check (`_has_textual_ai_message`) looks at the messages already
+present in the checkpoint for the current `thread_id`, not at a customer- or
+phone-level flag. This is intentional and **no code change was made** to it as
+part of sdd/context-coherence.
+
+**Why this stays per-thread**: a new Chatwoot conversation used to mean a new
+`thread_id` (a fresh checkpoint with no prior `AIMessage`), which re-fired the
+disclosure and made the bot look like it "forgot" the customer. sdd/context-coherence
+Stream 1 fixes the ROOT CAUSE — proactive notifications (`confirm_48h`,
+`reminder_24h`, `final_warning`) now resolve and reuse the customer's existing
+canonical `ConversationHistory.conversation_id` instead of always creating a new
+Chatwoot conversation (see `agent/workers/notification_handlers/_delivery.py`).
+With threading fixed, **new threads become rare** — so the re-greeting symptom
+mostly disappears without touching disclosure's suppression logic at all.
+
+**What still legitimately re-fires disclosure**: a genuinely new conversation
+(e.g. a first-ever contact, or the D3 fallback path when Chatwoot rejects a
+resolved conversation id) still gets a fresh thread and a fresh disclosure —
+this is correct EU AI Act behavior, not a bug.
+
+---
+
 ## Tools Pattern
 
 Tools are plain `@tool`-decorated async functions returning JSON-serializable dicts. State plumbing happens through middleware and tool returns — there is no `mode_context` to mutate.

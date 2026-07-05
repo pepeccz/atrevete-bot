@@ -250,3 +250,44 @@ def test_r37_cancellation_exemption_with_empathy(rules_text: str) -> None:
         "empat" in lowered or "mejores" in lowered
     ), "R-37 must require an empathetic sentence on illness cancellations"
     assert "48" in block, "R-37 must cover the 48h window case (in-channel escalation with empathy)"
+
+
+# ---------------------------------------------------------------------------
+# sdd/context-coherence TASK-11/12 — R-39 acknowledgment carve-out
+# ---------------------------------------------------------------------------
+
+
+def test_r39_carveout_mentions_acknowledgment_words(rules_text: str) -> None:
+    """R-39 must carve out pure acknowledgments/closings from the clarification gate."""
+    block = _r39_block(rules_text).lower()
+    for word in ("gracias", "vale", "perfecto"):
+        assert word in block, f"R-39 carve-out must mention {word!r} as an acknowledgment token"
+
+
+def test_r39_carveout_requires_no_question_mark(rules_text: str) -> None:
+    """The carve-out must be scoped to inputs with no question (pure ack/closing)."""
+    block = _r39_block(rules_text).lower()
+    assert "sin pregunta" in block, "R-39 carve-out must require 'sin pregunta' (no question)"
+
+
+def test_r39_carveout_forbids_generic_open_question_reply(rules_text: str) -> None:
+    """The carve-out reply must never be the generic open question."""
+    block = _r39_block(rules_text).lower()
+    assert (
+        "pregunta abierta genérica" in block
+    ), "R-39 carve-out must forbid replying with a generic open question"
+
+
+def test_r39_carveout_uses_context_slots(rules_text: str) -> None:
+    """The carve-out reply must be context-aware, referencing <customer>/<upcoming_appointments>."""
+    block = _r39_block(rules_text)
+    assert (
+        "<customer>" in block and "<upcoming_appointments>" in block
+    ), "R-39 carve-out must reference <customer>/<upcoming_appointments> for a context-aware reply"
+
+
+def test_r39_carveout_preserves_original_ambiguous_examples(rules_text: str) -> None:
+    """L1/carve-out must NOT remove the original ambiguous-input examples (pelo, rojo)."""
+    block = _r39_block(rules_text).lower()
+    assert "pelo" in block, "R-39 must still gate ambiguous single-word inputs like 'pelo'"
+    assert "rojo" in block, "R-39 must still gate ambiguous single-word inputs like 'rojo'"

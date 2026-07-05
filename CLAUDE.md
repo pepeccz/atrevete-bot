@@ -987,6 +987,75 @@ is nullable).
 
 ---
 
+### Deploy Runbook (context-coherence prompts + observability, PR-B)
+
+Prompt-only + observability-only change: R-39 acknowledgment carve-out and the
+imminent-appointment acknowledgment rule (Stream 3), 3 new PII-safe structured logs
+(Stream 4), and this documentation deliverable. **No DB migration, no schema change,
+no checkpoint flush required.**
+
+```bash
+# Restart api and agent containers to pick up the new prompts and log statements
+docker compose -f /home/pepe/Proyectos/atrevete-bot/docker-compose.yml restart api agent
+```
+
+**GATED settings-flip procedure (reminder_24h template) — DO NOT FLIP YET.**
+
+`docs/whatsapp-templates.md § 1.1` carries a corrected proposed body (4 placeholders,
+day-relative date via `{{2}}`, no hardcoded "mañana", no countdown-in-hours copy).
+This is a documented DEPENDENCY, not an action item for this PR — the flip is
+BLOCKED on Pepe's confirmation/approval in the Meta Business Suite portal (Q4,
+engram #7493). When that happens, follow this exact sequence:
+
+1. Pepe verifies/creates and gets Meta approval for the corrected-copy template
+   (see the proposed body in `docs/whatsapp-templates.md § 1.1`).
+2. Update the setting to the Meta-approved name:
+   ```sql
+   UPDATE system_settings
+     SET value = '"<meta_approved_template_name>"'::jsonb
+     WHERE key = 'whatsapp_template_reminder_24h';
+   ```
+3. Restart the agent/notifications process so the `lru_cache`-d settings reload:
+   ```bash
+   docker compose -f /home/pepe/Proyectos/atrevete-bot/docker-compose.yml restart agent
+   ```
+4. Verify the next `reminder_24h` send uses the new copy (check Chatwoot outbound
+   message content, or `docker compose logs agent | grep new_conversation_created`
+   to confirm no unexpected new-conversation spike from the template swap).
+
+**Rollback**: revert step 2's `UPDATE` to the previous template name + restart agent.
+No data loss — `reminder_sent_at` idempotency is untouched by a template-name change.
+
+**Langfuse credential regeneration runbook** (manual — obs #7491 finding 6; not
+automatable in code):
+
+1. Regenerate the key pair in the Langfuse Cloud project dashboard
+   (`https://cloud.langfuse.com` — `LANGFUSE_BASE_URL` in `shared/config.py:201`
+   stays `cloud.langfuse.com` unless the project is EU vs US region-migrated).
+2. Update `.env` on the server with the new keys:
+   ```bash
+   ssh pepe@server
+   nano /home/pepe/Proyectos/atrevete-bot/.env
+   ```
+   Set:
+   ```env
+   LANGFUSE_PUBLIC_KEY=<new_public_key>
+   LANGFUSE_SECRET_KEY=<new_secret_key>
+   ```
+3. Restart the agent and notifications containers so the new keys are picked up
+   (`Settings` are `lru_cache`-d — a process restart is required):
+   ```bash
+   docker compose -f /home/pepe/Proyectos/atrevete-bot/docker-compose.yml restart agent notifications
+   ```
+4. Verify traces are flowing again:
+   ```bash
+   PYTHONPATH=. python tests/e2e/harness/langfuse_pull.py --conv-id <recent_conversation_id> --out /tmp/trace_check.json --retries 2
+   ```
+   Expect a non-empty trace file (exit code 0), not the graceful-skip exit code 2
+   that `langfuse_pull.py` returns when keys are absent/rejected (401).
+
+---
+
 ### Service Catalog Integrity Guard
 
 CI guard that asserts 7 structural invariants over the seeded `services` table. Introduced after the orphan-variant drift found at deploy 2026-05-11 (Engram obs #5260). I7 added by disambiguation-resilience PR-1.

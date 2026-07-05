@@ -159,12 +159,21 @@ def test_booking_flow_line_count() -> None:
 
 
 def test_appt_mgmt_line_count() -> None:
-    """[R-SPEC-4] appointment_management_flow.md must be ≤ 35 lines after narrative extraction."""
+    """[R-SPEC-4] appointment_management_flow.md baseline line guard.
+
+    Original T2.6 target after narrative extraction was ≤ 35. The
+    context-coherence change added the imminent-appointment small-talk section
+    (rule + 3 product-approved examples, decision Q1 in
+    sdd/context-coherence/decisions), bringing the file to 50 lines. Baseline
+    recalibrated to ≤ 55 following the booking_flow.md guard precedent; the
+    file is conditionally injected (only when the customer has upcoming
+    appointments) and excluded from token budgets by design.
+    """
     content = _load_prompt_file("appointment_management_flow.md")
     line_count = len(content.splitlines())
     assert (
-        line_count <= 35
-    ), f"appointment_management_flow.md has {line_count} lines — must be ≤ 35 (T2.6)"
+        line_count <= 55
+    ), f"appointment_management_flow.md has {line_count} lines — baseline guard is ≤ 55 (T2.6 target: ≤ 35)"
 
 
 def test_appt_mgmt_confirm_priority_rule() -> None:
@@ -180,7 +189,7 @@ def test_appt_mgmt_confirm_priority_rule() -> None:
         "add a 'PRIORIDAD alta' bullet to ## Cuándo usar with action=\"confirm\" instruction"
     )
     assert 'action="confirm"' in content, (
-        "appointment_management_flow.md must explicitly mention action=\"confirm\" "
+        'appointment_management_flow.md must explicitly mention action="confirm" '
         "in the Confirmar bullet so the LLM has a clear tool-call target for PENDING affirmations"
     )
 

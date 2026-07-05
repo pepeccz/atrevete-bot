@@ -470,3 +470,105 @@
       returning relationship. Full booking is the primary happy path; if the
       conversation ends at availability confirmation, accept info_provided as
       a soft pass.
+
+# ---------------------------------------------------------------------------
+# sdd/context-coherence TASK-22 — reply-to-notification continuity (Validation)
+# ---------------------------------------------------------------------------
+#
+# NOT run via the standard 10-step atrevete-qa-runner turn loop: it needs an
+# extra pre-step (fire a worker notification in-process) BEFORE Step 1 of the
+# usual protocol. See `notification_pre_step` below and the design's own
+# "TESTING / LOOP DESIGN" section (sdd/context-coherence design #7495) for the
+# exact procedure. `manual: true` because that pre-step is not executable by
+# the standard 10-step runner loop — mirrors change-c-notification-on-failure
+# above, which is also manual for the same reason (out-of-band injection
+# before Step 1). TASK-23's orchestrator runs this scenario with the custom
+# procedure described below; this entry only DEFINES it (schema-valid, phone
+# reserved).
+#
+# judgment-day FIX 1: the original seed used days_ahead=2 + confirm_48h
+# (47-49h window), but the imminent-appointment rule this scenario validates
+# (appointment_management_flow.md § Reconocer cita inminente) is scoped to
+# "hoy o mañana" (~24h), not ~48h. Re-aligned to days_ahead=1 + reminder_24h
+# (23-25h window, reminder_24h.py:25-26) so the fired notification actually
+# matches the rule under test.
+
+- id: reply-to-notification-continuity
+  description: >
+    Reply-to-notification continuity check (spec: Reply-to-Notification
+    Continuity QA Scenario). Seeds a customer with an existing
+    ConversationHistory row (canonical conversation) and a PENDING appointment
+    ~24h out ("hoy o mañana" per the imminent-appointment rule), fires
+    reminder_24h via fire_notifications.py's capturing path (no real WhatsApp
+    send — safe for a +34999 sandbox number), then simulates the customer's
+    inbound reply "Gracias" as a webhook on the SAME conversation_id the
+    notification was sent into. Asserts single-thread continuity: no new
+    Chatwoot conversation, no disclosure re-fire, and a warm day-relative
+    acknowledgment of the imminent appointment (never a countdown-in-hours).
+  tags: [context-coherence, notification-continuity, threading]
+  manual: true
+  persona:
+    name: Rocío Delgado
+    phone: "+34999000051"
+    style: >
+      Cliente habitual con una cita PENDIENTE dentro de ~24h. Tras recibir el
+      recordatorio de las 24h por WhatsApp, responde con un simple
+      "Gracias" — no pide nada más, no reabre el flujo de reserva.
+  intent: "Gracias"
+  max_turns: 2
+  seed:
+    conversation_history:
+      # A prior inbound from this phone must already exist so the customer has
+      # a resolvable canonical ConversationHistory row (D1) BEFORE the
+      # notification pre-step fires — otherwise deliver_template takes the
+      # resolver-miss fallback (D3) and the "same conversation_id" assertion
+      # below is vacuous.
+      exists: true
+    appointment:
+      days_ahead: 1
+      time: "12:00"
+      status: pending
+      # Window math: reminder_24h.query_fn (reminder_24h.py:25-26) only
+      # matches appointments whose start_time falls inside
+      # [now+23h, now+25h] at the moment the pre-step fires. days_ahead=1
+      # seeds "tomorrow" at the literal clock time above (12:00 — a plausible
+      # midday run time, chosen deliberately and NOT copied from the design's
+      # illustrative "10:40" example). Because the pre-step must fire shortly
+      # (within ~1h) after seeding for the appointment to still land inside
+      # the 23-25h window, TASK-23's orchestrator MUST seed the appointment
+      # time as roughly (actual wall-clock run time + 24h, Madrid local),
+      # adjusting "12:00" to the real run time if the batch executes outside
+      # a midday window. If the window is missed, reminder_24h's query_fn
+      # silently returns no rows — no send, no capture, and the scenario
+      # would spuriously read as info_provided with nothing actually fired.
+  notification_pre_step:
+    handler: reminder_24h
+    via: tests/e2e/harness/fire_notifications.py
+    capturing: true
+    # Assert on the capture JSON BEFORE turn 1: send_attempts[0].conversation_id
+    # must equal the seeded ConversationHistory.conversation_id (proves the
+    # canonical resolver reused it, D1/D2) and
+    # send_attempts[0].fallback_conversation_created must be absent/false
+    # (proves D3's fallback path did NOT fire for a known customer).
+  expect:
+    outcome: info_provided
+    db_appointment:
+      status: pending
+    tool_calls_required: []
+    tool_calls_forbidden: []
+    conversation_continuity:
+      same_conversation_id_end_to_end: true
+      disclosure_is_first_turn: false
+      new_conversation_created: false
+    tags: [context-coherence, notification-continuity]
+    notes: >
+      Day-relative assertion phrasing only — e.g. "mañana a las 12:00" or "el
+      <día de la semana> a las 12:00" (using the ACTUAL seeded time — adjust
+      this phrasing if TASK-23's orchestrator changed the seed time per the
+      window-math comment above; see appointment_management_flow.md §
+      Reconocer cita inminente). A countdown phrasing ("en X horas") is a
+      FAIL, not a soft pass, per the day-granularity gatekeeper caveat (no
+      hora_local in <today>). Log-based verification (spec: Log-Based
+      Verification): confirm via agent logs that disclosure.turn_evaluated
+      shows is_first_turn=false on the reply turn and that
+      new_conversation_created does NOT fire for this known customer.
