@@ -27,12 +27,12 @@ class TestTokenBudgets:
 
     def test_critical_rules_md_token_budget(self, prompt_dir):
         content = (prompt_dir / "shared" / "critical_rules.md").read_text()
-        # Recalibrated: R-43 (service_suggestion_required guidance) and R-44
-        # (multi-person sequential booking) added by multi-service-resolution PR 2.
-        # Actual current count: ~3954 (chars // 4). Set limit at 10% above actual.
+        # Recalibrated for SDD change context-coherence (TASK-13, PR-B): R-39
+        # acknowledgment carve-out (Stream 3, D7) added. Actual current count:
+        # ~3975 (chars // 4). Set limit at 10% above actual (was 4350).
         assert (
-            len(content) // 4 <= 4350
-        ), f"critical_rules.md exceeds token budget: {len(content) // 4} tokens (limit 4350)"
+            len(content) // 4 <= 4400
+        ), f"critical_rules.md exceeds token budget: {len(content) // 4} tokens (limit 4400)"
 
     def test_booking_flow_md_token_budget(self, prompt_dir):
         content = (prompt_dir / "shared" / "booking_flow.md").read_text()

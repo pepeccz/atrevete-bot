@@ -3,6 +3,7 @@
 RED phase: verifies that R-23, R-24, and 9b-trigger strengthening are present,
 and measures token count to ensure budget compliance.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -24,9 +25,9 @@ def _read(filename: str) -> str:
 def test_r23_primera_accion_present():
     """R-23 must contain 'primera acción' (slot-mutating turns call update_booking first)."""
     content = _read("critical_rules.md")
-    assert "primera acción" in content or "primera accion" in content.lower(), (
-        "R-23 'primera acción' phrase not found in critical_rules.md"
-    )
+    assert (
+        "primera acción" in content or "primera accion" in content.lower()
+    ), "R-23 'primera acción' phrase not found in critical_rules.md"
 
 
 def test_r23_update_booking_present():
@@ -48,13 +49,13 @@ def test_r45_returning_customer_propose_usual_present():
     """
     content = _read("critical_rules.md")
     assert "[R-45]" in content, "R-45 not found in critical_rules.md"
-    assert "Servicios habituales" in content, (
-        "R-45 must reference the <customer> 'Servicios habituales' field"
-    )
+    assert (
+        "Servicios habituales" in content
+    ), "R-45 must reference the <customer> 'Servicios habituales' field"
     assert "lo de siempre" in content, "R-45 must cover the 'lo de siempre' phrasing"
-    assert "CONFIRMA" in content or "confirma" in content.lower(), (
-        "R-45 must require confirmation before update_booking (no silent assume)"
-    )
+    assert (
+        "CONFIRMA" in content or "confirma" in content.lower()
+    ), "R-45 must require confirmation before update_booking (no silent assume)"
 
 
 # ---------------------------------------------------------------------------
@@ -65,17 +66,17 @@ def test_r45_returning_customer_propose_usual_present():
 def test_r24_lista_numerada_present():
     """R-24 must contain 'lista numerada' (stylist_required → numbered list)."""
     content = _read("critical_rules.md")
-    assert "lista numerada" in content.lower(), (
-        "R-24 'lista numerada' phrase not found in critical_rules.md"
-    )
+    assert (
+        "lista numerada" in content.lower()
+    ), "R-24 'lista numerada' phrase not found in critical_rules.md"
 
 
 def test_r24_payload_stylists_present():
     """R-24 must reference 'payload.stylists' as the data source."""
     content = _read("critical_rules.md")
-    assert "payload.stylists" in content, (
-        "R-24 'payload.stylists' reference not found in critical_rules.md"
-    )
+    assert (
+        "payload.stylists" in content
+    ), "R-24 'payload.stylists' reference not found in critical_rules.md"
 
 
 # ---------------------------------------------------------------------------
@@ -87,18 +88,16 @@ def test_9b_trigger_uses_debe_imperative():
     """9b-trigger must use DEBE (uppercase) imperative, not 'debes' lowercase."""
     content = _read("critical_rules.md")
     # Check for uppercase DEBE (imperative form)
-    assert "DEBE" in content, (
-        "9b-trigger must use imperative 'DEBE' (uppercase) — found neither"
-    )
+    assert "DEBE" in content, "9b-trigger must use imperative 'DEBE' (uppercase) — found neither"
 
 
 def test_9b_trigger_variant_skip_prohibition():
     """9b-trigger must contain the variant-skip prohibition sentence."""
     content = _read("critical_rules.md")
     # The strengthened rule must prevent skipping variant_required
-    assert "variant_required" in content, (
-        "9b-trigger must mention 'variant_required' skip prohibition"
-    )
+    assert (
+        "variant_required" in content
+    ), "9b-trigger must mention 'variant_required' skip prohibition"
 
 
 # ---------------------------------------------------------------------------
@@ -109,9 +108,9 @@ def test_9b_trigger_variant_skip_prohibition():
 def test_booking_flow_references_payload_stylists():
     """booking_flow.md stylist section must reference payload.stylists."""
     content = _read("booking_flow.md")
-    assert "payload.stylists" in content, (
-        "booking_flow.md must reference 'payload.stylists' in stylist section"
-    )
+    assert (
+        "payload.stylists" in content
+    ), "booking_flow.md must reference 'payload.stylists' in stylist section"
 
 
 # ---------------------------------------------------------------------------
@@ -122,11 +121,12 @@ def test_booking_flow_references_payload_stylists():
 def test_critical_rules_token_budget():
     """critical_rules.md must stay within the token budget.
 
-    Budget 4350, matching test_token_budgets.py (the canonical budget table)
+    Budget 4500, matching test_token_budgets.py (the canonical budget table)
     after R-43/R-44 (multi-service PR-2), R-45 (returning-customer
-    propose-the-usual), and the qa-loop-conversation-quality R26/R27
-    dual-condition cross-reference landed. Both tests enforce the same
-    ceiling.
+    propose-the-usual), the qa-loop-conversation-quality R26/R27
+    dual-condition cross-reference, and the context-coherence R-39
+    acknowledgment carve-out (TASK-13, PR-B; actual 4458) landed. Both tests
+    enforce the same ceiling.
     """
     try:
         import tiktoken
@@ -137,4 +137,4 @@ def test_critical_rules_token_budget():
 
     content = _read("critical_rules.md")
     count = len(enc.encode(content))
-    assert count <= 4350, f"critical_rules.md exceeds token budget: {count} tokens > 4350 allowed"
+    assert count <= 4500, f"critical_rules.md exceeds token budget: {count} tokens > 4500 allowed"
