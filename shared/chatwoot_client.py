@@ -9,6 +9,7 @@ attributes.
 import asyncio
 import logging
 from datetime import datetime
+from enum import Enum
 from typing import Any, cast
 from zoneinfo import ZoneInfo
 
@@ -24,6 +25,28 @@ from shared.config import get_settings
 from shared.redis_client import get_redis_client
 
 logger = logging.getLogger(__name__)
+
+# 4xx status codes where Chatwoot has definitively rejected the conversation
+# RESOURCE itself (deleted/invalid conversation_id) — as opposed to a transient
+# server/network error where the SAME conversation is still perfectly valid.
+# Used by ``send_template_to_conversation_checked`` (sdd/context-coherence FIX 1).
+_CONVERSATION_REJECTION_STATUS_CODES = frozenset({400, 404, 422})
+
+
+class ConversationSendOutcome(Enum):
+    """Typed result of sending a template into an existing Chatwoot conversation.
+
+    Lets callers (currently only ``deliver_template``) distinguish a definitive
+    rejection of the conversation resource — where falling back to a brand-new
+    conversation is warranted — from a transient failure, where the SAME
+    conversation is still valid and the caller's own retry/backoff loop should
+    handle it instead of fragmenting the customer's conversation history
+    (sdd/context-coherence FIX 1).
+    """
+
+    SENT = "sent"
+    REJECTED = "rejected"
+    TRANSIENT = "transient"
 
 
 class ChatwootClient:
@@ -312,13 +335,86 @@ class ChatwootClient:
                     extra={
                         "contact_id": contact_id,
                         "template_name": template_name,
-                        "response_body": getattr(e.response, "text", None)
-                        if hasattr(e, "response")
-                        else None,
+                        "response_body": (
+                            getattr(e.response, "text", None) if hasattr(e, "response") else None
+                        ),
                     },
                     exc_info=True,
                 )
                 raise
+
+    async def create_conversation_with_template(
+        self,
+        customer_phone: str,
+        template_name: str,
+        body_params: dict[str, str],
+        category: str = "UTILITY",
+        language: str = "es",
+        customer_name: str | None = None,
+        fallback_content: str | None = None,
+    ) -> tuple[int | None, bool]:
+        """
+        Find/create the contact and create a new Chatwoot conversation with an
+        initial template message.
+
+        Public wrapper around the find/create-contact flow and the internal
+        ``_create_conversation_with_template`` call, extracted so callers (e.g. the
+        worker notification handlers' ``deliver_template`` helper) can create a fresh
+        canonical conversation on a resolver-miss or a Chatwoot rejection of a
+        previously resolved conversation id (sdd/context-coherence D3).
+
+        Args:
+            customer_phone: E.164 formatted phone number
+            template_name: Name of the approved template in Meta Business Suite
+            body_params: Dynamic variables for template body
+            category: Template category (UTILITY, MARKETING, etc.)
+            language: BCP 47 language code (default: "es")
+            customer_name: Optional customer name (used when creating new contact)
+            fallback_content: Fallback text for non-WhatsApp channels
+
+        Returns:
+            Tuple of (conversation_id, success). conversation_id is None on failure.
+        """
+        try:
+            contact = await self._find_contact_by_phone(customer_phone)
+            if not contact:
+                logger.info(f"Creating new contact for {customer_phone}")
+                contact = await self._create_contact(customer_phone, customer_name)
+
+            contact_id = contact.get("id")
+            if not contact_id:
+                logger.error(f"No contact ID found for {customer_phone}")
+                return None, False
+
+            logger.info(
+                f"Creating conversation with template for contact: "
+                f"contact_id={contact_id}, phone={customer_phone}"
+            )
+
+            conversation_id, success = await self._create_conversation_with_template(
+                contact_id=contact_id,
+                phone=customer_phone,
+                template_name=template_name,
+                body_params=body_params,
+                category=category,
+                language=language,
+                fallback_content=fallback_content,
+            )
+            return conversation_id, success
+
+        except httpx.HTTPError as e:
+            logger.error(
+                f"Failed to create conversation with template for {customer_phone}: {e}",
+                exc_info=True,
+            )
+            return None, False
+
+        except Exception as e:
+            logger.error(
+                f"Unexpected error creating conversation with template for {customer_phone}: {e}",
+                exc_info=True,
+            )
+            return None, False
 
     @retry(
         stop=stop_after_attempt(3),
@@ -572,31 +668,15 @@ class ChatwootClient:
                     fallback_content=fallback_content,
                 )
 
-            # No conversation_id - need to find/create contact and create conversation with template
-            contact = await self._find_contact_by_phone(customer_phone)
-            if not contact:
-                logger.info(f"Creating new contact for {customer_phone}")
-                contact = await self._create_contact(customer_phone, customer_name)
-
-            contact_id = contact.get("id")
-            if not contact_id:
-                logger.error(f"No contact ID found for {customer_phone}")
-                return False
-
-            logger.info(
-                f"Creating conversation with template for contact: "
-                f"contact_id={contact_id}, phone={customer_phone}"
-            )
-
-            # Create conversation WITH template message in one API call
-            # Phone number is used as source_id for WhatsApp (Chatwoot handles the rest)
-            _, success = await self._create_conversation_with_template(
-                contact_id=contact_id,
-                phone=customer_phone,
+            # No conversation_id - delegate to the public wrapper (find/create contact +
+            # create a new conversation with an initial template message).
+            _, success = await self.create_conversation_with_template(
+                customer_phone=customer_phone,
                 template_name=template_name,
                 body_params=body_params,
                 category=category,
                 language=language,
+                customer_name=customer_name,
                 fallback_content=fallback_content,
             )
             return success
@@ -606,9 +686,9 @@ class ChatwootClient:
                 f"Failed to send template message to {customer_phone}: {e}",
                 extra={
                     "template_name": template_name,
-                    "response_body": getattr(e.response, "text", None)
-                    if hasattr(e, "response")
-                    else None,
+                    "response_body": (
+                        getattr(e.response, "text", None) if hasattr(e, "response") else None
+                    ),
                 },
                 exc_info=True,
             )
@@ -697,6 +777,67 @@ class ChatwootClient:
                 f"conversation_id={conversation_id}, template={template_name}"
             )
             return True
+
+    async def send_template_to_conversation_checked(
+        self,
+        conversation_id: int,
+        customer_phone: str,
+        template_name: str,
+        body_params: dict[str, str],
+        category: str = "UTILITY",
+        language: str = "es",
+        fallback_content: str | None = None,
+    ) -> ConversationSendOutcome:
+        """Send a template into an existing conversation, returning a typed outcome.
+
+        Sibling of ``_send_template_to_conversation`` (does not change that method
+        or ``send_template_message``'s existing bool contract — other callers,
+        e.g. ``ConversationInboxService`` and the admin booking-notification route,
+        are unaffected). Only ``deliver_template`` calls this method, so it can
+        distinguish a definitive Chatwoot rejection (400/404/422 on the
+        conversation resource — fallback to a new conversation is warranted) from
+        a transient failure (network error, timeout, 5xx — the SAME conversation
+        is still valid) (sdd/context-coherence FIX 1).
+
+        Deliberately makes a single attempt with no tenacity-level retry:
+        transient failures are retried by the notifications worker's own
+        backoff loop (``mark_failed_fn`` / ``next_retry_at``) on the next poll
+        cycle, against the SAME resolved conversation_id — unlike
+        ``send_template_message``'s 3-attempt retry (which also wastes retries
+        on a permanent 400; left as-is there since it is not on this path).
+        """
+        try:
+            await self._send_template_to_conversation(
+                conversation_id=conversation_id,
+                customer_phone=customer_phone,
+                template_name=template_name,
+                body_params=body_params,
+                category=category,
+                language=language,
+                fallback_content=fallback_content,
+            )
+            return ConversationSendOutcome.SENT
+        except httpx.HTTPStatusError as e:
+            status = e.response.status_code if e.response is not None else None
+            if status in _CONVERSATION_REJECTION_STATUS_CODES:
+                logger.warning(
+                    f"Chatwoot rejected conversation_id={conversation_id} with "
+                    f"status={status} — treating as a definitive rejection "
+                    f"(template={template_name})"
+                )
+                return ConversationSendOutcome.REJECTED
+            logger.error(
+                f"Transient Chatwoot error sending into conversation_id={conversation_id} "
+                f"(status={status}): {e}",
+                exc_info=True,
+            )
+            return ConversationSendOutcome.TRANSIENT
+        except httpx.HTTPError as e:
+            logger.error(
+                f"Transient Chatwoot HTTP error sending into conversation_id={conversation_id}: {e}",
+                exc_info=True,
+            )
+            return ConversationSendOutcome.TRANSIENT
 
     async def get_conversation_labels(self, conversation_id: int) -> list[str]:
         """Get current labels for a conversation."""

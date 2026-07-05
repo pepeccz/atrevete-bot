@@ -20,6 +20,19 @@ El código referencia **7 nombres de plantilla** repartidos en 3 grupos:
 
 Estas dos son las que el worker `notifications` necesita para operar. Hasta que Meta las apruebe y estén cargadas en `.env`, el worker permanece apagado (`NOTIFICATIONS_WORKER_ENABLED=false`).
 
+> **⚠ Actualización 2026-07-05 (sdd/context-coherence FIX 6)**: las tablas de
+> parámetros de esta sección quedaron desactualizadas respecto al código real
+> (`reminder_24h.py` y `confirm_48h.py` evolucionaron a 4 y 6 variables
+> respectivamente, con renderizado en español/hora de Madrid). El envío forzado
+> del 2026-07-05 00:51 se entregó correctamente en WhatsApp con estilista,
+> servicio y deadline renderizados (transcript del cliente como evidencia), lo
+> que confirma que las plantillas reales en Meta ya aceptan estos conteos —
+> **verificado por entrega en vivo 2026-07-05; pendiente de confirmación de
+> Pepe en el portal de Meta, ver decisión Q4 (engram #7493)**. Las tablas de
+> abajo reflejan el conteo real de variables enviadas por el código; un test
+> (`tests/unit/test_whatsapp_template_param_counts.py`) fija estos conteos
+> para que cualquier drift futuro falle de forma ruidosa.
+
 ### 1.1 Recordatorio 24h antes de la cita
 
 | Campo | Valor |
@@ -27,20 +40,21 @@ Estas dos son las que el worker `notifications` necesita para operar. Hasta que 
 | Nombre sugerido | `recordatorio_cita_24h` |
 | Categoría | `UTILITY` |
 | Idioma | `es` (Español) |
-| Variables | 3 posicionales |
+| Variables | **4 posicionales** (actualizado — antes documentaba 3) |
 | Env var | `WHATSAPP_TEMPLATE_REMINDER_24H` |
 | Handler | `agent/workers/notification_handlers/reminder_24h.py` |
 | Disparo | 23–25h antes de `start_time` · `status ∈ (PENDING, CONFIRMED)` · `reminder_sent_at IS NULL` · `reminder_failed=false` |
 
 **Parámetros enviados por el bot**:
 - `{{1}}` → nombre del cliente (`appt.first_name`, puede ser string vacío)
-- `{{2}}` → fecha en formato `YYYY-MM-DD` (ISO, UTC-astimezone)
-- `{{3}}` → hora en formato `HH:MM` (UTC)
+- `{{2}}` → fecha en español, hora de Madrid (`_render_es.fecha_es`, ej. "miércoles 8 de julio")
+- `{{3}}` → hora `HH:MM` en hora de Madrid (`_render_es.hora_es`)
+- `{{4}}` → servicio(s) reservado(s), concatenados con ", "
 
 **Body sugerido** (para presentar a Meta — ajustá tono según marca):
 
 ```
-Hola {{1}} 👋 Te recordamos tu cita mañana {{2}} a las {{3}} en Atrévete. ¡Te esperamos! Si necesitás cancelar o reprogramar, respondé a este mensaje.
+Hola {{1}} 👋 Te recordamos tu cita mañana {{2}} a las {{3}} para {{4}} en Atrévete. ¡Te esperamos! Si necesitás cancelar o reprogramar, respondé a este mensaje.
 ```
 
 **Notas**:
@@ -55,20 +69,26 @@ Hola {{1}} 👋 Te recordamos tu cita mañana {{2}} a las {{3}} en Atrévete. ¡
 | Nombre sugerido | `confirmacion_cita_48h` |
 | Categoría | `UTILITY` |
 | Idioma | `es` |
-| Variables | 3 posicionales |
+| Variables | **6 posicionales** (actualizado — antes documentaba 3) |
 | Env var | `WHATSAPP_TEMPLATE_CONFIRM_48H` |
 | Handler | `agent/workers/notification_handlers/confirm_48h.py` |
 | Disparo | 47–49h antes de `start_time` · `status = PENDING` · `confirmation_sent_at IS NULL` |
 
 **Parámetros**:
 - `{{1}}` → nombre cliente
-- `{{2}}` → fecha `YYYY-MM-DD`
-- `{{3}}` → hora `HH:MM`
+- `{{2}}` → fecha en español, hora de Madrid (ej. "miércoles 8 de julio")
+- `{{3}}` → hora `HH:MM` en hora de Madrid
+- `{{4}}` → nombre del estilista asignado
+- `{{5}}` → servicio(s) reservado(s), concatenados con ", "
+- `{{6}}` → deadline de auto-cancelación en español/Madrid (ej. "martes 7 de julio a las 10:40") —
+  anclado en el instante real más temprano en que el tail de auto-cancel podría disparar
+  (`now + AUTO_CANCEL_GRACE_BEFORE_WARNING_HOURS + AUTO_CANCEL_GRACE_BEFORE_CANCEL_HOURS`),
+  no un offset fijo de T-24h (ver sdd/context-coherence FIX 3)
 
 **Body sugerido**:
 
 ```
-Hola {{1}}, tenés cita en Atrévete el {{2}} a las {{3}}. ¿Nos confirmás que venís? Respondé "sí" para confirmar o "no" si no podés.
+Hola {{1}}, tenés cita en Atrévete el {{2}} a las {{3}} con {{4}} para {{5}}. ¿Nos confirmás que venís? Si no confirmás antes del {{6}}, la cita se cancelará automáticamente. Respondé "sí" para confirmar o "no" si no podés.
 ```
 
 **Notas**:

@@ -63,6 +63,7 @@ async def upsert_conversation_history(
       is None/empty as long as attachments are present (attachment-only messages).
     """
     from sqlalchemy import func
+    from sqlalchemy.exc import IntegrityError
 
     from database.models import ConversationHistory, ConversationMessage, Customer
 
@@ -101,8 +102,26 @@ async def upsert_conversation_history(
             metadata_=initial_metadata,
         )
         session.add(parent)
-        await session.flush()
-    else:
+        try:
+            await session.flush()
+        except IntegrityError:
+            # Race (sdd/context-coherence FIX 5): the notifications worker's
+            # fallback-create path (agent/workers/notification_handlers/_delivery.py
+            # _create_fallback_history) can independently insert a row for this SAME
+            # conversation_id between our SELECT above and this flush. Roll back our
+            # failed insert and treat this as an UPDATE against the row that won the
+            # race, instead of dropping this inbound message entirely.
+            await session.rollback()
+            result = await session.execute(
+                select(ConversationHistory).where(
+                    ConversationHistory.conversation_id == conversation_id_str
+                )
+            )
+            existing = result.scalar_one_or_none()
+            if existing is None:
+                raise
+
+    if existing is not None:
         parent = existing
         parent.ended_at = now
         if parent.customer_id is None and customer_id is not None:
@@ -281,7 +300,9 @@ async def _handle_message_status_event(payload_body: dict, db_session: Any) -> b
         STATUS_LOGGER.warning("message_updated: no message id found in payload — skipped")
         return False
 
-    STATUS_LOGGER.info("Delivery failure event received for chatwoot_message_id=%s", chatwoot_msg_id)
+    STATUS_LOGGER.info(
+        "Delivery failure event received for chatwoot_message_id=%s", chatwoot_msg_id
+    )
 
     stmt = (
         sa_update(ConversationMessage)
@@ -434,9 +455,7 @@ async def receive_chatwoot_webhook(
                 )
                 await db_session.commit()
         except Exception as e:
-            STATUS_LOGGER.warning(
-                "Failed to handle message_updated event: %s", e, exc_info=True
-            )
+            STATUS_LOGGER.warning("Failed to handle message_updated event: %s", e, exc_info=True)
         return JSONResponse(status_code=200, content={"status": "message_updated_handled"})
 
     # Filter: Only process message_created events
@@ -705,9 +724,7 @@ async def receive_chatwoot_webhook(
             # PR-3a: pass top-level attachments as raw dicts so
             # _persist_attachments can access thumb_url, file_size, etc.
             raw_attachments = (
-                [att.model_dump() for att in payload.attachments]
-                if payload.attachments
-                else None
+                [att.model_dump() for att in payload.attachments] if payload.attachments else None
             )
             await upsert_conversation_history(
                 db_session,

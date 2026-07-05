@@ -11,9 +11,12 @@ from sqlalchemy import and_, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from agent.workers.notification_handlers._delivery import deliver_template
+from agent.workers.notification_handlers._render_es import MADRID_TZ, fecha_es, hora_es
 from agent.workers.notification_handlers._retry import next_retry_at
 from agent.workers.notification_handlers.base import NotificationHandler
-from database.models import Appointment, AppointmentStatus
+from database.connection import get_async_session
+from database.models import Appointment, AppointmentStatus, Service, Stylist
 from shared.config import get_settings
 from shared.settings_service import get_settings_service
 
@@ -51,13 +54,62 @@ async def query_fn(session: AsyncSession) -> list[Appointment]:
     return list(result.scalars().all())
 
 
-def _build_body_params(appt: Appointment) -> dict[str, str]:
-    start = appt.start_time.astimezone(UTC) if appt.start_time else None
+async def _build_body_params(appt: Appointment, settings: Any) -> dict[str, str]:
+    """Build the 6 body params for the ``appointment_confirmation_48h`` template.
+
+    {{1}} name · {{2}} date · {{3}} time · {{4}} stylist · {{5}} service(s) ·
+    {{6}} auto-cancel deadline. Stylist/service names are resolved from the DB;
+    dates are rendered in Europe/Madrid so the customer sees the real local time.
+
+    The {{6}} deadline is the earliest instant the auto-cancel tail could
+    actually fire, anchored on "now" (≈ ``confirmation_sent_at``, stamped right
+    after this send) — NOT a fixed T-24h offset from ``start_time``. Mirrors the
+    same two-grace-period composition the ``final_warning``/``auto_cancel``
+    handlers use: earliest final_warning = confirmation_sent_at +
+    ``AUTO_CANCEL_GRACE_BEFORE_WARNING_HOURS``; earliest auto_cancel =
+    final_warning_sent_at + ``AUTO_CANCEL_GRACE_BEFORE_CANCEL_HOURS``. A fixed
+    T-24h promise could be hours later than the real earliest cancel instant
+    with non-default settings (sdd/context-coherence FIX 3).
+    """
+    start = appt.start_time.astimezone(MADRID_TZ) if appt.start_time else None
+
+    stylist_name = ""
+    service_names: list[str] = []
+    async with get_async_session() as session:
+        if appt.stylist_id:
+            stylist = await session.get(Stylist, appt.stylist_id)
+            stylist_name = getattr(stylist, "name", "") or ""
+        if appt.service_ids:
+            rows = await session.execute(
+                select(Service.name).where(Service.id.in_(list(appt.service_ids)))
+            )
+            service_names = [name for (name,) in rows.all()]
+
+    now = datetime.now(UTC)
+    deadline_utc = now + timedelta(
+        hours=settings.AUTO_CANCEL_GRACE_BEFORE_WARNING_HOURS
+        + settings.AUTO_CANCEL_GRACE_BEFORE_CANCEL_HOURS
+    )
+    deadline = deadline_utc.astimezone(MADRID_TZ)
+    deadline_str = f"{fecha_es(deadline)} a las {hora_es(deadline)}"
+
     return {
         "1": appt.first_name or "",
-        "2": start.strftime("%Y-%m-%d") if start else "",
-        "3": start.strftime("%H:%M") if start else "",
+        "2": fecha_es(start) if start else "",
+        "3": hora_es(start) if start else "",
+        "4": stylist_name,
+        "5": ", ".join(service_names),
+        "6": deadline_str,
     }
+
+
+def _build_fallback_content(params: dict[str, str]) -> str:
+    """Short castellano rendering of the template body, for Chatwoot fallback + DB storage."""
+    return (
+        f"Hola {params['1']}, ¿confirmas tu cita del {params['2']} a las {params['3']} "
+        f"con {params['4']} para {params['5']}? Si no confirmas antes del {params['6']}, "
+        "la cita se cancelará automáticamente."
+    )
 
 
 async def send_fn(appt: Appointment, chatwoot_client: Any) -> bool:
@@ -81,12 +133,13 @@ async def send_fn(appt: Appointment, chatwoot_client: Any) -> bool:
         )
         return False
 
-    return await chatwoot_client.send_template_message(
-        customer_phone=phone,
-        template_name=template,
-        body_params=_build_body_params(appt),
-        category="UTILITY",
-        language="es",
+    body_params = await _build_body_params(appt, settings)
+    return await deliver_template(
+        chatwoot_client,
+        appt,
+        template,
+        body_params,
+        _build_fallback_content(body_params),
     )
 
 

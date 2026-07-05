@@ -50,7 +50,9 @@ async def test_query_fn_where_clause_contains_required_columns():
     assert "final_warning_sent_at" in rendered, "must filter by final_warning_sent_at"
     assert "notification_failed" in rendered, "must honor backoff flag"
     assert "start_time" in rendered, "must enforce MIN_LEAD_HOURS guard"
-    assert "status" in rendered.lower() or "pending" in rendered.lower(), "must filter PENDING status"
+    assert (
+        "status" in rendered.lower() or "pending" in rendered.lower()
+    ), "must filter PENDING status"
 
 
 @pytest.mark.asyncio
@@ -231,9 +233,14 @@ async def test_send_fn_calls_chatwoot_when_template_set(monkeypatch):
         "get_settings_service",
         AsyncMock(return_value=DummySettingsService()),
     )
+    # send_fn now routes through deliver_template (sdd/context-coherence Stream 1) — the
+    # conversation-threading behavior itself is covered by tests/unit/test_delivery.py.
+    deliver_mock = AsyncMock(return_value=True)
+    monkeypatch.setattr(final_warning, "deliver_template", deliver_mock)
 
     appt = SimpleNamespace(
         id=uuid4(),
+        customer_id=uuid4(),
         first_name="Marta",
         start_time=datetime(2026, 8, 15, 14, 30, tzinfo=UTC),
         customer=SimpleNamespace(phone="+34622222222"),
@@ -244,12 +251,13 @@ async def test_send_fn_calls_chatwoot_when_template_set(monkeypatch):
     result = await final_warning.send_fn(appt, client)
 
     assert result is True
-    call_kwargs = client.send_template_message.await_args.kwargs
-    assert call_kwargs["template_name"] == template_name
-    assert call_kwargs["customer_phone"] == "+34622222222"
-    assert call_kwargs["category"] == "UTILITY"
-    assert call_kwargs["language"] == "es"
-    assert call_kwargs["body_params"]["1"] == "Marta", "body_params[1] must be first_name"
+    deliver_mock.assert_awaited_once()
+    args = deliver_mock.await_args.args
+    assert args[0] is client
+    assert args[1] is appt
+    assert args[2] == template_name
+    assert args[3]["1"] == "Marta", "body_params[1] must be first_name"
+    assert "Marta" in args[4]  # fallback_content mentions the customer's name
 
 
 @pytest.mark.asyncio

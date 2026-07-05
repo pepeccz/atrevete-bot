@@ -39,6 +39,7 @@ Output JSON schema (written to --out):
                 "body_params": {"1": "Ana", "2": "2026-07-01", "3": "10:00"},
                 "category": "UTILITY",
                 "language": "es",
+                "conversation_id": 125,
                 "success": true
             },
             ...
@@ -64,15 +65,25 @@ from __future__ import annotations
 
 import os
 
-# Must precede ALL shared.* imports — get_settings() is @lru_cache and reads env at first call.
-# setdefault preserves any value the caller already set via the environment.
-os.environ.setdefault("WHATSAPP_TEMPLATE_REMINDER_24H", "test_reminder_24h")
-os.environ.setdefault("WHATSAPP_TEMPLATE_CONFIRM_48H", "test_confirm_48h")
-os.environ.setdefault("WHATSAPP_TEMPLATE_FINAL_WARNING", "test_final_warning_handler")
+
+def _ensure_test_template_env() -> None:
+    """Seed template-name env vars for CLI harness runs.
+
+    Called from main() — must run before the FIRST get_settings() call
+    (@lru_cache reads env once), but must NOT run at import time: importing
+    this module from the unit-test suite would leak these values into
+    unrelated tests (e.g. test_config_slice3 asserts the empty default).
+    setdefault preserves any value the caller already set via the environment.
+    """
+    os.environ.setdefault("WHATSAPP_TEMPLATE_REMINDER_24H", "test_reminder_24h")
+    os.environ.setdefault("WHATSAPP_TEMPLATE_CONFIRM_48H", "test_confirm_48h")
+    os.environ.setdefault("WHATSAPP_TEMPLATE_FINAL_WARNING", "test_final_warning_handler")
+
 
 import argparse
 import asyncio
 import dataclasses
+import itertools
 import json
 import logging
 import pathlib
@@ -103,10 +114,12 @@ if _AUTO_CANCEL_ENABLED:
     _ALL_HANDLERS["final_warning"] = final_warning_handler
     _ALL_HANDLERS["auto_cancel"] = auto_cancel_handler
 
-# Test template name defaults (used when env vars are absent).
-_TEST_TEMPLATE_REMINDER = os.environ["WHATSAPP_TEMPLATE_REMINDER_24H"]
-_TEST_TEMPLATE_CONFIRM = os.environ["WHATSAPP_TEMPLATE_CONFIRM_48H"]
-_TEST_TEMPLATE_FINAL_WARNING = os.environ["WHATSAPP_TEMPLATE_FINAL_WARNING"]
+# sdd/context-coherence FIX 4: a fixed sentinel id (-1) collided across every
+# fallback-create call in a batch run, silently corrupting harness signals via
+# the ConversationHistory.conversation_id unique constraint. Each capturing
+# client instance draws the next value from this shared monotonic counter
+# instead, guaranteeing uniqueness within a single harness run.
+_fallback_sentinel_ids = itertools.count(start=-1, step=-1)
 
 
 async def _patch_settings_service() -> None:
@@ -120,26 +133,34 @@ async def _patch_settings_service() -> None:
 
     from shared.settings_service import get_settings_service
 
+    # Read lazily (not at import time) so importing this module never requires
+    # the env vars; defaults mirror _ensure_test_template_env for programmatic use.
+    template_reminder = os.environ.get("WHATSAPP_TEMPLATE_REMINDER_24H", "test_reminder_24h")
+    template_confirm = os.environ.get("WHATSAPP_TEMPLATE_CONFIRM_48H", "test_confirm_48h")
+    template_final_warning = os.environ.get(
+        "WHATSAPP_TEMPLATE_FINAL_WARNING", "test_final_warning_handler"
+    )
+
     svc = await get_settings_service()
     far_future = _dt(9999, 1, 1, tzinfo=UTC)
     async with svc._cache_lock:
         svc._cache["whatsapp_template_reminder_24h"] = {
-            "value": _TEST_TEMPLATE_REMINDER,
+            "value": template_reminder,
             "expires_at": far_future,
         }
         svc._cache["whatsapp_template_confirm_48h"] = {
-            "value": _TEST_TEMPLATE_CONFIRM,
+            "value": template_confirm,
             "expires_at": far_future,
         }
         svc._cache["whatsapp_template_final_warning"] = {
-            "value": _TEST_TEMPLATE_FINAL_WARNING,
+            "value": template_final_warning,
             "expires_at": far_future,
         }
     logger.debug(
         "Patched SettingsService cache: reminder=%r confirm=%r final_warning=%r",
-        _TEST_TEMPLATE_REMINDER,
-        _TEST_TEMPLATE_CONFIRM,
-        _TEST_TEMPLATE_FINAL_WARNING,
+        template_reminder,
+        template_confirm,
+        template_final_warning,
     )
 
 
@@ -188,6 +209,7 @@ def _make_capturing_handler(handler, captures: list[dict[str, Any]]):
                 body_params: dict[str, str],
                 category: str = "UTILITY",
                 language: str = "es",
+                conversation_id: int | None = None,
                 **_kw: Any,
             ) -> bool:
                 call_record["customer_phone"] = customer_phone
@@ -195,7 +217,35 @@ def _make_capturing_handler(handler, captures: list[dict[str, Any]]):
                 call_record["body_params"] = body_params
                 call_record["category"] = category
                 call_record["language"] = language
+                # sdd/context-coherence TASK-21: capture conversation_id (previously
+                # swallowed via **_kw) so the QA scenario can assert threading —
+                # deliver_template() passes conversation_id=int(history.conversation_id)
+                # when the customer has a resolvable canonical conversation.
+                call_record["conversation_id"] = conversation_id
                 return True
+
+            async def create_conversation_with_template(
+                self,
+                customer_phone: str,
+                template_name: str,
+                body_params: dict[str, str],
+                category: str = "UTILITY",
+                language: str = "es",
+                **_kw: Any,
+            ) -> tuple[int | None, bool]:
+                # Fallback path (resolver miss / rejected conversation_id, D3). No new
+                # conversation is created for real — return a unique sentinel id (FIX 4)
+                # so deliver_template's success path completes without a live Chatwoot
+                # call, and so multiple fallback-creates in the same batch don't collide
+                # on ConversationHistory.conversation_id's unique constraint.
+                call_record["customer_phone"] = customer_phone
+                call_record["template_name"] = template_name
+                call_record["body_params"] = body_params
+                call_record["category"] = category
+                call_record["language"] = language
+                call_record["conversation_id"] = None
+                call_record["fallback_conversation_created"] = True
+                return next(_fallback_sentinel_ids), True
 
         result = await original_send_fn(appt, _CapturingClient())
 
@@ -210,6 +260,7 @@ def _make_capturing_handler(handler, captures: list[dict[str, Any]]):
                     "body_params": call_record.get("body_params"),
                     "category": call_record.get("category"),
                     "language": call_record.get("language"),
+                    "conversation_id": call_record.get("conversation_id"),
                     "success": result,
                 }
             )
@@ -227,6 +278,7 @@ def _make_capturing_handler(handler, captures: list[dict[str, Any]]):
                 "body_params": None,
                 "category": None,
                 "language": None,
+                "conversation_id": None,
                 "success": result,
             }
             if not result:
@@ -313,6 +365,7 @@ async def run_cycle(handler_names: list[str]) -> dict[str, Any]:
 
 
 def main() -> None:
+    _ensure_test_template_env()
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
