@@ -64,7 +64,11 @@ BUDGETS: dict[str, int] = {
     #   Reconciles the duplicate budget in test_critical_rules_content.py. Actual 4010.
     # critical_rules.md: 4100 → 4200 for R-45 (returning-customer propose-the-usual
     #   with confirmation — closes the loyal-echo prompt gap). Actual 4145.
-    "critical_rules.md": 4200,
+    #
+    # Budgets updated for SDD change qa-loop-conversation-quality (B5):
+    # critical_rules.md: 4200 -> 4350 for the R26/R27 dual-condition cross-reference
+    # (closed_day + advance_policy overlap precedence). Actual 4271.
+    "critical_rules.md": 4350,
     "booking_flow.md": 3050,
     "examples.md": 2600,
     "tools_contract.md": 2100,

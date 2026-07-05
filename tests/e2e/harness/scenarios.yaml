@@ -88,7 +88,7 @@
     # Catches premature confirmation (booking_ready observed before
     # policy_acceptance_required). audience_required is omitted — "corte de
     # dama" states audience explicitly, so that step never fires here.
-    step_order: [name_required, policy_acceptance_required, booking_ready]
+    step_order: [policy_acceptance_required, name_required, booking_ready]
 
 - id: change-a-tz-madrid
   description: >
@@ -159,7 +159,7 @@
     tool_calls_forbidden: []
     tags: [change-a, injected-state]
     # A2 (qa-loop-conversation-quality): guaranteed-to-fire next_step subsequence.
-    step_order: [name_required, policy_acceptance_required, booking_ready]
+    step_order: [policy_acceptance_required, name_required, booking_ready]
 
 # DATE-SENSITIVITY (A3, qa-loop-conversation-quality): "el lunes que viene" is
 # ALWAYS a closed day (Monday — see database/seeds/business_hours.py), so
@@ -191,7 +191,11 @@
     phone: "+34999000048"
     style: >
       Pide cita para un lunes muy próximo (dentro del mínimo de antelación).
-      El bot debe rechazar citando tanto el cierre del lunes como la antelación mínima.
+      IMPORTANTE: se refiere al lunes INMEDIATO (el más cercano a hoy). Si el bot
+      interpreta un lunes más lejano, corrige en el siguiente turno indicando el
+      día de mes concreto del lunes inmediato (p. ej. "no, me refiero a este
+      lunes, el día 6"). El bot debe rechazar citando tanto el cierre del lunes
+      como la antelación mínima.
   intent: "Hola, quiero una cita para el lunes que viene, ¿me la dais?"
   max_turns: 6
   expect:

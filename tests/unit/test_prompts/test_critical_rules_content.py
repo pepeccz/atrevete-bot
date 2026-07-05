@@ -122,9 +122,11 @@ def test_booking_flow_references_payload_stylists():
 def test_critical_rules_token_budget():
     """critical_rules.md must stay within the token budget.
 
-    Budget 4200, matching test_token_budgets.py (the canonical budget table)
-    after R-43/R-44 (multi-service PR-2) and R-45 (returning-customer
-    propose-the-usual) landed. Both tests enforce the same ceiling.
+    Budget 4350, matching test_token_budgets.py (the canonical budget table)
+    after R-43/R-44 (multi-service PR-2), R-45 (returning-customer
+    propose-the-usual), and the qa-loop-conversation-quality R26/R27
+    dual-condition cross-reference landed. Both tests enforce the same
+    ceiling.
     """
     try:
         import tiktoken
@@ -135,6 +137,4 @@ def test_critical_rules_token_budget():
 
     content = _read("critical_rules.md")
     count = len(enc.encode(content))
-    assert count <= 4200, (
-        f"critical_rules.md exceeds token budget: {count} tokens > 4200 allowed"
-    )
+    assert count <= 4350, f"critical_rules.md exceeds token budget: {count} tokens > 4350 allowed"

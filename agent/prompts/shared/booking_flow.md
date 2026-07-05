@@ -104,7 +104,7 @@ Llamada: update_booking(services=["{servicio-pendiente}"], pre_resolved_service_
 ## Puerta de confirmación — antes de `book`
 [→R21] `book` requiere dos turnos; elegir un hueco NO es confirmar.
 
-- **Turno A** (cliente elige hueco): resume y pregunta. NO llames `book`.
+- **Turno A** (`next_step=booking_ready`): SOLO cuando `update_booking` haya devuelto `next_step="booking_ready"` — es decir, tras cerrar hueco, política, nombre y notas — resume la cita y pregunta "¿Te lo confirmo?". NO llames `book`. Elegir un hueco NO equivale a `booking_ready` y NO habilita la confirmación.
 - **Turno B** (cliente confirma explícitamente: "sí", "dale", "ok", "confirmo"): llama `book(confirmed=True)`. Si la política ya se aceptó (paso 5.5 / `booking_ready`), pasa también `policy_accepted=true`. NUNCA llames `book` con un `customer_full_name` inventado o inferido; si el cliente no lo dio explícitamente, pídelo primero (Paso 6) [R-49].
 
 Plantilla turno A: "Perfecto, {nombre_pila}, te lo dejo el {fecha_humana} a las {hora} con {estilista} para {servicios}{nota_clause}. ¿Te lo confirmo?"

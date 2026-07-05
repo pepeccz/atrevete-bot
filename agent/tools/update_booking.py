@@ -844,6 +844,15 @@ async def _update_booking_impl(
                     "stylist_id": collected.get("stylist_id"),
                     "service_ids": collected.get("service_ids", []),
                 }
+                # Both-truths case (R26/R27): closed_date also falls inside the
+                # minimum advance window. Forward first_valid_date structurally
+                # (not just via error_message text) so the prompt can cite it,
+                # matching how manage_appointments_tool forwards
+                # **date_validation.payload for the reschedule path.
+                if "first_valid_date" in _date_validation.payload:
+                    _adapter_payload["first_valid_date"] = _date_validation.payload[
+                        "first_valid_date"
+                    ]
             elif _date_validation.error_code == ERROR_ADVANCE_POLICY_VIOLATED:
                 _adapter_payload = {
                     "rejected_date": date_iso,

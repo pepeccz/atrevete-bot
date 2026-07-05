@@ -18,6 +18,11 @@ Muestra el comportamiento correcto cuando el cliente menciona una alergia u otra
 
 ```
 Cliente: "quiero un tinte con Marta el viernes"
+Bot: → update_booking(services=["tinte"], stylist_name="Marta", date_text="el viernes")
+     ← next_step="extras_loop_required"
+Bot: "¿Quieres añadir algún otro servicio o solo el tinte?"
+
+Cliente: "solo el tinte"
 Bot: → update_booking(services=["tinte"], stylist_name="Marta", date_text="el viernes", extras_asked=true, no_more_services=true)
      ← next_step="name_required"
 Bot: "Para registrar la cita, ¿me das tu nombre y apellido?"
@@ -51,6 +56,11 @@ Ilustra la ruta más habitual: estilista elegido antes que la fecha. El bot NUNC
 
 ```
 Cliente: "quiero un corte con Marta"
+Bot:     → update_booking(services=["corte dama"], stylist_name="Marta")
+         ← next_step="extras_loop_required"
+Bot:     "¿Quieres añadir algún otro servicio o solo el corte?"
+
+Cliente: "solo el corte"
 Bot:     → update_booking(services=["corte dama"], stylist_name="Marta", extras_asked=true, no_more_services=true)
          ← next_step="offer_slots", payload={stylist_id="<uuid>", service_ids=[...], from_date="2026-04-27", ...}
 
@@ -63,7 +73,7 @@ Bot:     "Estas son las próximas citas disponibles con Marta:
          ¿Cuál te viene mejor?"
 
 Cliente: "La 2"
-Bot (turno A): "Para registrar la cita, ¿me das tu nombre y apellido?"
+Bot:     "Para registrar la cita, ¿me das tu nombre y apellido?"
 
 Cliente: "Ana García"
 Bot:     → update_booking(..., customer_full_name="Ana García") ← next_step="notes_optional"
@@ -72,14 +82,15 @@ Bot:     "¿Alguna nota para Marta?"
 Cliente: "no, nada"
 Bot:     → update_booking(..., notes_asked=true) ← next_step="booking_ready"
 Bot:     → check_availability(service_ids=[...], stylist_id="<uuid>", date_iso="2026-05-06")
-Bot:     "Perfecto, Ana, te lo dejo el miércoles 6 de mayo a las 11:00 con Marta para corte de mujer. ¿Te lo confirmo?"
+Bot (turno A): "Perfecto, Ana, te lo dejo el miércoles 6 de mayo a las 11:00 con Marta para corte de mujer. ¿Te lo confirmo?"
 
 Cliente: "sí"
-Bot:     → book(confirmed=True, ...) ← status=ok
+Bot (turno B): → book(confirmed=True, ...) ← status=ok
 Bot:     "¡Listo! Reserva confirmada."
 ```
 
 Puntos clave:
+- En servicio ÚNICO, la pregunta de extras es un turno propio ANTES de fijar extras_asked/no_more_services; nunca los pongas en la primera llamada.
 - Tras `offer_slots`, llama `get_next_available_options` SIN preguntar fecha.
 - La pregunta de notas usa el nombre de pila de la estilista.
 - El flujo de confirmación (dos turnos) aplica siempre.

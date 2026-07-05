@@ -34,6 +34,12 @@ _STRIKE_EXEMPT_NEXT_STEPS: frozenset[str] = frozenset(
         "pre_book_validation_required",
         # Policy gate has its own deterministic escalation path (R36) — exempt as before.
         "policy_acceptance_required",
+        # Date-validation gates are recoverable corrections: the customer supplies a new
+        # date on the next turn and R26/R27 define the deterministic recovery. Counting
+        # them suppresses the enriched closed_day + first_valid_date explanation before
+        # the customer ever sees it (FINAL-1 finding, qa-loop-conversation-quality C-1).
+        "closed_day_required",
+        "advance_policy_violated",
         # multi-service-resolution ADR-3: suggestion turns are recoverable (the customer
         # picks a candidate on the next turn). Counting them escalates before the fallback
         # has a chance to resolve — defeats the purpose of the suggestion flow.
