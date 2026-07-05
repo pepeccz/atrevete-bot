@@ -117,3 +117,14 @@ The following high-severity alerts appear in `requirements-frozen.txt` (which is
 - GCal sync failures: query `SELECT COUNT(*) FROM appointments WHERE gcal_sync_status = 'failed'`.
 - LLM retry storms: watch `docker compose logs agent | grep "Retrying request"`.
 - Redis stream lag: `XLEN incoming_messages` (should drain continuously).
+- Disclosure per-thread firing (sdd/context-coherence, D9): `disclosure.turn_evaluated`
+  (INFO, `agent/middleware/disclosure.py`) logs `conversation_id`, `is_first_turn`,
+  `prior_message_count` — use it to confirm a reply to a notification lands with
+  `is_first_turn=false` on a known thread. See `agent/AGENTS.md § Disclosure Policy`
+  for why per-thread firing is correct and unchanged.
+- New Chatwoot conversation created by a notification worker send: `new_conversation_created`
+  (WARNING, `shared/chatwoot_client.py`) — should be RARE after Stream 1 (threading fix);
+  frequent occurrences indicate the canonical-conversation resolver is missing rows.
+- Assembled prompt slots per turn: `prompt_assembly.slots` (INFO, `agent/middleware/prompt_assembly.py`)
+  logs the slot NAMES present (never content) — useful to confirm `_slot_upcoming_appointments`
+  was injected on a given turn.
