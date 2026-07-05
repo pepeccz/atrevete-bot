@@ -254,9 +254,14 @@ async def test_logs_assembled_slot_names_at_info(caplog):
     assert record.conversation_id == "conv-abc"
     assert "_slot_customer" in record.slots_present
     assert "_slot_upcoming_appointments" in record.slots_present
-    # PII-safety: slot content must never leak into the log record.
-    assert "SECRET_CUSTOMER_DATA" not in record.getMessage()
-    assert "SECRET_APPT_DATA" not in record.getMessage()
+    # PII-safety: slot content must never leak into the log record. Check the
+    # FULL record payload (all attributes, including `extra` fields such as
+    # `slots_present`), not just getMessage() — getMessage() never includes
+    # extra fields, so asserting against it alone is tautological and would
+    # never catch a regression that leaks slot CONTENT into extra fields.
+    record_payload = repr(record.__dict__)
+    assert "SECRET_CUSTOMER_DATA" not in record_payload
+    assert "SECRET_APPT_DATA" not in record_payload
 
 
 @pytest.mark.asyncio
