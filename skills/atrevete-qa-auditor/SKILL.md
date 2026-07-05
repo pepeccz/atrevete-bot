@@ -166,8 +166,45 @@ Check:
   the turn number(s), and the repeated sentence(s). Do not escalate to FAIL
   unless the repetition is severe (>= 3 occurrences of the same sentence).
 
+- [ ] **gate-flag-timing check (WARN-level, qa-loop-conversation-quality A1)**: RUN
+  the detector yourself over every scenario run file:
+
+  ```bash
+  PYTHONPATH=. python tests/e2e/harness/qa_turn_helper.py detect-gate-flags \
+    --run-file <run_dir>/<scenario_id>.json
+  ```
+
+  Output: `{"scenario_id": ..., "premature_flag_detected": bool, "findings": [{"turn": N, "services": [...], "extras_asked": bool, "no_more_services": bool}]}`.
+  The detector (`detect_premature_extras_flags()` in `qa_turn_helper.py`) flags
+  the FIRST services-introducing `update_booking` call that sets
+  `extras_asked`/`no_more_services` before the extras loop legitimately fired
+  (single-service front-loading; the 2+-service fast path is exempt). For
+  every scenario with `premature_flag_detected == true`, add a WARN item to
+  audit.md naming the scenario, the turn number(s), and the offending
+  services. Promotion to FAIL is deferred per design: only after 2 consecutive
+  full batches with zero false positives.
+
+- [ ] **step_order check (WARN-level, qa-loop-conversation-quality A2)** — only for
+  scenarios that declare `expect.step_order` in `scenarios.yaml`. RUN:
+
+  ```bash
+  PYTHONPATH=. python tests/e2e/harness/qa_turn_helper.py check-step-order \
+    --run-file <run_dir>/<scenario_id>.json \
+    --expected-order '<JSON list from expect.step_order>'
+  ```
+
+  Output: `{"scenario_id": ..., "expected_order": [...], "observed_order": [...], "step_order_ok": bool, "missing_steps": [...], "out_of_order": str | None}`.
+  The checker (`check_step_order()` in `qa_turn_helper.py`) asserts the
+  observed `next_step` sequence contains the declared `expect.step_order` as
+  an ordered subsequence (order preserved, gaps allowed) — catching premature
+  confirmation (e.g. `booking_ready` observed before `policy_acceptance_required`).
+  For every scenario with `step_order_ok == false`, add a WARN item to
+  audit.md naming the scenario, `missing_steps`, and `out_of_order`. Promotion
+  to FAIL is deferred per design: only after 2 consecutive full batches with
+  zero false positives.
+
 **If any L1 check fails, mark this scenario `FAIL (L1)` and skip L2–L5.**
-**If only `repeated_sentences` is non-empty, mark as `WARN` and continue L2–L5.**
+**If only `repeated_sentences`, gate-flag-timing, or step_order findings are non-empty, mark as `WARN` and continue L2–L5.**
 
 ---
 
