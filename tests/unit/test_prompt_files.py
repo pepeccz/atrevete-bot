@@ -30,9 +30,13 @@ class TestTokenBudgets:
         # Recalibrated for SDD change context-coherence (TASK-13, PR-B): R-39
         # acknowledgment carve-out (Stream 3, D7) added. Actual current count:
         # ~3975 (chars // 4). Set limit at 10% above actual (was 4350).
+        #
+        # Recalibrated again for the judgment-day fix batch (FIX 3): negative
+        # mixed-message example added to the R-39 carve-out. Actual current
+        # count: ~4071 (chars // 4). Set limit at 10% above actual (was 4400).
         assert (
-            len(content) // 4 <= 4400
-        ), f"critical_rules.md exceeds token budget: {len(content) // 4} tokens (limit 4400)"
+            len(content) // 4 <= 4500
+        ), f"critical_rules.md exceeds token budget: {len(content) // 4} tokens (limit 4500)"
 
     def test_booking_flow_md_token_budget(self, prompt_dir):
         content = (prompt_dir / "shared" / "booking_flow.md").read_text()

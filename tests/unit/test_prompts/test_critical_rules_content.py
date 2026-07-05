@@ -121,12 +121,13 @@ def test_booking_flow_references_payload_stylists():
 def test_critical_rules_token_budget():
     """critical_rules.md must stay within the token budget.
 
-    Budget 4500, matching test_token_budgets.py (the canonical budget table)
+    Budget 4600, matching test_token_budgets.py (the canonical budget table)
     after R-43/R-44 (multi-service PR-2), R-45 (returning-customer
     propose-the-usual), the qa-loop-conversation-quality R26/R27
-    dual-condition cross-reference, and the context-coherence R-39
-    acknowledgment carve-out (TASK-13, PR-B; actual 4458) landed. Both tests
-    enforce the same ceiling.
+    dual-condition cross-reference, the context-coherence R-39
+    acknowledgment carve-out (TASK-13, PR-B; actual 4458), and the
+    judgment-day fix batch negative mixed-message example (FIX 3; actual
+    4569) landed. Both tests enforce the same ceiling.
     """
     try:
         import tiktoken
@@ -137,4 +138,4 @@ def test_critical_rules_token_budget():
 
     content = _read("critical_rules.md")
     count = len(enc.encode(content))
-    assert count <= 4500, f"critical_rules.md exceeds token budget: {count} tokens > 4500 allowed"
+    assert count <= 4600, f"critical_rules.md exceeds token budget: {count} tokens > 4600 allowed"

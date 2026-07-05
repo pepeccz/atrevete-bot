@@ -74,7 +74,13 @@ BUDGETS: dict[str, int] = {
     # (Stream 3, D7) — exempts pure closings/acks ("gracias", "vale", "perfecto"...)
     # from the clarification gate while preserving it for ambiguous inputs.
     # Re-measured via this test's own tiktoken cl100k_base tokenizer: actual 4458.
-    "critical_rules.md": 4500,
+    #
+    # Budgets updated for SDD change context-coherence (judgment-day fix batch,
+    # FIX 3): 4500 -> 4600 for a negative mixed-message example added to the
+    # R-39 carve-out ("gracias, y una cosa..." is NOT a pure closing — the
+    # pending content must be addressed normally). Re-measured via tiktoken
+    # cl100k_base: actual 4569.
+    "critical_rules.md": 4600,
     "booking_flow.md": 3050,
     "examples.md": 2600,
     "tools_contract.md": 2100,
