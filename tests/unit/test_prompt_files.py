@@ -17,7 +17,13 @@ class TestTokenBudgets:
 
     def test_identity_md_token_budget(self, prompt_dir):
         content = (prompt_dir / "shared" / "identity.md").read_text()
-        assert len(content) // 4 <= 350
+        # Recalibrated for SDD change qa-loop-conversation-quality (B4): warmth/
+        # cercanía guidance + 3 illustrative phrasings (DEC-4) added under
+        # "## Voz y trato". Actual current count: ~432 (chars // 4). Set limit
+        # at 10% above actual (was 350).
+        assert (
+            len(content) // 4 <= 480
+        ), f"identity.md exceeds token budget: {len(content) // 4} tokens (limit 480)"
 
     def test_critical_rules_md_token_budget(self, prompt_dir):
         content = (prompt_dir / "shared" / "critical_rules.md").read_text()
