@@ -84,6 +84,11 @@
       service_type: principal
       audience: adult_female
       forbidden_audience: adult_male
+    # A2 (qa-loop-conversation-quality): guaranteed-to-fire next_step subsequence.
+    # Catches premature confirmation (booking_ready observed before
+    # policy_acceptance_required). audience_required is omitted — "corte de
+    # dama" states audience explicitly, so that step never fires here.
+    step_order: [name_required, policy_acceptance_required, booking_ready]
 
 - id: change-a-tz-madrid
   description: >
@@ -153,6 +158,8 @@
     tool_calls_required: [check_availability, book]
     tool_calls_forbidden: []
     tags: [change-a, injected-state]
+    # A2 (qa-loop-conversation-quality): guaranteed-to-fire next_step subsequence.
+    step_order: [name_required, policy_acceptance_required, booking_ready]
 
 # ---------------------------------------------------------------------------
 # Change B regression (3 scenarios) — catalog caching / prompt pruning
@@ -255,6 +262,9 @@
     tool_calls_required: [check_availability, book]
     tool_calls_forbidden: []
     tags: [change-c, gcal]
+    # A2 (qa-loop-conversation-quality): guaranteed-to-fire next_step subsequence.
+    # variant_required fires first — "manicura" has variant disambiguation.
+    step_order: [variant_required, name_required, policy_acceptance_required, booking_ready]
 
 - id: change-c-cancel-flow
   description: >
