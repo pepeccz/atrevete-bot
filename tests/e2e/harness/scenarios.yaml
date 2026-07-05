@@ -470,3 +470,78 @@
       returning relationship. Full booking is the primary happy path; if the
       conversation ends at availability confirmation, accept info_provided as
       a soft pass.
+
+# ---------------------------------------------------------------------------
+# sdd/context-coherence TASK-22 — reply-to-notification continuity (Validation)
+# ---------------------------------------------------------------------------
+#
+# NOT run via the standard 10-step atrevete-qa-runner turn loop: it needs an
+# extra pre-step (fire a worker notification in-process) BEFORE Step 1 of the
+# usual protocol. See `notification_pre_step` below and the design's own
+# "TESTING / LOOP DESIGN" section (sdd/context-coherence design #7495) for the
+# exact procedure. TASK-23 (live full-batch regression run) executes this
+# scenario; this entry only DEFINES it (schema-valid, phone reserved).
+
+- id: reply-to-notification-continuity
+  description: >
+    Reply-to-notification continuity check (spec: Reply-to-Notification
+    Continuity QA Scenario). Seeds a customer with an existing
+    ConversationHistory row (canonical conversation) and a PENDING appointment
+    ~48h out, fires confirm_48h via fire_notifications.py's capturing path (no
+    real WhatsApp send — safe for a +34999 sandbox number), then simulates the
+    customer's inbound reply "Gracias" as a webhook on the SAME conversation_id
+    the notification was sent into. Asserts single-thread continuity: no new
+    Chatwoot conversation, no disclosure re-fire, and a warm day-relative
+    acknowledgment of the imminent appointment (never a countdown-in-hours).
+  tags: [context-coherence, notification-continuity, threading]
+  manual: false
+  persona:
+    name: Rocío Delgado
+    phone: "+34999000051"
+    style: >
+      Cliente habitual con una cita PENDIENTE dentro de 48h. Tras recibir el
+      recordatorio de confirmación por WhatsApp, responde con un simple
+      "Gracias" — no pide nada más, no reabre el flujo de reserva.
+  intent: "Gracias"
+  max_turns: 2
+  seed:
+    conversation_history:
+      # A prior inbound from this phone must already exist so the customer has
+      # a resolvable canonical ConversationHistory row (D1) BEFORE the
+      # notification pre-step fires — otherwise deliver_template takes the
+      # resolver-miss fallback (D3) and the "same conversation_id" assertion
+      # below is vacuous.
+      exists: true
+    appointment:
+      days_ahead: 2
+      time: "10:40"
+      status: pending
+  notification_pre_step:
+    handler: confirm_48h
+    via: tests/e2e/harness/fire_notifications.py
+    capturing: true
+    # Assert on the capture JSON BEFORE turn 1: send_attempts[0].conversation_id
+    # must equal the seeded ConversationHistory.conversation_id (proves the
+    # canonical resolver reused it, D1/D2) and
+    # send_attempts[0].fallback_conversation_created must be absent/false
+    # (proves D3's fallback path did NOT fire for a known customer).
+  expect:
+    outcome: info_provided
+    db_appointment:
+      status: pending
+    tool_calls_required: []
+    tool_calls_forbidden: []
+    conversation_continuity:
+      same_conversation_id_end_to_end: true
+      disclosure_is_first_turn: false
+      new_conversation_created: false
+    tags: [context-coherence, notification-continuity]
+    notes: >
+      Day-relative assertion phrasing only — e.g. "mañana a las 10:40" or "el
+      <día de la semana> a las 10:40" (see appointment_management_flow.md §
+      Reconocer cita inminente). A countdown phrasing ("en X horas") is a
+      FAIL, not a soft pass, per the day-granularity gatekeeper caveat (no
+      hora_local in <today>). Log-based verification (spec: Log-Based
+      Verification): confirm via agent logs that disclosure.turn_evaluated
+      shows is_first_turn=false on the reply turn and that
+      new_conversation_created does NOT fire for this known customer.
