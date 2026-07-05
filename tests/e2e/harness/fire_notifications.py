@@ -65,11 +65,20 @@ from __future__ import annotations
 
 import os
 
-# Must precede ALL shared.* imports — get_settings() is @lru_cache and reads env at first call.
-# setdefault preserves any value the caller already set via the environment.
-os.environ.setdefault("WHATSAPP_TEMPLATE_REMINDER_24H", "test_reminder_24h")
-os.environ.setdefault("WHATSAPP_TEMPLATE_CONFIRM_48H", "test_confirm_48h")
-os.environ.setdefault("WHATSAPP_TEMPLATE_FINAL_WARNING", "test_final_warning_handler")
+
+def _ensure_test_template_env() -> None:
+    """Seed template-name env vars for CLI harness runs.
+
+    Called from main() — must run before the FIRST get_settings() call
+    (@lru_cache reads env once), but must NOT run at import time: importing
+    this module from the unit-test suite would leak these values into
+    unrelated tests (e.g. test_config_slice3 asserts the empty default).
+    setdefault preserves any value the caller already set via the environment.
+    """
+    os.environ.setdefault("WHATSAPP_TEMPLATE_REMINDER_24H", "test_reminder_24h")
+    os.environ.setdefault("WHATSAPP_TEMPLATE_CONFIRM_48H", "test_confirm_48h")
+    os.environ.setdefault("WHATSAPP_TEMPLATE_FINAL_WARNING", "test_final_warning_handler")
+
 
 import argparse
 import asyncio
@@ -353,6 +362,7 @@ async def run_cycle(handler_names: list[str]) -> dict[str, Any]:
 
 
 def main() -> None:
+    _ensure_test_template_env()
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(name)s %(levelname)s %(message)s",
