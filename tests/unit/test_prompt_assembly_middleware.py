@@ -1,6 +1,8 @@
 """C2/C3a/C3b-RED: Tests for PromptAssemblyMiddleware."""
+
 from __future__ import annotations
 
+import logging
 from datetime import UTC
 from unittest.mock import AsyncMock, MagicMock
 
@@ -33,6 +35,7 @@ class FakeRequest:
 # C2: slot-writers must NOT touch system_message.content
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_slot_writers_do_not_mutate_system_message_customer():
     """CustomerResolveMiddleware must not mutate system_message.content."""
@@ -56,9 +59,9 @@ async def test_slot_writers_do_not_mutate_system_message_customer():
         mw = CustomerResolveMiddleware()
         await mw.awrap_model_call(req, handler)
 
-    assert received_system_content[0] == "original", (
-        f"CustomerResolve must not mutate system_message; got: {received_system_content[0]!r}"
-    )
+    assert (
+        received_system_content[0] == "original"
+    ), f"CustomerResolve must not mutate system_message; got: {received_system_content[0]!r}"
 
 
 @pytest.mark.asyncio
@@ -103,9 +106,9 @@ async def test_slot_writers_do_not_mutate_system_message_appointment():
         mw = AppointmentContextMiddleware()
         await mw.awrap_model_call(req, handler)
 
-    assert received_system_content[0] == "original", (
-        f"AppointmentContext must not mutate system_message; got: {received_system_content[0]!r}"
-    )
+    assert (
+        received_system_content[0] == "original"
+    ), f"AppointmentContext must not mutate system_message; got: {received_system_content[0]!r}"
 
 
 @pytest.mark.asyncio
@@ -136,14 +139,15 @@ async def test_slot_writers_do_not_mutate_system_message_dynamic():
         mw = DynamicPromptMiddleware()
         await mw.awrap_model_call(req, handler)
 
-    assert received_system_content[0] == "original", (
-        f"DynamicPrompt must not mutate system_message; got: {received_system_content[0]!r}"
-    )
+    assert (
+        received_system_content[0] == "original"
+    ), f"DynamicPrompt must not mutate system_message; got: {received_system_content[0]!r}"
 
 
 # ---------------------------------------------------------------------------
 # C3a: assembled prompt order
 # ---------------------------------------------------------------------------
+
 
 @pytest.mark.asyncio
 async def test_order_of_assembled_blocks():
@@ -190,6 +194,7 @@ async def test_order_of_assembled_blocks():
 # C3b: missing slot skipped silently
 # ---------------------------------------------------------------------------
 
+
 @pytest.mark.asyncio
 async def test_missing_slot_skipped_silently():
     """When _slot_upcoming_appointments is absent, assembled prompt omits it without error."""
@@ -217,3 +222,56 @@ async def test_missing_slot_skipped_silently():
     assert "HOURS_BLOCK" in content
     assert "CATALOG_BLOCK" in content
     assert "<upcoming_appointments>" not in content
+
+
+# ---------------------------------------------------------------------------
+# sdd/context-coherence TASK-17/18 (Stream 4, D10) — prompt_assembly.slots log
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_logs_assembled_slot_names_at_info(caplog):
+    """D10: logs the assembled slot NAMES (not content) at INFO."""
+    from agent.middleware.prompt_assembly import PromptAssemblyMiddleware
+
+    state = {
+        "_slot_customer": "<customer>SECRET_CUSTOMER_DATA</customer>",
+        "_slot_upcoming_appointments": "<upcoming_appointments>SECRET_APPT_DATA</upcoming_appointments>",
+        "conversation_id": "conv-abc",
+    }
+    req = FakeRequest(system_content="base", state=state)
+
+    async def handler(r):
+        return _FakeModelResponse()
+
+    mw = PromptAssemblyMiddleware()
+    with caplog.at_level(logging.INFO, logger="agent.middleware.prompt_assembly"):
+        await mw.awrap_model_call(req, handler)
+
+    matching = [r for r in caplog.records if r.getMessage() == "prompt_assembly.slots"]
+    assert matching, f"Expected a 'prompt_assembly.slots' log record, got: {caplog.records}"
+    record = matching[0]
+    assert record.conversation_id == "conv-abc"
+    assert "_slot_customer" in record.slots_present
+    assert "_slot_upcoming_appointments" in record.slots_present
+    # PII-safety: slot content must never leak into the log record.
+    assert "SECRET_CUSTOMER_DATA" not in record.getMessage()
+    assert "SECRET_APPT_DATA" not in record.getMessage()
+
+
+@pytest.mark.asyncio
+async def test_no_slots_log_skipped(caplog):
+    """When no slots are present, the middleware passes through without logging slots."""
+    from agent.middleware.prompt_assembly import PromptAssemblyMiddleware
+
+    req = FakeRequest(system_content="base", state={})
+
+    async def handler(r):
+        return _FakeModelResponse()
+
+    mw = PromptAssemblyMiddleware()
+    with caplog.at_level(logging.INFO, logger="agent.middleware.prompt_assembly"):
+        await mw.awrap_model_call(req, handler)
+
+    matching = [r for r in caplog.records if r.getMessage() == "prompt_assembly.slots"]
+    assert not matching, "No slots present — should not emit prompt_assembly.slots log"

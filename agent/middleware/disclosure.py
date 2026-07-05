@@ -13,11 +13,14 @@ Design: ADR-1 (booking-disambiguation-hardening).
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
 from typing import ClassVar
 
 from langchain.agents.middleware import AgentMiddleware, ModelRequest, ModelResponse
 from langchain_core.messages import AIMessage
+
+logger = logging.getLogger(__name__)
 
 DISCLOSURE_TEXT = "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸"
 
@@ -50,6 +53,18 @@ class DisclosureMiddleware(AgentMiddleware):
         # Snapshot BEFORE handler runs — this is the canonical prior-messages view.
         prior_messages = list((request.state or {}).get("messages", []))
         is_first_turn = not _has_textual_ai_message(prior_messages)
+
+        # sdd/context-coherence D10: PII-safe structured log — conversation_id,
+        # is_first_turn, prior_message_count only. No message content.
+        logger.info(
+            "disclosure.turn_evaluated",
+            extra={
+                "type": "disclosure.turn_evaluated",
+                "conversation_id": (request.state or {}).get("conversation_id"),
+                "is_first_turn": is_first_turn,
+                "prior_message_count": len(prior_messages),
+            },
+        )
 
         response: ModelResponse = await handler(request)
 

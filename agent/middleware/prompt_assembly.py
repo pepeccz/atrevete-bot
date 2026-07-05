@@ -43,10 +43,12 @@ class PromptAssemblyMiddleware(AgentMiddleware):
     ) -> ModelResponse:
         state = request.state or {}
 
-        blocks = [state[key] for key in SLOT_REGISTRY if state.get(key)]
+        slots_present = [key for key in SLOT_REGISTRY if state.get(key)]
 
-        if not blocks:
+        if not slots_present:
             return await handler(request)
+
+        blocks = [state[key] for key in slots_present]
 
         original_content = request.system_message.content if request.system_message else ""
         assembled = original_content + "\n\n" + "\n\n".join(blocks)
@@ -55,6 +57,16 @@ class PromptAssemblyMiddleware(AgentMiddleware):
 
         logger.debug(
             "PromptAssemblyMiddleware: assembled %d slot(s) into system prompt", len(blocks)
+        )
+        # sdd/context-coherence D10: PII-safe structured log — slot NAMES only,
+        # never their content.
+        logger.info(
+            "prompt_assembly.slots",
+            extra={
+                "type": "prompt_assembly.slots",
+                "conversation_id": state.get("conversation_id"),
+                "slots_present": slots_present,
+            },
         )
 
         return await handler(modified_request)
