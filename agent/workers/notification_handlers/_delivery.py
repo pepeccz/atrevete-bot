@@ -22,9 +22,11 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from database.connection import get_async_session
 from database.models import ConversationHistory, ConversationMessage, ConversationMessageRole
+from shared.chatwoot_client import ConversationSendOutcome
 
 logger = logging.getLogger(__name__)
 
@@ -80,12 +82,19 @@ async def _create_fallback_history(customer_id: UUID, conversation_id: int) -> U
     Makes the new conversation canonical immediately, preventing a second spurious
     fallback-create before the customer's next inbound webhook would otherwise do
     the same (self-healing note, D3). Returns the new row's id, or None on failure.
+
+    Race guard (FIX 5, sdd/context-coherence): the webhook's ``upsert_conversation_history``
+    can independently insert a row for this SAME ``conversation_id`` (e.g. the customer
+    replies to the just-created Chatwoot conversation before this commit lands). On a
+    unique-constraint IntegrityError, roll back and reuse the row that won the race
+    instead of dropping this send's persistence entirely.
     """
     now = datetime.now(UTC)
+    conversation_id_str = str(conversation_id)
     try:
         async with get_async_session() as session:
             history = ConversationHistory(
-                conversation_id=str(conversation_id),
+                conversation_id=conversation_id_str,
                 customer_id=customer_id,
                 started_at=now,
                 ended_at=now,
@@ -93,7 +102,30 @@ async def _create_fallback_history(customer_id: UUID, conversation_id: int) -> U
                 metadata_={},
             )
             session.add(history)
-            await session.commit()
+            try:
+                await session.commit()
+            except IntegrityError:
+                await session.rollback()
+                result = await session.execute(
+                    select(ConversationHistory).where(
+                        ConversationHistory.conversation_id == conversation_id_str
+                    )
+                )
+                existing = result.scalars().first()
+                if existing is None:
+                    logger.warning(
+                        "IntegrityError creating fallback ConversationHistory for "
+                        "conversation_id=%s but re-select found no row — giving up",
+                        conversation_id,
+                    )
+                    return None
+                logger.info(
+                    "Fallback ConversationHistory for conversation_id=%s was created by a "
+                    "concurrent writer — reusing existing row %s",
+                    conversation_id,
+                    existing.id,
+                )
+                return existing.id
             await session.refresh(history)
             return history.id
     except Exception:
@@ -118,8 +150,12 @@ async def deliver_template(
 
     Flow: resolve the latest ConversationHistory row for ``appt.customer_id`` →
     if found, send with ``conversation_id=int(history.conversation_id)`` (D2) →
-    on resolver-miss OR a Chatwoot rejection of that id, fall back to creating a
-    new conversation (D3) and persist it as the new canonical history. On any
+    on resolver-miss OR a definitive Chatwoot REJECTED outcome for that id, fall
+    back to creating a new conversation (D3) and persist it as the new canonical
+    history. A TRANSIENT outcome (network error, timeout, 5xx) does NOT fall
+    back — it returns False so the worker's own backoff/retry (mark_failed_fn /
+    next_retry_at) targets the SAME conversation on the next poll cycle instead
+    of fragmenting the customer's history (sdd/context-coherence FIX 1). On any
     successful send, best-effort persists a ConversationMessage so the send is
     visible in ``conversation_messages`` (D6).
     """
@@ -132,26 +168,50 @@ async def deliver_template(
         history = await resolve_conversation(session, appt.customer_id)
 
     if history is not None:
-        success = await chatwoot.send_template_message(
-            customer_phone=phone,
-            template_name=template_name,
-            body_params=body_params,
-            category=category,
-            language=language,
-            conversation_id=int(history.conversation_id),
-            fallback_content=fallback_content,
-        )
-        if success:
-            await _persist_sent_message(history.id, fallback_content)
-            return True
-        logger.warning(
-            "Chatwoot rejected send into resolved conversation_id=%s for appt %s — "
-            "falling back to a new conversation",
-            history.conversation_id,
-            appt.id,
-        )
+        try:
+            conversation_id_int = int(history.conversation_id)
+        except (TypeError, ValueError):
+            # FIX 7: a corrupt/non-numeric conversation_id must never raise —
+            # log and treat this as a resolver-miss so the fallback-create path
+            # below still gets a valid new conversation for the customer.
+            logger.warning(
+                "ConversationHistory %s has non-numeric conversation_id=%r for appt %s — "
+                "treating as no-history and falling back to a new conversation",
+                history.id,
+                history.conversation_id,
+                appt.id,
+            )
+            history = None
+        else:
+            outcome = await chatwoot.send_template_to_conversation_checked(
+                conversation_id=conversation_id_int,
+                customer_phone=phone,
+                template_name=template_name,
+                body_params=body_params,
+                category=category,
+                language=language,
+                fallback_content=fallback_content,
+            )
+            if outcome is ConversationSendOutcome.SENT:
+                await _persist_sent_message(history.id, fallback_content)
+                return True
+            if outcome is ConversationSendOutcome.TRANSIENT:
+                logger.warning(
+                    "Transient failure sending into resolved conversation_id=%s for appt %s — "
+                    "NOT falling back (worker backoff will retry the same conversation)",
+                    history.conversation_id,
+                    appt.id,
+                )
+                return False
+            logger.warning(
+                "Chatwoot rejected send into resolved conversation_id=%s for appt %s — "
+                "falling back to a new conversation",
+                history.conversation_id,
+                appt.id,
+            )
 
-    # Fallback: resolver miss OR Chatwoot rejected the resolved conversation.
+    # Fallback: resolver miss, non-numeric conversation_id, OR Chatwoot definitively
+    # rejected the resolved conversation.
     new_conversation_id, success = await chatwoot.create_conversation_with_template(
         customer_phone=phone,
         template_name=template_name,

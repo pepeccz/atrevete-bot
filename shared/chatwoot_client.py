@@ -9,6 +9,7 @@ attributes.
 import asyncio
 import logging
 from datetime import datetime
+from enum import Enum
 from typing import Any, cast
 from zoneinfo import ZoneInfo
 
@@ -24,6 +25,28 @@ from shared.config import get_settings
 from shared.redis_client import get_redis_client
 
 logger = logging.getLogger(__name__)
+
+# 4xx status codes where Chatwoot has definitively rejected the conversation
+# RESOURCE itself (deleted/invalid conversation_id) — as opposed to a transient
+# server/network error where the SAME conversation is still perfectly valid.
+# Used by ``send_template_to_conversation_checked`` (sdd/context-coherence FIX 1).
+_CONVERSATION_REJECTION_STATUS_CODES = frozenset({400, 404, 422})
+
+
+class ConversationSendOutcome(Enum):
+    """Typed result of sending a template into an existing Chatwoot conversation.
+
+    Lets callers (currently only ``deliver_template``) distinguish a definitive
+    rejection of the conversation resource — where falling back to a brand-new
+    conversation is warranted — from a transient failure, where the SAME
+    conversation is still valid and the caller's own retry/backoff loop should
+    handle it instead of fragmenting the customer's conversation history
+    (sdd/context-coherence FIX 1).
+    """
+
+    SENT = "sent"
+    REJECTED = "rejected"
+    TRANSIENT = "transient"
 
 
 class ChatwootClient:
@@ -754,6 +777,67 @@ class ChatwootClient:
                 f"conversation_id={conversation_id}, template={template_name}"
             )
             return True
+
+    async def send_template_to_conversation_checked(
+        self,
+        conversation_id: int,
+        customer_phone: str,
+        template_name: str,
+        body_params: dict[str, str],
+        category: str = "UTILITY",
+        language: str = "es",
+        fallback_content: str | None = None,
+    ) -> ConversationSendOutcome:
+        """Send a template into an existing conversation, returning a typed outcome.
+
+        Sibling of ``_send_template_to_conversation`` (does not change that method
+        or ``send_template_message``'s existing bool contract — other callers,
+        e.g. ``ConversationInboxService`` and the admin booking-notification route,
+        are unaffected). Only ``deliver_template`` calls this method, so it can
+        distinguish a definitive Chatwoot rejection (400/404/422 on the
+        conversation resource — fallback to a new conversation is warranted) from
+        a transient failure (network error, timeout, 5xx — the SAME conversation
+        is still valid) (sdd/context-coherence FIX 1).
+
+        Deliberately makes a single attempt with no tenacity-level retry:
+        transient failures are retried by the notifications worker's own
+        backoff loop (``mark_failed_fn`` / ``next_retry_at``) on the next poll
+        cycle, against the SAME resolved conversation_id — unlike
+        ``send_template_message``'s 3-attempt retry (which also wastes retries
+        on a permanent 400; left as-is there since it is not on this path).
+        """
+        try:
+            await self._send_template_to_conversation(
+                conversation_id=conversation_id,
+                customer_phone=customer_phone,
+                template_name=template_name,
+                body_params=body_params,
+                category=category,
+                language=language,
+                fallback_content=fallback_content,
+            )
+            return ConversationSendOutcome.SENT
+        except httpx.HTTPStatusError as e:
+            status = e.response.status_code if e.response is not None else None
+            if status in _CONVERSATION_REJECTION_STATUS_CODES:
+                logger.warning(
+                    f"Chatwoot rejected conversation_id={conversation_id} with "
+                    f"status={status} — treating as a definitive rejection "
+                    f"(template={template_name})"
+                )
+                return ConversationSendOutcome.REJECTED
+            logger.error(
+                f"Transient Chatwoot error sending into conversation_id={conversation_id} "
+                f"(status={status}): {e}",
+                exc_info=True,
+            )
+            return ConversationSendOutcome.TRANSIENT
+        except httpx.HTTPError as e:
+            logger.error(
+                f"Transient Chatwoot HTTP error sending into conversation_id={conversation_id}: {e}",
+                exc_info=True,
+            )
+            return ConversationSendOutcome.TRANSIENT
 
     async def get_conversation_labels(self, conversation_id: int) -> list[str]:
         """Get current labels for a conversation."""

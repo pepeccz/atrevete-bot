@@ -19,6 +19,9 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest
+from sqlalchemy.exc import IntegrityError
+
+from shared.chatwoot_client import ConversationSendOutcome
 
 
 class _FakeResult:
@@ -51,6 +54,9 @@ class _FakeSession:
 
     async def commit(self):
         self.committed = True
+
+    async def rollback(self):
+        pass
 
     async def refresh(self, obj):
         self.refreshed.append(obj)
@@ -100,7 +106,9 @@ async def test_deliver_template_sends_to_existing_conversation(monkeypatch):
     monkeypatch.setattr(_delivery, "get_async_session", _fake_get_async_session_factory(session))
 
     chatwoot = MagicMock()
-    chatwoot.send_template_message = AsyncMock(return_value=True)
+    chatwoot.send_template_to_conversation_checked = AsyncMock(
+        return_value=ConversationSendOutcome.SENT
+    )
     chatwoot.create_conversation_with_template = AsyncMock()
 
     appt = _make_appt()
@@ -109,8 +117,8 @@ async def test_deliver_template_sends_to_existing_conversation(monkeypatch):
     )
 
     assert result is True
-    chatwoot.send_template_message.assert_awaited_once()
-    kwargs = chatwoot.send_template_message.await_args.kwargs
+    chatwoot.send_template_to_conversation_checked.assert_awaited_once()
+    kwargs = chatwoot.send_template_to_conversation_checked.await_args.kwargs
     assert kwargs["conversation_id"] == 125
     assert isinstance(kwargs["conversation_id"], int)
     chatwoot.create_conversation_with_template.assert_not_called()
@@ -124,7 +132,7 @@ async def test_deliver_template_resolver_miss_falls_back_to_create(monkeypatch):
     monkeypatch.setattr(_delivery, "get_async_session", _fake_get_async_session_factory(session))
 
     chatwoot = MagicMock()
-    chatwoot.send_template_message = AsyncMock()
+    chatwoot.send_template_to_conversation_checked = AsyncMock()
     chatwoot.create_conversation_with_template = AsyncMock(return_value=(555, True))
 
     appt = _make_appt()
@@ -133,7 +141,7 @@ async def test_deliver_template_resolver_miss_falls_back_to_create(monkeypatch):
     )
 
     assert result is True
-    chatwoot.send_template_message.assert_not_called()
+    chatwoot.send_template_to_conversation_checked.assert_not_called()
     chatwoot.create_conversation_with_template.assert_awaited_once()
     # A minimal ConversationHistory row must be persisted so the new id becomes canonical.
     assert any(getattr(obj, "conversation_id", None) == "555" for obj in session.added)
@@ -148,7 +156,9 @@ async def test_deliver_template_chatwoot_rejection_falls_back_to_create(monkeypa
     monkeypatch.setattr(_delivery, "get_async_session", _fake_get_async_session_factory(session))
 
     chatwoot = MagicMock()
-    chatwoot.send_template_message = AsyncMock(return_value=False)
+    chatwoot.send_template_to_conversation_checked = AsyncMock(
+        return_value=ConversationSendOutcome.REJECTED
+    )
     chatwoot.create_conversation_with_template = AsyncMock(return_value=(777, True))
 
     appt = _make_appt()
@@ -157,8 +167,67 @@ async def test_deliver_template_chatwoot_rejection_falls_back_to_create(monkeypa
     )
 
     assert result is True
-    chatwoot.send_template_message.assert_awaited_once()
+    chatwoot.send_template_to_conversation_checked.assert_awaited_once()
     chatwoot.create_conversation_with_template.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_deliver_template_transient_failure_does_not_fall_back(monkeypatch):
+    """FIX 1 (MAJOR, both judges): a TRANSIENT outcome must NOT trigger the
+    fallback-create path — it must return False so the worker's own backoff
+    retries the SAME conversation on the next poll cycle, instead of
+    fragmenting the customer's history on a transient 5xx/timeout."""
+    from agent.workers.notification_handlers import _delivery
+
+    history = SimpleNamespace(id=uuid4(), conversation_id="125", customer_id=uuid4())
+    session = _FakeSession(execute_result=_FakeResult(history))
+    monkeypatch.setattr(_delivery, "get_async_session", _fake_get_async_session_factory(session))
+
+    chatwoot = MagicMock()
+    chatwoot.send_template_to_conversation_checked = AsyncMock(
+        return_value=ConversationSendOutcome.TRANSIENT
+    )
+    chatwoot.create_conversation_with_template = AsyncMock(return_value=(777, True))
+
+    appt = _make_appt()
+    result = await _delivery.deliver_template(
+        chatwoot, appt, "appointment_confirmation_48h", {"1": "Ana"}, "Hola Ana"
+    )
+
+    assert result is False
+    chatwoot.send_template_to_conversation_checked.assert_awaited_once()
+    chatwoot.create_conversation_with_template.assert_not_called()
+    # No fallback ConversationHistory persisted — the resolved history stays canonical.
+    assert session.added == []
+
+
+class TestNonNumericConversationIdGuard:
+    """FIX 7 (sdd/context-coherence, MINOR): int(history.conversation_id) must
+    never raise — a corrupt/non-numeric value falls back to a new conversation
+    exactly like a resolver-miss, instead of propagating a ValueError."""
+
+    @pytest.mark.asyncio
+    async def test_non_numeric_conversation_id_falls_back_to_create(self, monkeypatch):
+        from agent.workers.notification_handlers import _delivery
+
+        history = SimpleNamespace(id=uuid4(), conversation_id="not-a-number", customer_id=uuid4())
+        session = _FakeSession(execute_result=_FakeResult(history))
+        monkeypatch.setattr(
+            _delivery, "get_async_session", _fake_get_async_session_factory(session)
+        )
+
+        chatwoot = MagicMock()
+        chatwoot.send_template_to_conversation_checked = AsyncMock()
+        chatwoot.create_conversation_with_template = AsyncMock(return_value=(999, True))
+
+        appt = _make_appt()
+        result = await _delivery.deliver_template(
+            chatwoot, appt, "appointment_confirmation_48h", {"1": "Ana"}, "Hola Ana"
+        )
+
+        assert result is True
+        chatwoot.send_template_to_conversation_checked.assert_not_called()
+        chatwoot.create_conversation_with_template.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -186,7 +255,7 @@ async def test_deliver_template_no_phone_returns_false_without_any_send(monkeypa
     from agent.workers.notification_handlers import _delivery
 
     chatwoot = MagicMock()
-    chatwoot.send_template_message = AsyncMock()
+    chatwoot.send_template_to_conversation_checked = AsyncMock()
     chatwoot.create_conversation_with_template = AsyncMock()
 
     appt = SimpleNamespace(id=uuid4(), customer_id=uuid4(), customer=None)
@@ -195,7 +264,7 @@ async def test_deliver_template_no_phone_returns_false_without_any_send(monkeypa
     )
 
     assert result is False
-    chatwoot.send_template_message.assert_not_called()
+    chatwoot.send_template_to_conversation_checked.assert_not_called()
     chatwoot.create_conversation_with_template.assert_not_called()
 
 
@@ -219,7 +288,9 @@ class TestConversationMessagePersistence:
         monkeypatch.setattr(_delivery, "get_async_session", _fake_get_async_session)
 
         chatwoot = MagicMock()
-        chatwoot.send_template_message = AsyncMock(return_value=True)
+        chatwoot.send_template_to_conversation_checked = AsyncMock(
+            return_value=ConversationSendOutcome.SENT
+        )
 
         appt = _make_appt()
         result = await _delivery.deliver_template(
@@ -256,7 +327,9 @@ class TestConversationMessagePersistence:
         monkeypatch.setattr(_delivery, "get_async_session", _fake_get_async_session)
 
         chatwoot = MagicMock()
-        chatwoot.send_template_message = AsyncMock(return_value=True)
+        chatwoot.send_template_to_conversation_checked = AsyncMock(
+            return_value=ConversationSendOutcome.SENT
+        )
 
         appt = _make_appt()
         result = await _delivery.deliver_template(
@@ -265,6 +338,49 @@ class TestConversationMessagePersistence:
 
         # Send is already delivered — persistence failure must not flip the result.
         assert result is True
+
+
+class TestCreateFallbackHistoryRace:
+    """FIX 5 (judge A MAJOR / judge B MINOR): the worker's fallback-create path
+    and the webhook's upsert_conversation_history can race on the same unique
+    conversation_id. On IntegrityError, reuse the row that won the race instead
+    of dropping this send's ConversationMessage persistence."""
+
+    @pytest.mark.asyncio
+    async def test_integrity_error_on_commit_reuses_existing_row(self, monkeypatch):
+        from agent.workers.notification_handlers import _delivery
+
+        existing_id = uuid4()
+        existing_row = SimpleNamespace(id=existing_id, conversation_id="555")
+
+        class _RacingSession(_FakeSession):
+            async def commit(self):
+                raise IntegrityError("INSERT ...", {}, Exception("duplicate key"))
+
+        resolve_session = _FakeSession(execute_result=_FakeResult(None))  # resolver miss
+        racing_session = _RacingSession(execute_result=_FakeResult(existing_row))
+        persist_session = _FakeSession()
+
+        sessions = [resolve_session, racing_session, persist_session]
+
+        @asynccontextmanager
+        async def _fake_get_async_session():
+            yield sessions.pop(0)
+
+        monkeypatch.setattr(_delivery, "get_async_session", _fake_get_async_session)
+
+        chatwoot = MagicMock()
+        chatwoot.create_conversation_with_template = AsyncMock(return_value=(555, True))
+
+        appt = _make_appt()
+        result = await _delivery.deliver_template(
+            chatwoot, appt, "appointment_confirmation_48h", {"1": "Ana"}, "Hola Ana"
+        )
+
+        assert result is True
+        assert len(persist_session.added) == 1
+        msg = persist_session.added[0]
+        assert msg.conversation_history_id == existing_id
 
 
 class TestSendFnsRouteThroughDeliverTemplate:
@@ -277,6 +393,8 @@ class TestSendFnsRouteThroughDeliverTemplate:
 
         class DummySettings:
             WHATSAPP_TEMPLATE_CONFIRM_48H = "appointment_confirmation_48h"
+            AUTO_CANCEL_GRACE_BEFORE_WARNING_HOURS = 12
+            AUTO_CANCEL_GRACE_BEFORE_CANCEL_HOURS = 6
 
         class DummySettingsService:
             async def get(self, key, default=""):
