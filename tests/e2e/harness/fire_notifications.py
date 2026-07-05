@@ -39,6 +39,7 @@ Output JSON schema (written to --out):
                 "body_params": {"1": "Ana", "2": "2026-07-01", "3": "10:00"},
                 "category": "UTILITY",
                 "language": "es",
+                "conversation_id": 125,
                 "success": true
             },
             ...
@@ -188,6 +189,7 @@ def _make_capturing_handler(handler, captures: list[dict[str, Any]]):
                 body_params: dict[str, str],
                 category: str = "UTILITY",
                 language: str = "es",
+                conversation_id: int | None = None,
                 **_kw: Any,
             ) -> bool:
                 call_record["customer_phone"] = customer_phone
@@ -195,7 +197,33 @@ def _make_capturing_handler(handler, captures: list[dict[str, Any]]):
                 call_record["body_params"] = body_params
                 call_record["category"] = category
                 call_record["language"] = language
+                # sdd/context-coherence TASK-21: capture conversation_id (previously
+                # swallowed via **_kw) so the QA scenario can assert threading —
+                # deliver_template() passes conversation_id=int(history.conversation_id)
+                # when the customer has a resolvable canonical conversation.
+                call_record["conversation_id"] = conversation_id
                 return True
+
+            async def create_conversation_with_template(
+                self,
+                customer_phone: str,
+                template_name: str,
+                body_params: dict[str, str],
+                category: str = "UTILITY",
+                language: str = "es",
+                **_kw: Any,
+            ) -> tuple[int | None, bool]:
+                # Fallback path (resolver miss / rejected conversation_id, D3). No new
+                # conversation is created for real — return a sentinel id so
+                # deliver_template's success path completes without a live Chatwoot call.
+                call_record["customer_phone"] = customer_phone
+                call_record["template_name"] = template_name
+                call_record["body_params"] = body_params
+                call_record["category"] = category
+                call_record["language"] = language
+                call_record["conversation_id"] = None
+                call_record["fallback_conversation_created"] = True
+                return -1, True
 
         result = await original_send_fn(appt, _CapturingClient())
 
@@ -210,6 +238,7 @@ def _make_capturing_handler(handler, captures: list[dict[str, Any]]):
                     "body_params": call_record.get("body_params"),
                     "category": call_record.get("category"),
                     "language": call_record.get("language"),
+                    "conversation_id": call_record.get("conversation_id"),
                     "success": result,
                 }
             )
@@ -227,6 +256,7 @@ def _make_capturing_handler(handler, captures: list[dict[str, Any]]):
                 "body_params": None,
                 "category": None,
                 "language": None,
+                "conversation_id": None,
                 "success": result,
             }
             if not result:
