@@ -415,6 +415,14 @@ Run JSON: tests/e2e/runs/20260608_143000/change-a-new-booking.json
 8. `TEST_MODE_GCAL_SKIP=true` MUST be set in the environment before running. If absent, `gcal_sync_status` in DB will not be `not_applicable` and L4 audits will fail.
 9. If `langfuse_pull.py` fails, do NOT abort — set `langfuse_trace_path: null` and proceed.
 10. Write the run JSON even if outcome is `error` or `stuck` — the auditor needs the partial evidence.
+11. **Notification-window seeding guard** (TASK-23): before seeding an appointment
+    whose start time falls inside a live notification handler's polling window
+    (e.g. `reminder_24h`'s 23-25h window, `confirm_48h`'s ~48h window) on the
+    SHARED TESTING DEPLOY, you MUST either stop the `notifications` container for
+    the duration of the seed + capture run, or seed with `reminder_sent_at`/
+    `confirmation_sent_at` already set and flip it back immediately before the
+    capture step. See "Live Notifications-Worker Collision Guard" below. Skipping
+    this sends a REAL WhatsApp message and corrupts the capture JSON.
 
 ---
 
@@ -429,6 +437,44 @@ export TEST_PHONE_PREFIX=+34999
 docker compose -f /home/pepe/Proyectos/atrevete-bot/docker-compose.yml ps
 # Expect: api, agent, postgres, redis all Up
 ```
+
+---
+
+## Live Notifications-Worker Collision Guard (TASK-23)
+
+**Incident**: during the TASK-23 live validation run (2026-07-05), the real
+`atrevete-notifications` container polled and sent a REAL WhatsApp template for a
+harness-seeded appointment before `fire_notifications.py`'s in-process capturing
+pre-step could fire — the seeded appointment fell inside the live
+`reminder_24h` polling window (23-25h out) on the shared testing deploy, and the
+live worker won the race.
+
+Any scenario that seeds an appointment inside a notification handler's live
+polling window (`reply-to-notification-continuity` is the current example, tagged
+`notification-continuity`) MUST use one of these two procedures on the shared
+testing deploy — **(a) is the documented default**:
+
+```bash
+# (a) DEFAULT — stop the live worker for the duration of the seed + capture run
+docker compose -f /home/pepe/Proyectos/atrevete-bot/docker-compose.yml stop notifications
+
+# ... seed the appointment, run fire_notifications.py's capturing pre-step,
+#     run the conversation turn(s) ...
+
+docker compose -f /home/pepe/Proyectos/atrevete-bot/docker-compose.yml start notifications
+```
+
+```text
+# (b) ALTERNATIVE — seed with reminder_sent_at/confirmation_sent_at already set
+#     (excludes the row from the live worker's query_fn), then flip the relevant
+#     *_sent_at column back to NULL immediately before running
+#     fire_notifications.py so only the harness's capturing path fires the send.
+```
+
+Never seed a notification-window scenario on the shared deploy without applying
+(a) or (b) first — a collision sends a real WhatsApp message to the sandbox
+number and corrupts `send_attempts` in the capture JSON with a race between the
+live worker's real send and the harness's in-process capture.
 
 ---
 
