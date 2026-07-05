@@ -23,6 +23,7 @@ from sqlalchemy import and_, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from agent.workers.notification_handlers._delivery import deliver_template
 from agent.workers.notification_handlers._retry import next_retry_at
 from agent.workers.notification_handlers.base import NotificationHandler
 from database.models import Appointment, AppointmentStatus
@@ -85,6 +86,15 @@ def _build_body_params(appt: Appointment) -> dict[str, str]:
     }
 
 
+def _build_fallback_content(params: dict[str, str]) -> str:
+    """Short castellano rendering of the template body, for Chatwoot fallback + DB storage."""
+    return (
+        f"Hola {params['1']}, aún no hemos recibido tu confirmación para la cita del "
+        f"{params['2']} a las {params['3']}. Si no confirmas pronto, se cancelará "
+        "automáticamente."
+    )
+
+
 async def send_fn(appt: Appointment, chatwoot_client: Any) -> bool:
     """Send the final-warning WhatsApp template via Chatwoot.
 
@@ -107,17 +117,16 @@ async def send_fn(appt: Appointment, chatwoot_client: Any) -> bool:
 
     phone = getattr(appt.customer, "phone", None) if appt.customer else None
     if not phone:
-        logger.warning(
-            "Appointment %s has no customer phone — cannot send final warning", appt.id
-        )
+        logger.warning("Appointment %s has no customer phone — cannot send final warning", appt.id)
         return False
 
-    return await chatwoot_client.send_template_message(
-        customer_phone=phone,
-        template_name=template,
-        body_params=_build_body_params(appt),
-        category="UTILITY",
-        language="es",
+    body_params = _build_body_params(appt)
+    return await deliver_template(
+        chatwoot_client,
+        appt,
+        template,
+        body_params,
+        _build_fallback_content(body_params),
     )
 
 

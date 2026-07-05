@@ -6,14 +6,17 @@ import logging
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import and_, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from agent.workers.notification_handlers._delivery import deliver_template
 from agent.workers.notification_handlers._retry import next_retry_at
 from agent.workers.notification_handlers.base import NotificationHandler
-from database.models import Appointment, AppointmentStatus
+from database.connection import get_async_session
+from database.models import Appointment, AppointmentStatus, Service, Stylist
 from shared.config import get_settings
 from shared.settings_service import get_settings_service
 
@@ -22,6 +25,26 @@ logger = logging.getLogger(__name__)
 WINDOW_LOWER = timedelta(hours=47)
 WINDOW_UPPER = timedelta(hours=49)
 BATCH_LIMIT = 50
+
+# Salon-local timezone for customer-facing date/time rendering.
+_MADRID_TZ = ZoneInfo("Europe/Madrid")
+# Spanish day/month names (avoid relying on system locale being installed).
+_DIAS = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+_MESES = [
+    "",
+    "enero",
+    "febrero",
+    "marzo",
+    "abril",
+    "mayo",
+    "junio",
+    "julio",
+    "agosto",
+    "septiembre",
+    "octubre",
+    "noviembre",
+    "diciembre",
+]
 
 
 async def query_fn(session: AsyncSession) -> list[Appointment]:
@@ -51,13 +74,56 @@ async def query_fn(session: AsyncSession) -> list[Appointment]:
     return list(result.scalars().all())
 
 
-def _build_body_params(appt: Appointment) -> dict[str, str]:
-    start = appt.start_time.astimezone(UTC) if appt.start_time else None
+def _fecha_es(dt: datetime) -> str:
+    """Render a Madrid-local datetime as e.g. 'miércoles 8 de julio'."""
+    return f"{_DIAS[dt.weekday()]} {dt.day} de {_MESES[dt.month]}"
+
+
+async def _build_body_params(appt: Appointment) -> dict[str, str]:
+    """Build the 6 body params for the ``appointment_confirmation_48h`` template.
+
+    {{1}} name · {{2}} date · {{3}} time · {{4}} stylist · {{5}} service(s) ·
+    {{6}} auto-cancel deadline. Stylist/service names are resolved from the DB;
+    dates are rendered in Europe/Madrid so the customer sees the real local time.
+    """
+    start = appt.start_time.astimezone(_MADRID_TZ) if appt.start_time else None
+
+    stylist_name = ""
+    service_names: list[str] = []
+    async with get_async_session() as session:
+        if appt.stylist_id:
+            stylist = await session.get(Stylist, appt.stylist_id)
+            stylist_name = getattr(stylist, "name", "") or ""
+        if appt.service_ids:
+            rows = await session.execute(
+                select(Service.name).where(Service.id.in_(list(appt.service_ids)))
+            )
+            service_names = [name for (name,) in rows.all()]
+
+    deadline = start - timedelta(hours=24) if start else None
+    deadline_str = (
+        f"{_DIAS[deadline.weekday()]} {deadline.day} a las {deadline.strftime('%H:%M')}"
+        if deadline
+        else ""
+    )
+
     return {
         "1": appt.first_name or "",
-        "2": start.strftime("%Y-%m-%d") if start else "",
+        "2": _fecha_es(start) if start else "",
         "3": start.strftime("%H:%M") if start else "",
+        "4": stylist_name,
+        "5": ", ".join(service_names),
+        "6": deadline_str,
     }
+
+
+def _build_fallback_content(params: dict[str, str]) -> str:
+    """Short castellano rendering of the template body, for Chatwoot fallback + DB storage."""
+    return (
+        f"Hola {params['1']}, ¿confirmas tu cita del {params['2']} a las {params['3']} "
+        f"con {params['4']} para {params['5']}? Si no confirmas antes del {params['6']}, "
+        "la cita se cancelará automáticamente."
+    )
 
 
 async def send_fn(appt: Appointment, chatwoot_client: Any) -> bool:
@@ -81,12 +147,13 @@ async def send_fn(appt: Appointment, chatwoot_client: Any) -> bool:
         )
         return False
 
-    return await chatwoot_client.send_template_message(
-        customer_phone=phone,
-        template_name=template,
-        body_params=_build_body_params(appt),
-        category="UTILITY",
-        language="es",
+    body_params = await _build_body_params(appt)
+    return await deliver_template(
+        chatwoot_client,
+        appt,
+        template,
+        body_params,
+        _build_fallback_content(body_params),
     )
 
 

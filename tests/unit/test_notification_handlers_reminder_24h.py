@@ -94,11 +94,19 @@ async def test_send_success_calls_template_with_correct_params(monkeypatch):
 
     monkeypatch.setattr(reminder_24h, "get_settings", lambda: DummySettings())
     # Patch the name as imported in reminder_24h (not in the source module)
-    monkeypatch.setattr(reminder_24h, "get_settings_service", AsyncMock(return_value=DummySettingsService()))
+    monkeypatch.setattr(
+        reminder_24h, "get_settings_service", AsyncMock(return_value=DummySettingsService())
+    )
+    # send_fn now routes through deliver_template (sdd/context-coherence Stream 1) — the
+    # conversation-threading behavior itself is covered by tests/unit/test_delivery.py.
+    deliver_mock = AsyncMock(return_value=True)
+    monkeypatch.setattr(reminder_24h, "deliver_template", deliver_mock)
 
     appt = SimpleNamespace(
         id=uuid4(),
+        customer_id=uuid4(),
         first_name="Ana",
+        service_ids=[],
         start_time=datetime(2026, 5, 1, 10, 0, tzinfo=UTC),
         customer=SimpleNamespace(phone="+34600000000"),
     )
@@ -108,11 +116,13 @@ async def test_send_success_calls_template_with_correct_params(monkeypatch):
     success = await reminder_24h.send_fn(appt, client)
 
     assert success is True
-    client.send_template_message.assert_awaited_once()
-    kwargs = client.send_template_message.await_args.kwargs
-    assert kwargs["template_name"] == "atrevete_reminder_24h"
-    assert kwargs["customer_phone"] == "+34600000000"
-    assert kwargs["body_params"]["1"] == "Ana"
+    deliver_mock.assert_awaited_once()
+    args = deliver_mock.await_args.args
+    assert args[0] is client
+    assert args[1] is appt
+    assert args[2] == "atrevete_reminder_24h"
+    assert args[3]["1"] == "Ana"
+    assert "Ana" in args[4]  # fallback_content mentions the customer's name
 
 
 @pytest.mark.asyncio
@@ -129,7 +139,9 @@ async def test_send_returns_false_when_template_unset(monkeypatch):
 
     monkeypatch.setattr(reminder_24h, "get_settings", lambda: DummySettings())
     # Patch the name as imported in reminder_24h (not in the source module)
-    monkeypatch.setattr(reminder_24h, "get_settings_service", AsyncMock(return_value=DummySettingsService()))
+    monkeypatch.setattr(
+        reminder_24h, "get_settings_service", AsyncMock(return_value=DummySettingsService())
+    )
     appt = SimpleNamespace(
         id=uuid4(),
         first_name="Ana",
