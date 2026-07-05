@@ -312,13 +312,86 @@ class ChatwootClient:
                     extra={
                         "contact_id": contact_id,
                         "template_name": template_name,
-                        "response_body": getattr(e.response, "text", None)
-                        if hasattr(e, "response")
-                        else None,
+                        "response_body": (
+                            getattr(e.response, "text", None) if hasattr(e, "response") else None
+                        ),
                     },
                     exc_info=True,
                 )
                 raise
+
+    async def create_conversation_with_template(
+        self,
+        customer_phone: str,
+        template_name: str,
+        body_params: dict[str, str],
+        category: str = "UTILITY",
+        language: str = "es",
+        customer_name: str | None = None,
+        fallback_content: str | None = None,
+    ) -> tuple[int | None, bool]:
+        """
+        Find/create the contact and create a new Chatwoot conversation with an
+        initial template message.
+
+        Public wrapper around the find/create-contact flow and the internal
+        ``_create_conversation_with_template`` call, extracted so callers (e.g. the
+        worker notification handlers' ``deliver_template`` helper) can create a fresh
+        canonical conversation on a resolver-miss or a Chatwoot rejection of a
+        previously resolved conversation id (sdd/context-coherence D3).
+
+        Args:
+            customer_phone: E.164 formatted phone number
+            template_name: Name of the approved template in Meta Business Suite
+            body_params: Dynamic variables for template body
+            category: Template category (UTILITY, MARKETING, etc.)
+            language: BCP 47 language code (default: "es")
+            customer_name: Optional customer name (used when creating new contact)
+            fallback_content: Fallback text for non-WhatsApp channels
+
+        Returns:
+            Tuple of (conversation_id, success). conversation_id is None on failure.
+        """
+        try:
+            contact = await self._find_contact_by_phone(customer_phone)
+            if not contact:
+                logger.info(f"Creating new contact for {customer_phone}")
+                contact = await self._create_contact(customer_phone, customer_name)
+
+            contact_id = contact.get("id")
+            if not contact_id:
+                logger.error(f"No contact ID found for {customer_phone}")
+                return None, False
+
+            logger.info(
+                f"Creating conversation with template for contact: "
+                f"contact_id={contact_id}, phone={customer_phone}"
+            )
+
+            conversation_id, success = await self._create_conversation_with_template(
+                contact_id=contact_id,
+                phone=customer_phone,
+                template_name=template_name,
+                body_params=body_params,
+                category=category,
+                language=language,
+                fallback_content=fallback_content,
+            )
+            return conversation_id, success
+
+        except httpx.HTTPError as e:
+            logger.error(
+                f"Failed to create conversation with template for {customer_phone}: {e}",
+                exc_info=True,
+            )
+            return None, False
+
+        except Exception as e:
+            logger.error(
+                f"Unexpected error creating conversation with template for {customer_phone}: {e}",
+                exc_info=True,
+            )
+            return None, False
 
     @retry(
         stop=stop_after_attempt(3),
@@ -572,31 +645,15 @@ class ChatwootClient:
                     fallback_content=fallback_content,
                 )
 
-            # No conversation_id - need to find/create contact and create conversation with template
-            contact = await self._find_contact_by_phone(customer_phone)
-            if not contact:
-                logger.info(f"Creating new contact for {customer_phone}")
-                contact = await self._create_contact(customer_phone, customer_name)
-
-            contact_id = contact.get("id")
-            if not contact_id:
-                logger.error(f"No contact ID found for {customer_phone}")
-                return False
-
-            logger.info(
-                f"Creating conversation with template for contact: "
-                f"contact_id={contact_id}, phone={customer_phone}"
-            )
-
-            # Create conversation WITH template message in one API call
-            # Phone number is used as source_id for WhatsApp (Chatwoot handles the rest)
-            _, success = await self._create_conversation_with_template(
-                contact_id=contact_id,
-                phone=customer_phone,
+            # No conversation_id - delegate to the public wrapper (find/create contact +
+            # create a new conversation with an initial template message).
+            _, success = await self.create_conversation_with_template(
+                customer_phone=customer_phone,
                 template_name=template_name,
                 body_params=body_params,
                 category=category,
                 language=language,
+                customer_name=customer_name,
                 fallback_content=fallback_content,
             )
             return success
@@ -606,9 +663,9 @@ class ChatwootClient:
                 f"Failed to send template message to {customer_phone}: {e}",
                 extra={
                     "template_name": template_name,
-                    "response_body": getattr(e.response, "text", None)
-                    if hasattr(e, "response")
-                    else None,
+                    "response_body": (
+                        getattr(e.response, "text", None) if hasattr(e, "response") else None
+                    ),
                 },
                 exc_info=True,
             )
