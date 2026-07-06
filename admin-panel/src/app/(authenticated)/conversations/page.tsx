@@ -359,22 +359,97 @@ export default function ConversationsPage() {
   // (`sidebar_collapsed` in localStorage) untouched rather than having it
   // silently overridden on every page load below xl.
   //
-  // Fires once per narrow-viewport "entry" (isBelowXl transitioning
-  // false -> true) via a ref, not on every render — so it never fights a
-  // manual re-expand while the viewport stays narrow (the toggle button and
-  // `expand()` keep working normally; this only nudges the initial state).
-  // Behavior-only per the useMediaQuery SSR rule: the sidebar's own render
-  // width is still driven by its own `isCollapsed` context state, not by a
-  // media query directly.
-  const { collapse: collapseSidebar } = useSidebar();
-  const isBelowXl = !isDesktopXl;
-  const enteredNarrowViewportRef = useRef(false);
+  // GATE-REVIEW CORRECTIVE FIX: the first version of this effect derived
+  // `isBelowXl` from the `useMediaQuery` HOOK (`!isDesktopXl`). That hook
+  // returns `false` on its very first render as an SSR-safe default — PR-3's
+  // drawer-close effect above is safe consuming that as `isDesktopXl` because
+  // it only acts on the TRUE polarity (a false first-render value is a safe
+  // no-op: "don't close the drawer" IS the correct pre-hydration default).
+  // This effect needs the OPPOSITE polarity ("is this narrow?"), so the same
+  // false-default was wrongly read as "yes, narrow" on EVERY mount —
+  // including at 1920px — collapsing the sidebar unconditionally and, via
+  // sidebar-context.tsx's own persistence effect, permanently overwriting the
+  // user's global `sidebar_collapsed` localStorage preference.
+  //
+  // Fix: read the REAL viewport directly via `window.matchMedia(...).matches`
+  // (guarded for SSR) instead of trusting the hook's first-render value for
+  // the below-xl direction — never inverted-polarity-trust the hook. A
+  // `matchMedia` "change" listener keeps this correct for the lifetime of the
+  // route (only the FIRST hook render lies; this effect doesn't depend on the
+  // hook at all here, so there's no polarity trap to reason about).
+  //
+  // "Borrow, don't steal": when this effect collapses the sidebar, it records
+  // (a) that IT did so and (b) the user's prior `isCollapsed` value in a ref.
+  // On growing back to >=xl, or on unmount (navigating away), the prior value
+  // is restored — UNLESS the user manually toggled the sidebar in the
+  // meantime (detected by comparing the CURRENT `isCollapsed` against what we
+  // set it to; if it no longer matches, the user intervened, so we leave it
+  // alone and clear the ref instead of fighting them).
+  const {
+    isCollapsed: sidebarCollapsed,
+    collapse: collapseSidebar,
+    expand: expandSidebar,
+  } = useSidebar();
+  // Mirrors the latest `sidebarCollapsed` for the mount-only effect below
+  // (which intentionally does NOT depend on `sidebarCollapsed` — see comment
+  // on its dependency array) to read without re-subscribing the matchMedia
+  // listener on every toggle.
+  const sidebarCollapsedRef = useRef(sidebarCollapsed);
   useEffect(() => {
-    if (isBelowXl && !enteredNarrowViewportRef.current) {
-      collapseSidebar();
-    }
-    enteredNarrowViewportRef.current = isBelowXl;
-  }, [isBelowXl, collapseSidebar]);
+    sidebarCollapsedRef.current = sidebarCollapsed;
+  }, [sidebarCollapsed]);
+  const borrowedSidebarRef = useRef<{ priorCollapsed: boolean; weSetTo: boolean } | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const mql = window.matchMedia("(min-width: 1280px)");
+
+    const restoreIfOwned = () => {
+      const borrow = borrowedSidebarRef.current;
+      if (!borrow) return;
+      // Only restore if nothing else changed `isCollapsed` since we borrowed
+      // it — otherwise the user (or something else) intervened; respect that.
+      if (sidebarCollapsedRef.current === borrow.weSetTo) {
+        if (borrow.priorCollapsed) collapseSidebar();
+        else expandSidebar();
+      }
+      borrowedSidebarRef.current = null;
+    };
+
+    const applyForViewport = (isDesktopViewport: boolean) => {
+      if (!isDesktopViewport) {
+        // Genuinely narrow (real matchMedia read, not the hook's SSR default).
+        if (!borrowedSidebarRef.current) {
+          borrowedSidebarRef.current = {
+            priorCollapsed: sidebarCollapsedRef.current,
+            weSetTo: true,
+          };
+          collapseSidebar();
+        }
+      } else {
+        restoreIfOwned();
+      }
+    };
+
+    // Initial check — real viewport, never the useMediaQuery hook's
+    // SSR-safe-but-misleading first-render value.
+    applyForViewport(mql.matches);
+
+    const handleChange = (e: MediaQueryListEvent) => applyForViewport(e.matches);
+    mql.addEventListener("change", handleChange);
+
+    return () => {
+      mql.removeEventListener("change", handleChange);
+      // Navigating away while still narrow (borrowed): give the sidebar back.
+      restoreIfOwned();
+    };
+    // Deliberately NOT depending on `sidebarCollapsed` — that would tear down
+    // and rebuild the matchMedia listener on every toggle. `collapseSidebar`/
+    // `expandSidebar` are stable (useCallback([]) in sidebar-context.tsx), so
+    // this effect only runs once on mount / cleans up once on unmount, and
+    // `sidebarCollapsedRef` above always has the latest value for the
+    // comparisons that need it.
+  }, [collapseSidebar, expandSidebar]);
 
   const cardProps = {
     customerId: activeCustomerId,
