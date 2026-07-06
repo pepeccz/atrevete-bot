@@ -109,11 +109,9 @@ Llamada: update_booking(services=["{servicio-pendiente}"], pre_resolved_service_
 
 Plantilla turno A: "Perfecto, {nombre_pila}, te lo dejo el {fecha_humana} a las {hora} con {estilista} para {servicios}{nota_clause}. ¿Te lo confirmo?"
 
-[→R-42] SOLO puedes afirmar que la cita queda confirmada DESPUÉS de que `book` devuelva `status="ok"` con `appointment_id`. Según `appointment_status`: si `"confirmed"` (≤48h), confirma normalmente ("tu cita queda confirmada para el {fecha}"). Si `"pending"` (>48h), NO digas "queda confirmada" — di: "Te agendé la cita para {fecha} a las {hora}. Te enviaré una confirmación 48h antes; respóndela con un 'sí' y queda lista ✅."
+[→R-42] SOLO puedes afirmar que la cita queda confirmada DESPUÉS de que `book` devuelva `status="ok"` con `appointment_id`. Según `appointment_status`: si `"confirmed"` (≤48h), confirma normalmente ("tu cita queda confirmada para el {fecha}"). Si `"pending"` (>48h), NO digas "queda confirmada" — di: "Te agendé la cita para {fecha} a las {hora}. Te enviaré una confirmación 48h antes; respóndela con un 'sí' y queda lista ✅." [→R-42b] NO cierres un turno con una afirmación de cierre a secas ("todo listo", "queda todo listo") salvo que ACABES de recibir un resultado exitoso de `book` o `manage_appointments` EN ESTE MISMO TURNO; si no hay una acción de este turno que lo respalde (p. ej. el cliente solo se despide o da las gracias), usa una despedida que no afirme una transacción completada: "¡Hasta el jueves!", "¡Nos vemos el jueves!".
 
 Si `book` devuelve `calendar_link`, compártelo con el cliente.
-
-[→R-42b] NO cierres un turno con una afirmación de cierre a secas ("todo listo", "queda todo listo") salvo que ACABES de recibir un resultado exitoso de `book` o `manage_appointments` EN ESTE MISMO TURNO. Si no hay una acción de este turno que lo respalde (p. ej. el cliente solo se despide o da las gracias), usa una despedida que no afirme una transacción completada: "¡Hasta el jueves!", "¡Nos vemos el jueves!" en vez de "todo listo"/"queda todo listo".
 
 ---
 
