@@ -528,7 +528,9 @@ async def _confirm_or_decline(
 # ─────────────────────────────────────────────────────────────────────────────
 # F2 — confirm/decline disambiguation precondition
 #
-# When a customer has more than 1 PENDING appointment awaiting confirmation,
+# When a customer has more than 1 FUTURE PENDING appointment (regardless of
+# whether a confirmation request has been sent yet — see
+# confirmation_service.get_future_pending_appointments and engram #7518),
 # the target MUST be resolved exclusively from the customer's own message
 # text (ordinal/keyword selectors via confirmation_service.detect_multi_selection)
 # — the LLM-supplied appointment_id is ignored in that case. No date/time/
@@ -666,17 +668,23 @@ async def _dispatch_confirm_or_decline(
     """
     Confirm/decline entry point with the F2 disambiguation precondition.
 
-    With 0 or 1 PENDING appointment awaiting confirmation, behavior is
-    unchanged (direct confirm/decline via the LLM-supplied appointment_id).
-    With more than 1 pending, the target is resolved exclusively from the
-    customer's own message (see `_disambiguation_gate`); the LLM-supplied
-    appointment_id is ignored in that case.
+    The precondition set is ALL future PENDING appointments for the customer
+    (`confirmation_service.get_future_pending_appointments`), regardless of
+    whether a confirmation request has been sent yet — see engram #7518 for
+    why the original `get_pending_confirmations()`-based gate missed
+    freshly-booked appointments.
+
+    With 0 or 1 qualifying appointment, behavior is unchanged (direct
+    confirm/decline via the LLM-supplied appointment_id). With more than 1,
+    the target is resolved exclusively from the customer's own message (see
+    `_disambiguation_gate`); the LLM-supplied appointment_id is ignored in
+    that case.
     """
     resolved_id = appointment_id
     if customer_id is not None:
-        from agent.services.confirmation_service import get_pending_confirmations
+        from agent.services.confirmation_service import get_future_pending_appointments
 
-        pending = await get_pending_confirmations(customer_id)
+        pending = await get_future_pending_appointments(customer_id)
         if len(pending) > 1:
             gate = _disambiguation_gate(pending, user_message, confirm=confirm)
             if gate["mode"] == "contradiction":

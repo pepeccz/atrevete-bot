@@ -313,6 +313,61 @@ async def get_pending_confirmations(customer_id: UUID) -> list[Appointment]:
         return []
 
 
+async def get_future_pending_appointments(customer_id: UUID) -> list[Appointment]:
+    """
+    Get ALL future PENDING appointments for a customer, regardless of whether
+    a confirmation request has been sent yet (confirmation_sent_at may be
+    NULL or set).
+
+    This is the precondition query for the F2 disambiguation gate in
+    `agent.tools.manage_appointments_tool._dispatch_confirm_or_decline`. The
+    gate's actual precondition is "customer has >1 FUTURE PENDING
+    appointment" — broader than `get_pending_confirmations()`'s original
+    semantics ("awaiting a reply to an already-sent confirmation request").
+
+    Bug this closes (engram #7518): a customer can proactively say "quiero
+    confirmar mi cita" for appointments that were JUST booked (>48h out,
+    confirmation_sent_at still NULL for both). `get_pending_confirmations()`
+    returns 0 rows in that case, so the disambiguation gate never fires and
+    the code falls through to trusting the LLM-supplied appointment_id —
+    silently confirming the wrong appointment. This query has no
+    confirmation_sent_at filter at all, so the gate fires whenever the
+    customer has more than one qualifying appointment, sent or not.
+
+    Args:
+        customer_id: UUID of the customer
+
+    Returns:
+        List of Appointment objects (empty list if none found), ordered by
+        start_time ascending (soonest first) — MUST match the order used to
+        build the guided disambiguation list so ordinal selectors resolve
+        against the same fetched set.
+    """
+    try:
+        now = datetime.now(MADRID_TZ)
+        async with get_async_session() as session:
+            result = await session.execute(
+                select(Appointment)
+                .options(
+                    selectinload(Appointment.customer),
+                    selectinload(Appointment.stylist),
+                )
+                .where(
+                    and_(
+                        Appointment.customer_id == customer_id,
+                        Appointment.status == AppointmentStatus.PENDING,
+                        Appointment.start_time > now,
+                    )
+                )
+                .order_by(Appointment.start_time.asc())
+            )
+            return list(result.scalars().all())
+
+    except Exception as e:
+        logger.error(f"Error fetching future pending appointments for customer {customer_id}: {e}")
+        return []
+
+
 async def get_pending_confirmation(customer_id: UUID) -> Appointment | None:
     """
     Get the appointment awaiting confirmation for a customer.

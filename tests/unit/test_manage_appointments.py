@@ -94,7 +94,7 @@ async def test_confirm_action_happy():
             new=AsyncMock(return_value=_make_idor_ok()),
         ),
         patch(
-            "agent.services.confirmation_service.get_pending_confirmations",
+            "agent.services.confirmation_service.get_future_pending_appointments",
             new=AsyncMock(return_value=[]),
         ),
         patch(
@@ -138,7 +138,7 @@ async def test_decline_action_happy():
             new=AsyncMock(return_value=_make_idor_ok()),
         ),
         patch(
-            "agent.services.confirmation_service.get_pending_confirmations",
+            "agent.services.confirmation_service.get_future_pending_appointments",
             new=AsyncMock(return_value=[]),
         ),
         patch(
@@ -161,10 +161,10 @@ async def test_decline_action_happy():
 async def test_confirm_invalid_uuid():
     # customer_id present so the flow passes the CUSTOMER_ID_REQUIRED (J2) gate
     # and reaches UUID validation, which is what this test asserts.
-    # get_pending_confirmations mocked to [] so the F2 disambiguation gate
+    # get_future_pending_appointments mocked to [] so the F2 disambiguation gate
     # is bypassed (len<=1 path) and the LLM-supplied appointment_id is used.
     with patch(
-        "agent.services.confirmation_service.get_pending_confirmations",
+        "agent.services.confirmation_service.get_future_pending_appointments",
         new=AsyncMock(return_value=[]),
     ):
         out = await manage_appointments.coroutine(
@@ -452,14 +452,20 @@ async def test_reschedule_happy_path_valid_date_calls_db():
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def _make_pending_appointment(appt_id, stylist_name: str = "Ana"):
-    """Fake Appointment for confirmation_service._build_appointment_list."""
+def _make_pending_appointment(appt_id, stylist_name: str = "Ana", confirmation_sent_at=None):
+    """Fake Appointment for confirmation_service._build_appointment_list.
+
+    confirmation_sent_at defaults to None — the fixture matches the ORIGINAL
+    bug scenario (engram #7518): freshly-booked PENDING appointments where
+    the 48h confirmation WhatsApp template has NOT been sent yet.
+    """
     from datetime import datetime
     from zoneinfo import ZoneInfo
 
     appt = MagicMock()
     appt.id = appt_id
     appt.start_time = datetime(2026, 7, 9, 10, 0, tzinfo=ZoneInfo("Europe/Madrid"))
+    appt.confirmation_sent_at = confirmation_sent_at
     stylist = MagicMock()
     stylist.name = stylist_name
     appt.stylist = stylist
@@ -496,7 +502,7 @@ async def test_confirm_with_multiple_pending_and_no_selector_returns_guided_list
 
     with (
         patch(
-            "agent.services.confirmation_service.get_pending_confirmations",
+            "agent.services.confirmation_service.get_future_pending_appointments",
             new=AsyncMock(return_value=[appt_a, appt_b]),
         ),
         patch(
@@ -521,6 +527,56 @@ async def test_confirm_with_multiple_pending_and_no_selector_returns_guided_list
 
 
 @pytest.mark.asyncio
+async def test_confirm_reproduces_original_bug_fresh_pending_no_confirmation_sent():
+    """CRITICAL regression test (engram #7518 — live re-run of PR-2's fix FAILED).
+
+    Reproduces the EXACT original bug scenario: 2 freshly-booked PENDING
+    appointments, both >48h out, BOTH with confirmation_sent_at=None (the
+    notifications worker has not sent the 48h confirmation template yet).
+    The customer sends the bare, ambiguous message "quiero confirmar mi
+    cita" and the LLM supplies appointment_id=appt_b (the LATER-booked
+    appointment — the wrong one, mirroring the live reproduction).
+
+    The disambiguation gate MUST still fire and return the guided list
+    without mutating ANY appointment, even though confirmation_sent_at is
+    NULL on both rows. This is precisely the case PR-2's original
+    get_pending_confirmations()-based gate missed, because that query
+    filters WHERE confirmation_sent_at IS NOT NULL and returned 0 rows for
+    this fixture — the gate's len(pending) > 1 precondition never fired and
+    the code fell through to trusting the LLM's (wrong) appointment_id.
+    """
+    appt_a = _make_pending_appointment(uuid4(), "Ana", confirmation_sent_at=None)
+    appt_b = _make_pending_appointment(uuid4(), "Marta", confirmation_sent_at=None)
+    assert appt_a.confirmation_sent_at is None
+    assert appt_b.confirmation_sent_at is None
+    mock_handler = AsyncMock()
+
+    with (
+        patch(
+            "agent.services.confirmation_service.get_future_pending_appointments",
+            new=AsyncMock(return_value=[appt_a, appt_b]),
+        ),
+        patch(
+            "agent.services.confirmation_service.handle_tool_action",
+            new=mock_handler,
+        ),
+    ):
+        out = await manage_appointments.coroutine(
+            action="confirm",
+            appointment_id=str(appt_b.id),  # LLM-supplied — wrong, mirrors live repro
+            state={
+                **_STATE_WITH_PHONE,
+                "customer_id": str(uuid4()),
+                "user_message": "quiero confirmar mi cita",
+            },
+        )
+
+    assert isinstance(out, str)
+    assert "1." in out and "2." in out
+    mock_handler.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_confirm_with_freetext_disambiguator_not_recognized_returns_guided_list():
     """REQ-F2-2/F2-6: a free-text disambiguator naming a specific appointment
     (date/time/stylist) is NOT a recognized selector -> guided list, no
@@ -531,7 +587,7 @@ async def test_confirm_with_freetext_disambiguator_not_recognized_returns_guided
 
     with (
         patch(
-            "agent.services.confirmation_service.get_pending_confirmations",
+            "agent.services.confirmation_service.get_future_pending_appointments",
             new=AsyncMock(return_value=[appt_a, appt_b]),
         ),
         patch(
@@ -574,7 +630,7 @@ async def test_confirm_with_numeric_selector_resolves_from_customer_text():
             new=AsyncMock(return_value=_make_idor_ok()),
         ),
         patch(
-            "agent.services.confirmation_service.get_pending_confirmations",
+            "agent.services.confirmation_service.get_future_pending_appointments",
             new=AsyncMock(return_value=[appt_a, appt_b]),
         ),
         patch(
@@ -622,7 +678,7 @@ async def test_confirm_all_applies_to_fetched_pending_set_only():
             new=AsyncMock(return_value=_make_idor_ok()),
         ),
         patch(
-            "agent.services.confirmation_service.get_pending_confirmations",
+            "agent.services.confirmation_service.get_future_pending_appointments",
             new=AsyncMock(return_value=pending),
         ),
         patch(
@@ -659,7 +715,7 @@ async def test_confirm_with_cancel_all_keyword_returns_clarification_no_mutation
 
     with (
         patch(
-            "agent.services.confirmation_service.get_pending_confirmations",
+            "agent.services.confirmation_service.get_future_pending_appointments",
             new=AsyncMock(return_value=pending),
         ),
         patch(
@@ -697,7 +753,7 @@ async def test_decline_with_confirm_all_keyword_returns_clarification_no_mutatio
 
     with (
         patch(
-            "agent.services.confirmation_service.get_pending_confirmations",
+            "agent.services.confirmation_service.get_future_pending_appointments",
             new=AsyncMock(return_value=pending),
         ),
         patch(
@@ -741,7 +797,7 @@ async def test_confirm_with_ordinal_selector_unaffected_by_polarity_guard():
             new=AsyncMock(return_value=_make_idor_ok()),
         ),
         patch(
-            "agent.services.confirmation_service.get_pending_confirmations",
+            "agent.services.confirmation_service.get_future_pending_appointments",
             new=AsyncMock(return_value=[appt_a, appt_b]),
         ),
         patch(
@@ -783,7 +839,7 @@ async def test_confirm_with_single_pending_confirms_directly():
             new=AsyncMock(return_value=_make_idor_ok()),
         ),
         patch(
-            "agent.services.confirmation_service.get_pending_confirmations",
+            "agent.services.confirmation_service.get_future_pending_appointments",
             new=AsyncMock(return_value=[appt]),
         ),
         patch(
@@ -814,7 +870,7 @@ async def test_decline_with_multiple_pending_and_no_selector_returns_guided_list
 
     with (
         patch(
-            "agent.services.confirmation_service.get_pending_confirmations",
+            "agent.services.confirmation_service.get_future_pending_appointments",
             new=AsyncMock(return_value=[appt_a, appt_b]),
         ),
         patch(
@@ -857,7 +913,7 @@ async def test_decline_with_numeric_selector_resolves_from_customer_text():
             new=AsyncMock(return_value=_make_idor_ok()),
         ),
         patch(
-            "agent.services.confirmation_service.get_pending_confirmations",
+            "agent.services.confirmation_service.get_future_pending_appointments",
             new=AsyncMock(return_value=[appt_a, appt_b]),
         ),
         patch(
@@ -904,7 +960,7 @@ async def test_cancel_all_applies_to_fetched_pending_set_only():
             new=AsyncMock(return_value=_make_idor_ok()),
         ),
         patch(
-            "agent.services.confirmation_service.get_pending_confirmations",
+            "agent.services.confirmation_service.get_future_pending_appointments",
             new=AsyncMock(return_value=pending),
         ),
         patch(
@@ -945,7 +1001,7 @@ async def test_decline_with_single_pending_declines_directly():
             new=AsyncMock(return_value=_make_idor_ok()),
         ),
         patch(
-            "agent.services.confirmation_service.get_pending_confirmations",
+            "agent.services.confirmation_service.get_future_pending_appointments",
             new=AsyncMock(return_value=[appt]),
         ),
         patch(
