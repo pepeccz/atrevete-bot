@@ -75,6 +75,7 @@ function ConvItem({
   onClick: () => void;
 }) {
   const inbox = conv as unknown as ConversationHistoryInbox;
+  const isEscalated = inbox.is_escalated === true;
   const botPaused = inbox.paused_at != null || inbox.atencion_automatica === false;
   const name = conv.customer_name ?? "Cliente desconocido";
 
@@ -89,8 +90,10 @@ function ConvItem({
     >
       <div className="flex items-start gap-2.5">
         <div className="flex-shrink-0 mt-0.5">
-          {botPaused ? (
-            <BotOff className="h-4 w-4 text-amber-500" />
+          {isEscalated ? (
+            <AlertTriangle className="h-4 w-4 text-red-600" />
+          ) : botPaused ? (
+            <BotOff className="h-4 w-4 text-muted-foreground" />
           ) : (
             <MessageSquare className="h-4 w-4 text-green-600" />
           )}
@@ -108,10 +111,28 @@ function ConvItem({
                   {inbox.unread_message_count}
                 </Badge>
               )}
-              {botPaused && (
-                <Badge variant="outline" className="text-[10px] px-1 py-0 border-amber-400 text-amber-700">
-                  Pausado
+              {isEscalated ? (
+                <Badge
+                  variant="destructive"
+                  className="text-[10px] px-1.5 py-0 max-w-[9rem] truncate"
+                  title={
+                    inbox.escalation_reason
+                      ? `Escalada · ${inbox.escalation_reason}`
+                      : "Escalada"
+                  }
+                >
+                  Escalada
+                  {inbox.escalation_reason ? ` · ${inbox.escalation_reason}` : ""}
                 </Badge>
+              ) : (
+                botPaused && (
+                  <Badge
+                    variant="outline"
+                    className="text-[10px] px-1 py-0 border-muted-foreground/30 text-muted-foreground"
+                  >
+                    Pausado
+                  </Badge>
+                )
               )}
             </div>
           </div>

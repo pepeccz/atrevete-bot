@@ -79,9 +79,9 @@ function UnavailableThread() {
     <div className="flex flex-col items-center justify-center h-full gap-4 text-muted-foreground">
       <MessageSquare className="h-10 w-10 opacity-20" />
       <div className="text-center">
-        <p className="text-sm font-medium">Esta conversación ya no está disponible</p>
+        <p className="text-sm font-medium">No se encontró esta conversación</p>
         <p className="text-xs mt-1 max-w-xs">
-          Puede haber expirado o ya fue resuelta. Puedes resolver la escalación desde el panel.
+          Puede que ya no exista o que el enlace ya no sea válido.
         </p>
       </div>
     </div>
