@@ -965,3 +965,101 @@ async def test_decline_with_single_pending_declines_directly():
 
     assert "cancelada" in out.lower()
     mock_handler.assert_awaited_once()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# F5 — cancellation_reason taxonomy on tool-driven cancel (REQ-F5-1..3)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_cancel_action_stamps_customer_declined_reason():
+    """REQ-F5-1: manage_appointments(action="cancel") must stamp
+    cancellation_reason="customer_declined" on the cancelled appointment,
+    replacing the previous hardcoded reason=None.
+    """
+    appt_id = uuid4()
+    mock_cancellation_result = MagicMock()
+    mock_cancellation_result.success = True
+    mock_cancellation_result.response_text = "Tu cita ha sido cancelada."
+    execute_cancellation_mock = AsyncMock(return_value=mock_cancellation_result)
+
+    with (
+        patch(
+            "agent.tools.manage_appointments_tool.get_async_session",
+            return_value=_make_async_session_ctx(),
+        ),
+        patch(
+            "agent.tools.manage_appointments_tool.validate_appointment_belongs_to_customer",
+            new=AsyncMock(return_value=_make_idor_ok()),
+        ),
+        patch(
+            "agent.services.cancellation_service.execute_cancellation",
+            new=execute_cancellation_mock,
+        ),
+    ):
+        out = await manage_appointments.coroutine(
+            action="cancel",
+            appointment_id=str(appt_id),
+            state={**_STATE_WITH_PHONE, "customer_id": str(uuid4())},
+        )
+
+    assert "cancelada" in out.lower()
+    execute_cancellation_mock.assert_awaited_once()
+    _, kwargs = execute_cancellation_mock.call_args
+    assert kwargs["reason"] == "customer_declined"
+
+
+@pytest.mark.asyncio
+async def test_reschedule_action_leaves_cancellation_reason_untouched():
+    """REQ-F5-3 (regression, resolved as a no-op): the reschedule action must
+    NOT participate in cancellation_reason at all — execute_reschedule only
+    ever receives appointment_id/new_start_time, no reason forwarding of any
+    kind. This pins the design's "line 637 is a no-op" resolution; it is
+    expected to already pass (no production code change needed for this case).
+    """
+    from agent.tools._booking_validators import DateValidationResult
+
+    ok_result = DateValidationResult(
+        date_iso=OPEN_DATE,
+        error_code=None,
+        error_message=None,
+        payload={},
+    )
+    execute_reschedule_mock = AsyncMock(return_value=_make_execute_reschedule_result())
+
+    with (
+        patch(
+            "agent.tools.manage_appointments_tool.get_async_session",
+            return_value=_make_async_session_ctx(),
+        ),
+        patch(
+            "agent.tools.manage_appointments_tool.validate_appointment_belongs_to_customer",
+            new=AsyncMock(return_value=_make_idor_ok()),
+        ),
+        patch(
+            "agent.services.reschedule_service.validate_reschedule_eligibility",
+            new=AsyncMock(return_value=_make_eligibility_ok()),
+        ),
+        patch(
+            "agent.tools.manage_appointments_tool.validate_booking_date",
+            new=AsyncMock(return_value=ok_result),
+        ),
+        patch(
+            "agent.services.reschedule_service.execute_reschedule",
+            new=execute_reschedule_mock,
+        ),
+    ):
+        out = await manage_appointments.coroutine(
+            action="reschedule",
+            appointment_id=FAKE_APPT_ID,
+            new_date=OPEN_DATE,
+            new_time="10:00",
+            state={**_STATE_WITH_PHONE, "customer_id": str(uuid4())},
+        )
+
+    assert "reprogramada" in out.lower()
+    execute_reschedule_mock.assert_awaited_once()
+    _, kwargs = execute_reschedule_mock.call_args
+    assert "reason" not in kwargs
+    assert set(kwargs.keys()) == {"appointment_id", "new_start_time"}
