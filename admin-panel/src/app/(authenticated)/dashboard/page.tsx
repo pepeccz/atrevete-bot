@@ -4,8 +4,6 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import dynamic from "next/dynamic";
 import { useRouter } from "next/navigation";
 import { Plus } from "lucide-react";
-import { formatDistanceToNow } from "date-fns";
-import { es } from "date-fns/locale";
 import { toast } from "sonner";
 
 import { Header } from "@/components/layout/header";
@@ -22,6 +20,7 @@ import { KpiCard } from "@/components/dashboard/kpi-card";
 import { AgendaRow } from "@/components/dashboard/agenda-row";
 import { EscalationItem } from "@/components/dashboard/escalation-item";
 import { formatEscalationReason } from "@/lib/category-labels";
+import { formatRelativeTime } from "@/components/shared/format-utils";
 import { ServiceBar } from "@/components/dashboard/service-bar";
 import { StylistActivityRow } from "@/components/dashboard/stylist-activity-row";
 import { AppointmentWizard } from "@/app/(authenticated)/appointments/components/wizard/appointment-wizard";
@@ -435,10 +434,7 @@ export default function DashboardPage() {
                       href={`/conversations?conversation_id=${esc.conversation_id}&filter=escalated`}
                       customerName={esc.customer_name ?? esc.customer_phone}
                       reason={formatEscalationReason(esc.reason)}
-                      relativeTime={formatDistanceToNow(new Date(esc.triggered_at), {
-                        addSuffix: true,
-                        locale: es,
-                      })}
+                      relativeTime={formatRelativeTime(esc.triggered_at)}
                       isLast={idx === escalations.length - 1}
                       canResolve={canResolve}
                       resolving={resolvingSet.has(esc.id)}
