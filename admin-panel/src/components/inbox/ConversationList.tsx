@@ -17,6 +17,7 @@ import {
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
 import { useConversationPolling } from "@/hooks/useConversationPolling";
 import { useSearch } from "@/hooks/useSearch";
@@ -150,6 +151,25 @@ function ConvItem({
     </button>
   );
 }
+
+// ─── Skeleton placeholder row ──────────────────────────────────────────────────
+
+/** Placeholder row matching ConvItem's height/spacing, shown during first load. */
+function ConvItemSkeleton() {
+  return (
+    <div className="w-full px-3 py-3 rounded-lg">
+      <div className="flex items-start gap-2.5">
+        <Skeleton className="h-4 w-4 rounded-full flex-shrink-0 mt-0.5" />
+        <div className="flex-1 min-w-0 space-y-1.5">
+          <Skeleton className="h-3.5 w-2/3" />
+          <Skeleton className="h-3 w-1/2" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const SKELETON_ROW_COUNT = 6;
 
 // ─── Component ─────────────────────────────────────────────────────────────────
 
@@ -472,8 +492,10 @@ export function ConversationList({
       {/* List */}
       <div className="flex-1 overflow-y-auto p-2 space-y-1">
         {loading && !isSearching && conversations.length === 0 ? (
-          <div className="flex items-center justify-center h-20 text-sm text-muted-foreground">
-            Cargando…
+          <div className="space-y-1" aria-busy="true" aria-label="Cargando conversaciones">
+            {Array.from({ length: SKELETON_ROW_COUNT }).map((_, i) => (
+              <ConvItemSkeleton key={i} />
+            ))}
           </div>
         ) : fetchError && conversations.length === 0 ? (
           <FetchError onRetry={fetchList} />
