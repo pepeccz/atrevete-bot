@@ -711,6 +711,49 @@ class TestPerformEscalation:
         mock_client.update_conversation_attributes.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_perform_escalation_persists_issue_summary_from_tool_call(self):
+        """F4 (REQ-F4-3): issue_summary passed to perform_escalation must land on the
+        persisted Escalation row unchanged, so the human agent has real context."""
+        mock_client = AsyncMock()
+        mock_client.update_conversation_attributes = AsyncMock(return_value={"success": True})
+        mock_client.add_conversation_labels = AsyncMock(return_value=True)
+        mock_client.add_private_note = AsyncMock(return_value=True)
+        mock_client.assign_to_team = AsyncMock(return_value=True)
+
+        mock_db_session = AsyncMock()
+        mock_db_session.__aenter__ = AsyncMock(return_value=mock_db_session)
+        mock_db_session.__aexit__ = AsyncMock(return_value=None)
+        mock_db_session.execute = AsyncMock(
+            return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=None))
+        )
+        mock_db_session.add = MagicMock()
+        mock_db_session.commit = AsyncMock()
+
+        expected_summary = "Cliente pide evento de 6 personas fuera de catálogo"
+
+        with (
+            patch("shared.chatwoot_client.ChatwootClient", return_value=mock_client),
+            patch(
+                "agent.services.escalation_service.get_async_session", return_value=mock_db_session
+            ),
+        ):
+            result = await perform_escalation(
+                conversation_id="123",
+                customer_phone="+5491100000000",
+                reason="ambiguity",
+                source="ambiguity",
+                issue_summary=expected_summary,
+            )
+
+        assert result.success is True
+        added_rows = [call.args[0] for call in mock_db_session.add.call_args_list]
+        escalation_rows = [row for row in added_rows if hasattr(row, "issue_summary")]
+        assert (
+            len(escalation_rows) == 1
+        ), f"Expected exactly one Escalation row added, got {len(escalation_rows)}"
+        assert escalation_rows[0].issue_summary == expected_summary
+
+    @pytest.mark.asyncio
     async def test_perform_escalation_duplicate_prevented(self):
         """Returns duplicate_prevented=True when a recent escalation exists in the DB."""
         mock_client = AsyncMock()

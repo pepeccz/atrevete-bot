@@ -41,6 +41,7 @@ _ESCALATION_FAILED_PAYLOAD = (
 @tool
 async def escalate(
     reason: str,
+    issue_summary: str = "",
     state: Annotated[dict, InjectedState] = None,
 ) -> str:
     """Escalate the conversation to a human agent.
@@ -50,9 +51,24 @@ async def escalate(
 
     Args:
         reason: Brief reason for escalation (e.g., 'medical_consultation', 'manual_request').
+        issue_summary: Always provide this. A concise (1-2 sentence) summary, in
+            your own words, of what the customer needs and why you are escalating —
+            the human agent has no other context when they pick up the handoff.
 
     Call this tool when the customer explicitly asks to speak with a person,
-    or when the bot cannot handle the request adequately.
+    or when the bot cannot handle the request adequately — for example, an
+    out-of-catalog request at a scale the salon cannot accommodate as a normal
+    booking (e.g., a 6-person wedding-party booking).
+
+    Do NOT call this tool for an ordinary multi-person booking. A customer
+    asking for services for 2 (or a small handful of) people in one message
+    (e.g., "un corte para mí y otro para mi hija de 8 años") is NOT a reason
+    to escalate — handle it as a sequential per-person flow per R-44 (complete
+    person 1 fully, confirm, then start a clean new flow for person 2). Only
+    escalate a multi-person request when its scale or nature is genuinely
+    outside what a normal sequential booking flow can handle (e.g., a
+    6-person group/event booking), not merely because it involves more than
+    one person.
 
     ONLY if this tool returns a success message: stop responding to booking
     requests for this conversation — a human will take over.
@@ -80,6 +96,7 @@ async def escalate(
             customer_phone=customer_phone,
             reason=reason,
             source=source,
+            issue_summary=issue_summary,
         )
         if result.success:
             return result.user_message or "Te transfiero con el equipo. Un momento por favor."
