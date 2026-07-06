@@ -94,6 +94,10 @@ async def test_confirm_action_happy():
             new=AsyncMock(return_value=_make_idor_ok()),
         ),
         patch(
+            "agent.services.confirmation_service.get_pending_confirmations",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
             "agent.services.confirmation_service.handle_tool_action",
             new=mock_handler,
         ),
@@ -134,6 +138,10 @@ async def test_decline_action_happy():
             new=AsyncMock(return_value=_make_idor_ok()),
         ),
         patch(
+            "agent.services.confirmation_service.get_pending_confirmations",
+            new=AsyncMock(return_value=[]),
+        ),
+        patch(
             "agent.services.confirmation_service.handle_tool_action",
             new=mock_handler,
         ),
@@ -153,11 +161,17 @@ async def test_decline_action_happy():
 async def test_confirm_invalid_uuid():
     # customer_id present so the flow passes the CUSTOMER_ID_REQUIRED (J2) gate
     # and reaches UUID validation, which is what this test asserts.
-    out = await manage_appointments.coroutine(
-        action="confirm",
-        appointment_id="not-a-uuid",
-        state={**_STATE_WITH_PHONE, "customer_id": str(uuid4())},
-    )
+    # get_pending_confirmations mocked to [] so the F2 disambiguation gate
+    # is bypassed (len<=1 path) and the LLM-supplied appointment_id is used.
+    with patch(
+        "agent.services.confirmation_service.get_pending_confirmations",
+        new=AsyncMock(return_value=[]),
+    ):
+        out = await manage_appointments.coroutine(
+            action="confirm",
+            appointment_id="not-a-uuid",
+            state={**_STATE_WITH_PHONE, "customer_id": str(uuid4())},
+        )
     assert "no es válido" in out.lower() or "inválido" in out.lower()
 
 
@@ -423,3 +437,531 @@ async def test_reschedule_happy_path_valid_date_calls_db():
 
     assert result["success"] is True
     execute_reschedule_mock.assert_awaited_once()
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# F2 — confirm/decline disambiguation precondition (multiple pending targets)
+#
+# manage_appointments(action="confirm"|"decline") must resolve the target
+# EXCLUSIVELY from the customer's own message (ordinal/keyword selectors) when
+# there is more than 1 PENDING appointment — the LLM-supplied appointment_id
+# is ignored in that case. A free-text disambiguator that a human would
+# recognize (naming date/time/stylist) but that is NOT a recognized selector
+# pattern is treated as "no selector found" (guided list, no mutation) — this
+# is intentional security design (REQ-F2-6), not a bug.
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _make_pending_appointment(appt_id, stylist_name: str = "Ana"):
+    """Fake Appointment for confirmation_service._build_appointment_list."""
+    from datetime import datetime
+    from zoneinfo import ZoneInfo
+
+    appt = MagicMock()
+    appt.id = appt_id
+    appt.start_time = datetime(2026, 7, 9, 10, 0, tzinfo=ZoneInfo("Europe/Madrid"))
+    stylist = MagicMock()
+    stylist.name = stylist_name
+    appt.stylist = stylist
+    return appt
+
+
+def _extract_uuid_args(mock_calls):
+    """Collect every UUID-typed positional/keyword arg across all calls to a mock."""
+    from uuid import UUID as _UUID
+
+    ids = set()
+    for call in mock_calls:
+        for arg in list(call.args) + list(call.kwargs.values()):
+            if isinstance(arg, _UUID):
+                ids.add(arg)
+    return ids
+
+
+def _make_confirmation_result(message: str):
+    fake_result = MagicMock()
+    fake_result.success = True
+    fake_result.state_updates = None
+    fake_result.response_text = message
+    fake_result.error_message = None
+    return fake_result
+
+
+@pytest.mark.asyncio
+async def test_confirm_with_multiple_pending_and_no_selector_returns_guided_list():
+    """REQ-F2-2: >1 pending + no recognized selector -> guided list, no mutation."""
+    appt_a = _make_pending_appointment(uuid4(), "Ana")
+    appt_b = _make_pending_appointment(uuid4(), "Marta")
+    mock_handler = AsyncMock()
+
+    with (
+        patch(
+            "agent.services.confirmation_service.get_pending_confirmations",
+            new=AsyncMock(return_value=[appt_a, appt_b]),
+        ),
+        patch(
+            "agent.services.confirmation_service.handle_tool_action",
+            new=mock_handler,
+        ),
+    ):
+        out = await manage_appointments.coroutine(
+            action="confirm",
+            appointment_id=str(appt_a.id),
+            state={
+                **_STATE_WITH_PHONE,
+                "customer_id": str(uuid4()),
+                "user_message": "quiero confirmar mi cita",
+            },
+        )
+
+    assert isinstance(out, str)
+    assert "1." in out and "2." in out
+    assert "TODAS" in out
+    mock_handler.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_confirm_with_freetext_disambiguator_not_recognized_returns_guided_list():
+    """REQ-F2-2/F2-6: a free-text disambiguator naming a specific appointment
+    (date/time/stylist) is NOT a recognized selector -> guided list, no
+    mutation, even though the LLM correctly resolved appointment_id."""
+    appt_a = _make_pending_appointment(uuid4(), "Ana")
+    appt_b = _make_pending_appointment(uuid4(), "Marta")
+    mock_handler = AsyncMock()
+
+    with (
+        patch(
+            "agent.services.confirmation_service.get_pending_confirmations",
+            new=AsyncMock(return_value=[appt_a, appt_b]),
+        ),
+        patch(
+            "agent.services.confirmation_service.handle_tool_action",
+            new=mock_handler,
+        ),
+    ):
+        out = await manage_appointments.coroutine(
+            action="confirm",
+            appointment_id=str(appt_b.id),  # LLM correctly resolved B — must be ignored
+            state={
+                **_STATE_WITH_PHONE,
+                "customer_id": str(uuid4()),
+                "user_message": "la del jueves a las 16 con Marta",
+            },
+        )
+
+    assert isinstance(out, str)
+    assert "1." in out and "2." in out
+    mock_handler.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_confirm_with_numeric_selector_resolves_from_customer_text():
+    """REQ-F2-2b: numeric/ordinal selector resolves the target from
+    pending[n-1], ignoring the LLM-supplied (wrong) appointment_id."""
+    appt_a = _make_pending_appointment(uuid4(), "Ana")
+    appt_b = _make_pending_appointment(uuid4(), "Marta")
+    mock_handler = AsyncMock(
+        return_value=_make_confirmation_result("¡Perfecto! Tu cita queda confirmada.")
+    )
+
+    with (
+        patch(
+            "agent.tools.manage_appointments_tool.get_async_session",
+            return_value=_make_async_session_ctx(),
+        ),
+        patch(
+            "agent.tools.manage_appointments_tool.validate_appointment_belongs_to_customer",
+            new=AsyncMock(return_value=_make_idor_ok()),
+        ),
+        patch(
+            "agent.services.confirmation_service.get_pending_confirmations",
+            new=AsyncMock(return_value=[appt_a, appt_b]),
+        ),
+        patch(
+            "agent.services.confirmation_service.handle_tool_action",
+            new=mock_handler,
+        ),
+    ):
+        out = await manage_appointments.coroutine(
+            action="confirm",
+            appointment_id=str(appt_a.id),  # wrong id supplied by the LLM — must be ignored
+            state={
+                **_STATE_WITH_PHONE,
+                "customer_id": str(uuid4()),
+                "user_message": "la 2",
+            },
+        )
+
+    assert "confirmada" in out.lower()
+    mock_handler.assert_awaited_once()
+    processed = _extract_uuid_args(mock_handler.call_args_list)
+    assert appt_b.id in processed
+    assert appt_a.id not in processed
+
+
+@pytest.mark.asyncio
+async def test_confirm_all_applies_to_fetched_pending_set_only():
+    """REQ-F2-2c: 'todas' applies confirm to every appointment in the fetched
+    pending set only, via the existing per-appointment path (one call/row)."""
+    pending = [
+        _make_pending_appointment(uuid4(), "Ana"),
+        _make_pending_appointment(uuid4(), "Marta"),
+        _make_pending_appointment(uuid4(), "Laura"),
+    ]
+    mock_handler = AsyncMock(
+        return_value=_make_confirmation_result("¡Perfecto! Tu cita queda confirmada.")
+    )
+
+    with (
+        patch(
+            "agent.tools.manage_appointments_tool.get_async_session",
+            return_value=_make_async_session_ctx(),
+        ),
+        patch(
+            "agent.tools.manage_appointments_tool.validate_appointment_belongs_to_customer",
+            new=AsyncMock(return_value=_make_idor_ok()),
+        ),
+        patch(
+            "agent.services.confirmation_service.get_pending_confirmations",
+            new=AsyncMock(return_value=pending),
+        ),
+        patch(
+            "agent.services.confirmation_service.handle_tool_action",
+            new=mock_handler,
+        ),
+    ):
+        out = await manage_appointments.coroutine(
+            action="confirm",
+            appointment_id=str(pending[0].id),
+            state={
+                **_STATE_WITH_PHONE,
+                "customer_id": str(uuid4()),
+                "user_message": "todas",
+            },
+        )
+
+    assert "3" in out
+    assert mock_handler.await_count == len(pending)
+    assert _extract_uuid_args(mock_handler.call_args_list) == {a.id for a in pending}
+
+
+@pytest.mark.asyncio
+async def test_confirm_with_cancel_all_keyword_returns_clarification_no_mutation():
+    """Polarity guard: action=confirm but the customer's ALL-type keyword is
+    from the CANCEL family ("cancelar todas") — this contradicts the tool's
+    chosen action. MUST NOT mutate anything; MUST return a clarification
+    asking the customer what they actually want."""
+    pending = [
+        _make_pending_appointment(uuid4(), "Ana"),
+        _make_pending_appointment(uuid4(), "Marta"),
+    ]
+    mock_handler = AsyncMock()
+
+    with (
+        patch(
+            "agent.services.confirmation_service.get_pending_confirmations",
+            new=AsyncMock(return_value=pending),
+        ),
+        patch(
+            "agent.services.confirmation_service.handle_tool_action",
+            new=mock_handler,
+        ),
+    ):
+        out = await manage_appointments.coroutine(
+            action="confirm",
+            appointment_id=str(pending[0].id),
+            state={
+                **_STATE_WITH_PHONE,
+                "customer_id": str(uuid4()),
+                "user_message": "cancelar todas",
+            },
+        )
+
+    assert isinstance(out, str)
+    mock_handler.assert_not_awaited()
+    # Clarification must surface both directions so the customer can pick.
+    assert "TODAS" in out
+    assert "CANCELAR TODAS" in out
+
+
+@pytest.mark.asyncio
+async def test_decline_with_confirm_all_keyword_returns_clarification_no_mutation():
+    """Polarity guard mirror: action=decline but the customer's ALL-type
+    keyword is from the CONFIRM family ("confirmar todas") — contradicts the
+    tool's chosen action. MUST NOT mutate; MUST return a clarification."""
+    pending = [
+        _make_pending_appointment(uuid4(), "Ana"),
+        _make_pending_appointment(uuid4(), "Marta"),
+    ]
+    mock_handler = AsyncMock()
+
+    with (
+        patch(
+            "agent.services.confirmation_service.get_pending_confirmations",
+            new=AsyncMock(return_value=pending),
+        ),
+        patch(
+            "agent.services.confirmation_service.handle_tool_action",
+            new=mock_handler,
+        ),
+    ):
+        out = await manage_appointments.coroutine(
+            action="decline",
+            appointment_id=str(pending[0].id),
+            state={
+                **_STATE_WITH_PHONE,
+                "customer_id": str(uuid4()),
+                "user_message": "confirmar todas",
+            },
+        )
+
+    assert isinstance(out, str)
+    mock_handler.assert_not_awaited()
+    assert "TODAS" in out
+    assert "CANCELAR TODAS" in out
+
+
+@pytest.mark.asyncio
+async def test_confirm_with_ordinal_selector_unaffected_by_polarity_guard():
+    """Polarity guard scope: ordinal/number selections carry NO polarity —
+    the action param is trusted as before, unaffected by the new guard."""
+    appt_a = _make_pending_appointment(uuid4(), "Ana")
+    appt_b = _make_pending_appointment(uuid4(), "Marta")
+    mock_handler = AsyncMock(
+        return_value=_make_confirmation_result("¡Perfecto! Tu cita queda confirmada.")
+    )
+
+    with (
+        patch(
+            "agent.tools.manage_appointments_tool.get_async_session",
+            return_value=_make_async_session_ctx(),
+        ),
+        patch(
+            "agent.tools.manage_appointments_tool.validate_appointment_belongs_to_customer",
+            new=AsyncMock(return_value=_make_idor_ok()),
+        ),
+        patch(
+            "agent.services.confirmation_service.get_pending_confirmations",
+            new=AsyncMock(return_value=[appt_a, appt_b]),
+        ),
+        patch(
+            "agent.services.confirmation_service.handle_tool_action",
+            new=mock_handler,
+        ),
+    ):
+        out = await manage_appointments.coroutine(
+            action="confirm",
+            appointment_id=str(appt_a.id),
+            state={
+                **_STATE_WITH_PHONE,
+                "customer_id": str(uuid4()),
+                "user_message": "la 2",
+            },
+        )
+
+    assert "confirmada" in out.lower()
+    mock_handler.assert_awaited_once()
+    processed = _extract_uuid_args(mock_handler.call_args_list)
+    assert appt_b.id in processed
+
+
+@pytest.mark.asyncio
+async def test_confirm_with_single_pending_confirms_directly():
+    """REQ-F2-3: exactly 1 pending -> direct confirm, no disambiguation list."""
+    appt = _make_pending_appointment(uuid4(), "Ana")
+    mock_handler = AsyncMock(
+        return_value=_make_confirmation_result("¡Perfecto! Tu cita queda confirmada.")
+    )
+
+    with (
+        patch(
+            "agent.tools.manage_appointments_tool.get_async_session",
+            return_value=_make_async_session_ctx(),
+        ),
+        patch(
+            "agent.tools.manage_appointments_tool.validate_appointment_belongs_to_customer",
+            new=AsyncMock(return_value=_make_idor_ok()),
+        ),
+        patch(
+            "agent.services.confirmation_service.get_pending_confirmations",
+            new=AsyncMock(return_value=[appt]),
+        ),
+        patch(
+            "agent.services.confirmation_service.handle_tool_action",
+            new=mock_handler,
+        ),
+    ):
+        out = await manage_appointments.coroutine(
+            action="confirm",
+            appointment_id=str(appt.id),
+            state={
+                **_STATE_WITH_PHONE,
+                "customer_id": str(uuid4()),
+                "user_message": "confirmo",
+            },
+        )
+
+    assert "confirmada" in out.lower()
+    mock_handler.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_decline_with_multiple_pending_and_no_selector_returns_guided_list():
+    """Decline mirror of REQ-F2-2."""
+    appt_a = _make_pending_appointment(uuid4(), "Ana")
+    appt_b = _make_pending_appointment(uuid4(), "Marta")
+    mock_handler = AsyncMock()
+
+    with (
+        patch(
+            "agent.services.confirmation_service.get_pending_confirmations",
+            new=AsyncMock(return_value=[appt_a, appt_b]),
+        ),
+        patch(
+            "agent.services.confirmation_service.handle_tool_action",
+            new=mock_handler,
+        ),
+    ):
+        out = await manage_appointments.coroutine(
+            action="decline",
+            appointment_id=str(appt_a.id),
+            state={
+                **_STATE_WITH_PHONE,
+                "customer_id": str(uuid4()),
+                "user_message": "quiero cancelar mi cita",
+            },
+        )
+
+    assert isinstance(out, str)
+    assert "1." in out and "2." in out
+    assert "CANCELAR TODAS" in out
+    mock_handler.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_decline_with_numeric_selector_resolves_from_customer_text():
+    """Decline mirror of REQ-F2-2b."""
+    appt_a = _make_pending_appointment(uuid4(), "Ana")
+    appt_b = _make_pending_appointment(uuid4(), "Marta")
+    mock_handler = AsyncMock(
+        return_value=_make_confirmation_result("Entendido. Tu cita ha sido cancelada.")
+    )
+
+    with (
+        patch(
+            "agent.tools.manage_appointments_tool.get_async_session",
+            return_value=_make_async_session_ctx(),
+        ),
+        patch(
+            "agent.tools.manage_appointments_tool.validate_appointment_belongs_to_customer",
+            new=AsyncMock(return_value=_make_idor_ok()),
+        ),
+        patch(
+            "agent.services.confirmation_service.get_pending_confirmations",
+            new=AsyncMock(return_value=[appt_a, appt_b]),
+        ),
+        patch(
+            "agent.services.confirmation_service.handle_tool_action",
+            new=mock_handler,
+        ),
+    ):
+        out = await manage_appointments.coroutine(
+            action="decline",
+            appointment_id=str(appt_a.id),  # wrong id supplied by the LLM — must be ignored
+            state={
+                **_STATE_WITH_PHONE,
+                "customer_id": str(uuid4()),
+                "user_message": "la 2",
+            },
+        )
+
+    assert "cancelada" in out.lower()
+    mock_handler.assert_awaited_once()
+    processed = _extract_uuid_args(mock_handler.call_args_list)
+    assert appt_b.id in processed
+    assert appt_a.id not in processed
+
+
+@pytest.mark.asyncio
+async def test_cancel_all_applies_to_fetched_pending_set_only():
+    """Decline mirror of REQ-F2-2c ('cancelar todas')."""
+    pending = [
+        _make_pending_appointment(uuid4(), "Ana"),
+        _make_pending_appointment(uuid4(), "Marta"),
+        _make_pending_appointment(uuid4(), "Laura"),
+    ]
+    mock_handler = AsyncMock(
+        return_value=_make_confirmation_result("Entendido. Tu cita ha sido cancelada.")
+    )
+
+    with (
+        patch(
+            "agent.tools.manage_appointments_tool.get_async_session",
+            return_value=_make_async_session_ctx(),
+        ),
+        patch(
+            "agent.tools.manage_appointments_tool.validate_appointment_belongs_to_customer",
+            new=AsyncMock(return_value=_make_idor_ok()),
+        ),
+        patch(
+            "agent.services.confirmation_service.get_pending_confirmations",
+            new=AsyncMock(return_value=pending),
+        ),
+        patch(
+            "agent.services.confirmation_service.handle_tool_action",
+            new=mock_handler,
+        ),
+    ):
+        out = await manage_appointments.coroutine(
+            action="decline",
+            appointment_id=str(pending[0].id),
+            state={
+                **_STATE_WITH_PHONE,
+                "customer_id": str(uuid4()),
+                "user_message": "cancelar todas",
+            },
+        )
+
+    assert "3" in out
+    assert mock_handler.await_count == len(pending)
+    assert _extract_uuid_args(mock_handler.call_args_list) == {a.id for a in pending}
+
+
+@pytest.mark.asyncio
+async def test_decline_with_single_pending_declines_directly():
+    """Decline mirror of REQ-F2-3."""
+    appt = _make_pending_appointment(uuid4(), "Ana")
+    mock_handler = AsyncMock(
+        return_value=_make_confirmation_result("Entendido. Tu cita ha sido cancelada.")
+    )
+
+    with (
+        patch(
+            "agent.tools.manage_appointments_tool.get_async_session",
+            return_value=_make_async_session_ctx(),
+        ),
+        patch(
+            "agent.tools.manage_appointments_tool.validate_appointment_belongs_to_customer",
+            new=AsyncMock(return_value=_make_idor_ok()),
+        ),
+        patch(
+            "agent.services.confirmation_service.get_pending_confirmations",
+            new=AsyncMock(return_value=[appt]),
+        ),
+        patch(
+            "agent.services.confirmation_service.handle_tool_action",
+            new=mock_handler,
+        ),
+    ):
+        out = await manage_appointments.coroutine(
+            action="decline",
+            appointment_id=str(appt.id),
+            state={
+                **_STATE_WITH_PHONE,
+                "customer_id": str(uuid4()),
+                "user_message": "cancelo",
+            },
+        )
+
+    assert "cancelada" in out.lower()
+    mock_handler.assert_awaited_once()

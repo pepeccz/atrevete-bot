@@ -57,6 +57,13 @@ TOOL_READ_CONTRACT: dict[str, str] = {
     "customer_id": "CustomerResolveMiddleware → ExtendedModelResponse Command(update=...)",
     "recently_offered_slots": "AvailabilityContextMiddleware → ExtendedModelResponse Command(update=...)",
     "customer_memories": "CustomerResolveMiddleware → state_delta (REQ-S1-8, customer_resolve.py)",
+    "user_message": (
+        "graph-input (agent/main.py process_batch — the ONLY production "
+        "graph.ainvoke() call site — sets it fresh on every turn). No Annotated "
+        "reducer on this AgentState field, so LangGraph's default last-write-wins "
+        "channel semantics overwrite the checkpoint value each turn; it is never "
+        "sticky/stale across turns as long as every ainvoke() call includes it."
+    ),
 }
 
 
@@ -530,11 +537,13 @@ async def test_injected_state_contract(monkeypatch: Any) -> None:
         name="check_availability",
     )
 
+    first_user_message = "Quiero reservar un corte"
     initial_state = {
         "conversation_id": CONV_ID,
         "customer_phone": CUSTOMER_PHONE,
+        "user_message": first_user_message,
         "messages": [
-            HumanMessage(content="Quiero reservar un corte"),
+            HumanMessage(content=first_user_message),
             tool_msg,
         ],
     }
@@ -584,6 +593,45 @@ async def test_injected_state_contract(monkeypatch: Any) -> None:
         "If this fails after removing the P-fix persist block, that is the intended regression guard."
     )
 
+    # --- Field 6: user_message (REQ-S3-1 follow-up — F2 disambiguation gate) ---
+    cp_user_message = values.get("user_message")
+    assert cp_user_message == first_user_message, (
+        f"REQ-S3-4 FAIL: checkpoint 'user_message' is {cp_user_message!r}, "
+        f"expected {first_user_message!r}. 'user_message' is a graph-input field "
+        "set fresh by agent/main.py's process_batch on every graph.ainvoke() call — "
+        "not persisted by any middleware Command."
+    )
+
+    # --- Field 6b: user_message must reflect the CURRENT turn, never a stale one ---
+    # agent/tools/manage_appointments_tool.py's F2 disambiguation gate
+    # (_dispatch_confirm_or_decline / _disambiguation_gate) reads state["user_message"]
+    # and its correctness DEPENDS on this being the customer's text for THIS turn —
+    # a stale prior-turn value would let the gate resolve the wrong appointment or
+    # accept/reject the wrong ordinal/ALL-keyword. Because 'user_message' has no
+    # Annotated reducer, LangGraph applies default last-write-wins channel semantics:
+    # driving a second turn with different text and a different customer_phone/
+    # messages combination must overwrite the checkpoint value, not retain turn 1's.
+    second_user_message = "Quiero cambiar a tinte"
+    await graph.ainvoke(
+        {
+            "customer_phone": CUSTOMER_PHONE,
+            "user_message": second_user_message,
+            "messages": [HumanMessage(content=second_user_message)],
+        },
+        config=config,
+    )
+    checkpoint_state_turn2 = await graph.aget_state(config)
+    cp_user_message_turn2 = checkpoint_state_turn2.values.get("user_message")
+    assert cp_user_message_turn2 == second_user_message, (
+        f"REQ-S3-4 FAIL: checkpoint 'user_message' after turn 2 is "
+        f"{cp_user_message_turn2!r}, expected {second_user_message!r} (the NEW "
+        "turn's text). If this still equals turn 1's text, 'user_message' is STALE "
+        "in the checkpoint — the F2 disambiguation gate in "
+        "manage_appointments_tool.py assumes this field always reflects the "
+        "current turn's customer text, so staleness here would silently make it "
+        "resolve/reject the wrong appointment."
+    )
+
     # --- Serializer round-trip (catches UUID/datetime types that orjson would reject) ---
     serde = _get_json_plus_serializer()
     if serde is None:
@@ -606,7 +654,7 @@ async def test_injected_state_contract(monkeypatch: Any) -> None:
             "(see ADR-1 coercion table in the design document)."
         )
 
-    # Reloaded values must still contain all 5 contract fields
+    # Reloaded values must still contain all contract fields
     assert (
         reloaded.get("customer_phone") == CUSTOMER_PHONE
     ), "JsonPlusSerializer round-trip corrupted 'customer_phone'"
@@ -618,6 +666,9 @@ async def test_injected_state_contract(monkeypatch: Any) -> None:
         f"{type(reloaded.get('customer_id')).__name__}, expected str. "
         "UUID must be coerced to str before checkpoint persistence."
     )
+    assert (
+        reloaded.get("user_message") == first_user_message
+    ), "JsonPlusSerializer round-trip corrupted 'user_message'"
 
 
 @pytest.mark.asyncio
