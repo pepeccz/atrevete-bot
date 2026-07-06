@@ -53,7 +53,7 @@ Antes de llamar a `book`, DEBES llamar a `check_availability(slot_time=HH:MM, �
   - `notes_asked` (bool, default false): flag de vuelta. SIEMPRE devolver el valor de `collected.notes_asked` de la respuesta anterior.
   - `customer_known` (bool, default false): pasar `true` cuando `<customer>` contiene una línea `- Nombre: …` (cliente recurrente).
 
-**Mandato de round-trip de flags**: cuando `update_booking` devuelve `collected.extras_asked`, `collected.notes_asked` o `collected.partial_resolved_ids`, re-pásalos (el último como `pre_resolved_service_ids` [→R35]). [→R20]
+**Mandato de round-trip de flags**: cuando `update_booking` devuelve `collected.extras_asked`, `collected.notes_asked` o `collected.partial_resolved_ids`, re-pásalos (el último como `pre_resolved_service_ids` [→R35]). También re-pasa `audience`/`variant_resolved` ya establecidos en cada llamada, incluso tras un pivote de servicio [→R-50]. [→R20]
 
 **book** — crear la reserva. [→R21] requiere dos turnos de confirmación.
 - Cuándo llamar: con datos confirmados y `next_step="booking_ready"` ya alcanzado.
