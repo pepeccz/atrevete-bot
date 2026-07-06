@@ -630,3 +630,109 @@ async def test_no_backing_still_blocked():
     assert (
         final == _CONFIRMATION_FALLBACK_MESSAGE
     ), "No-backing hallucinated confirmation must still be blocked after the fix"
+
+
+# ---------------------------------------------------------------------------
+# F1 v3 — bare-proposal template guard + bare-completion guard (REQ-F1-1..7)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_blocks_te_lo_dejo_time_no_question():
+    """REQ-F1-1: 'te lo dejo' + time/date token, no '?' → BLOCKED regardless of backing."""
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    from agent.middleware.response_groundedness import _CONFIRMATION_FALLBACK_MESSAGE
+
+    reply = "Perfecto, te lo dejo a las 14:30 del jueves 9 de julio 😊"
+    history = [HumanMessage(content="Quiero esa hora")]
+    final_ai = AIMessage(content=reply)
+    result = [final_ai]
+
+    final = await _run_gate(history=history, result=result, reply_content=reply)
+    assert final == _CONFIRMATION_FALLBACK_MESSAGE, (
+        "A bare Turn-A proposal template with no trailing '?' must be blocked"
+    )
+
+
+@pytest.mark.asyncio
+async def test_allows_te_lo_dejo_with_question():
+    """REQ-F1-3: genuine Turn-A proposal ending in '¿Te lo confirmo?' → NOT blocked."""
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    reply = "Perfecto, te lo dejo a las 14:30 del jueves 9 de julio. ¿Te lo confirmo?"
+    history = [HumanMessage(content="Quiero esa hora")]
+    final_ai = AIMessage(content=reply)
+    result = [final_ai]
+
+    final = await _run_gate(history=history, result=result, reply_content=reply)
+    assert final == reply, "A genuine Turn-A proposal with a trailing '?' must NOT be blocked"
+
+
+@pytest.mark.asyncio
+async def test_blocks_bare_queda_todo_listo():
+    """REQ-F1-6: exact stress-conflicto-solapamiento turn-18 phantom → BLOCKED."""
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    from agent.middleware.response_groundedness import _COMPLETION_FALLBACK_MESSAGE
+
+    reply = "¡A ti, Raquel! Queda todo listo."
+    history = [HumanMessage(content="Vale, gracias")]
+    final_ai = AIMessage(content=reply)
+    result = [final_ai]
+
+    final = await _run_gate(history=history, result=result, reply_content=reply)
+    assert final == _COMPLETION_FALLBACK_MESSAGE, (
+        "A bare completion phrase with no '?' and no failure marker must be blocked "
+        "and replaced with the friendly completion fallback (not the re-booking invite)"
+    )
+
+
+@pytest.mark.asyncio
+async def test_allows_todo_listo_with_failure_and_question():
+    """REQ-F1-6: exact impaciente-multiples-mensajes turn-11 truthful failure → PASSES UNCHANGED."""
+    from langchain_core.messages import AIMessage, HumanMessage
+
+    reply = "Ya tengo todo listo, pero… no se ha podido… ¿La aceptas…?"
+    history = [HumanMessage(content="¿Ya está?")]
+    final_ai = AIMessage(content=reply)
+    result = [final_ai]
+
+    final = await _run_gate(history=history, result=result, reply_content=reply)
+    assert final == reply, (
+        "A truthful failure-disclosure reply with a '?' and a failure marker "
+        "must pass through unchanged"
+    )
+
+
+@pytest.mark.asyncio
+async def test_post_book_pleasantry_gets_friendly_fallback():
+    """REQ-F1-7: bare completion pleasantry AFTER a prior-turn real book → friendly fallback.
+
+    Pins the accepted residual FP as harmless: a successful `book` result from an
+    EARLIER turn does not exempt a later bare-completion pleasantry, but the reply
+    MUST be replaced with `_COMPLETION_FALLBACK_MESSAGE` (never the re-booking-invite
+    `_CONFIRMATION_FALLBACK_MESSAGE`).
+    """
+    from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
+
+    from agent.middleware.response_groundedness import _COMPLETION_FALLBACK_MESSAGE
+
+    reply = "¡A ti, María! Todo listo, te esperamos el jueves 😊"
+    # Prior turn: a real successful book.
+    history = [
+        HumanMessage(content="Reserva la primera"),
+        AIMessage(content="", tool_calls=[{"name": "book", "args": {}, "id": "old_call"}]),
+        ToolMessage(content=_book_ok_json(), name="book", tool_call_id="old_call"),
+        AIMessage(content="Te confirmé la cita, María."),
+        HumanMessage(content="Gracias"),  # current-turn boundary
+    ]
+    # Current turn: no new tool call at all — just a closing pleasantry.
+    final_ai = AIMessage(content=reply)
+    result = [final_ai]
+
+    final = await _run_gate(history=history, result=result, reply_content=reply)
+    assert final == _COMPLETION_FALLBACK_MESSAGE, (
+        "A post-book closing pleasantry with no this-turn backing must be replaced "
+        "with the friendly completion fallback, not the re-booking-invite fallback"
+    )
