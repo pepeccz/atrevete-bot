@@ -45,6 +45,16 @@ function isLoadableConversationId(id: string | null): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
 }
 
+/**
+ * A bare Chatwoot numeric conversation id (e.g. "8"), as opposed to a UUID
+ * or a "redis:" key. Since PR-1, `GET /conversations/{id}` accepts this
+ * shape directly and resolves it to the underlying ConversationHistory row.
+ */
+function isBareNumericId(id: string | null): boolean {
+  if (!id) return false;
+  return /^[0-9]+$/.test(id);
+}
+
 // ─── Permission gate ───────────────────────────────────────────────────────────
 
 function AccessDenied() {
@@ -104,6 +114,12 @@ export default function ConversationsPage() {
   const [activeCustomerId, setActiveCustomerId] = useState<string | null>(null);
   const [listRefreshKey, setListRefreshKey] = useState(0);
   const [conversationUnavailable, setConversationUnavailable] = useState(false);
+  // FR-DEEP-LINK: true only once a bare numeric deep-link id has been
+  // confirmed NOT to resolve (404) via the one-shot backend GET below.
+  // Distinct from `conversationUnavailable` (which ConversationList derives
+  // from its own paginated array and would otherwise flash "unavailable"
+  // while this resolve is still in flight).
+  const [numericResolveFailed, setNumericResolveFailed] = useState(false);
   const [activeWhatsappContact, setActiveWhatsappContact] = useState<
     import("@/lib/types").WhatsappContact | null
   >(null);
@@ -203,6 +219,37 @@ export default function ConversationsPage() {
     [router, searchParams]
   );
 
+  // FR-DEEP-LINK (frontend fallback, PR-2): notification links carry a bare
+  // Chatwoot numeric conversation_id (e.g. from a paused_24h reminder). That
+  // conversation may not be on ConversationList's first fetched page, so its
+  // own array-scan resolution (ConversationList.tsx) can miss it. As a
+  // one-shot fallback, resolve the numeric id directly via the DB-backed
+  // `GET /conversations/{id}` (PR-1) and swap the URL/state to the real UUID
+  // so every downstream thread action (mark-read, pause/resume, delete)
+  // operates on the canonical id — not just the initial render.
+  useEffect(() => {
+    if (!isBareNumericId(activeConversationId)) {
+      setNumericResolveFailed(false);
+      return;
+    }
+    let cancelled = false;
+    setNumericResolveFailed(false);
+    api
+      .getConversation(activeConversationId as string)
+      .then((conv: ConversationHistory) => {
+        if (cancelled) return;
+        setActiveConversationId(conv.id);
+        updateUrl(undefined, conv.id);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setNumericResolveFailed(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeConversationId, updateUrl]);
+
   const handleFilterChange = (filter: InboxFilter) => {
     setActiveFilter(filter);
     updateUrl(filter, null);
@@ -269,7 +316,12 @@ export default function ConversationsPage() {
               conversationId={loadableConversationId}
               onDeleted={handleConversationDeleted}
             />
-          ) : activeConversationId && conversationUnavailable ? (
+          ) : activeConversationId && isBareNumericId(activeConversationId) && !numericResolveFailed ? (
+            // Numeric deep-link id: the one-shot resolver above is in flight
+            // (or ConversationList's array-scan may still resolve it first).
+            // Stay neutral here — no "unavailable" flash — until it fails.
+            <EmptyThread />
+          ) : activeConversationId && (conversationUnavailable || numericResolveFailed) ? (
             <UnavailableThread />
           ) : (
             <EmptyThread />

@@ -254,8 +254,12 @@ export function NotificationCenter() {
       setOpen(false);
       router.push("/conversations?filter=escalated");
     } else if (notification.entity_type === "conversation_history" && notification.entity_id) {
+      // Belt-and-braces (ADR-2b): scope to the bot_off tab — the only source of
+      // conversation_history notifications today (paused_24h) — so the target
+      // is far more likely to land on page 1 even without the deep-link
+      // fallback resolve in ConversationsPage.
       setOpen(false);
-      router.push(`/conversations?conversation_id=${notification.entity_id}`);
+      router.push(`/conversations?filter=bot_off&conversation_id=${notification.entity_id}`);
     }
     // default: mark-read only, no navigation
   };
