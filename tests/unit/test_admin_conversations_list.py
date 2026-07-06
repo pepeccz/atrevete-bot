@@ -250,3 +250,33 @@ class TestResolveConversationListItem:
         # Non-escalated row must not expose escalation fields
         non_esc = next(i for i in items if not i["is_escalated"])
         assert "escalation_id" not in non_esc
+
+    # -----------------------------------------------------------------------
+    # PR-1 (inbox-reliability): batched unread_message_count wiring
+    # -----------------------------------------------------------------------
+
+    def test_unread_count_wired_from_map(self):
+        """unread_message_count is read from unread_map keyed by row.id (UUID PK)."""
+        row = self._make_row(conversation_id="55")
+        unread_map = {row.id: 3}
+
+        item = _resolve_conversation_list_item(row, unread_map=unread_map)
+
+        assert item["unread_message_count"] == 3
+
+    def test_unread_count_defaults_to_zero_when_row_not_in_map(self):
+        """A row absent from unread_map (no unread messages) defaults to 0."""
+        row = self._make_row(conversation_id="56")
+        unread_map = {uuid4(): 7}  # keyed to a different conversation's row.id
+
+        item = _resolve_conversation_list_item(row, unread_map=unread_map)
+
+        assert item["unread_message_count"] == 0
+
+    def test_unread_count_defaults_to_zero_when_no_map_provided(self):
+        """Existing callers that omit unread_map keep the additive-default-None behavior."""
+        row = self._make_row(conversation_id="57")
+
+        item = _resolve_conversation_list_item(row)
+
+        assert item["unread_message_count"] == 0

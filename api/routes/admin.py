@@ -48,6 +48,7 @@ from database.models import (
     BlockingEventType,
     BusinessHours,
     ConversationHistory,
+    ConversationMessage,
     Customer,
     CustomerConsent,
     Escalation,
@@ -267,6 +268,7 @@ def _conversation_display_name(row: Any) -> str:
 def _resolve_conversation_list_item(
     row: Any,
     escalated_conv_map: dict[str, dict] | None = None,
+    unread_map: dict[Any, int] | None = None,
 ) -> dict[str, Any]:
     """
     Convert a ConversationHistory ORM row to a dict for the list response.
@@ -282,9 +284,10 @@ def _resolve_conversation_list_item(
     When provided, ``is_escalated`` is set to True and escalation fields are
     included in the response (R1/R3a: real escalation signal + reason in banner).
 
-    unread_message_count: NOT a DB column — defaults to 0. The frontend already
-    renders this badge per-item (PR-1), but counting requires a message-level
-    read status feature not yet built. Placeholder keeps the response shape stable.
+    unread_map: maps ConversationHistory.id (UUID PK, ``row.id``) → count of
+    unread customer messages (role='user', read_at IS NULL). Built by the caller
+    via ONE batched aggregate query (see ``list_conversations``) — never per-row.
+    Rows absent from the map have zero unread messages.
     """
     # Derive bot-pause state from paused_at / resumed_at columns.
     # Use hasattr-safe access: ORM rows always have these columns (nullable),
@@ -316,9 +319,8 @@ def _resolve_conversation_list_item(
         # Inbox state fields — required by matchesFilter() and tab counters
         "atencion_automatica": not is_paused,
         "paused_at": paused_at.isoformat() if paused_at else None,
-        # unread_message_count: no DB column exists yet (TECH DEBT — needs a
-        # per-message read-status feature). Always 0 to keep response shape stable.
-        "unread_message_count": 0,
+        # Real unread count from the batched aggregate (PR-1: inbox-reliability).
+        "unread_message_count": (unread_map or {}).get(row.id, 0),
         # R1: real escalation signal (True when an Escalation row with
         # status='triggered' exists for this conversation)
         "is_escalated": is_escalated,
@@ -330,29 +332,6 @@ def _resolve_conversation_list_item(
         item["escalation_source"] = esc_info["escalation_source"]
         item["escalation_triggered_at"] = esc_info["escalation_triggered_at"]
     return item
-
-
-def _parse_thread_id_from_key(key_str: str) -> str | None:
-    """Extract full thread_id from a checkpoint key.
-
-    Key format: ``checkpoint:{thread_id}:{checkpoint_ns}:{checkpoint_id}``.
-    ``thread_id`` may itself contain ``:`` (e.g. ``v2:42``), so drop the
-    ``checkpoint:`` prefix and the trailing ``:ns:id`` suffix instead of
-    splitting on the first colon.
-    """
-    if not key_str.startswith("checkpoint:"):
-        return None
-    inner = key_str[len("checkpoint:") :]
-    # Drop last two segments: checkpoint_ns and checkpoint_id.
-    parts = inner.rsplit(":", 2)
-    if len(parts) < 3:
-        return None
-    return parts[0] or None
-
-
-def _bare_conversation_id(thread_id: str) -> str:
-    """Return the Chatwoot conversation_id stripped of the ``v2:`` prefix."""
-    return thread_id.removeprefix("v2:")
 
 
 def _is_visible_turn(msg: Any) -> bool:
@@ -5295,12 +5274,17 @@ async def list_conversations(
     """
     List conversation history (read-only).
 
-    Merges two sources:
-    1. DB (ConversationHistory) — archived conversations (>23h old)
-    2. Redis (checkpoint:*) — active conversations not yet archived
+    DB-only (PR-1: inbox-reliability). Sourced exclusively from
+    ``ConversationHistory`` — the same source ``bot_off``/``escalated`` filters
+    already used, so all tabs and counts agree with each other and with the
+    single-conversation GET. Does NOT scan Redis checkpoints; active
+    conversations still appear here once their ``ConversationHistory`` parent
+    row exists (created at first inbound message, see ``chatwoot.py``).
 
-    Redis-only conversations are shown as "active" with live message counts.
-    Conversations already in DB are shown from DB (more complete metadata).
+    Ordered by last activity: ``ended_at DESC``, with rows that have no
+    ``ended_at`` yet (no visible turn recorded) sinking to the bottom via
+    ``NULLS LAST`` rather than floating to the top.
+
     When ``q`` is non-empty, results are filtered via global_search_service
     (trigram ILIKE on customer name, phone, and message content).
     """
@@ -5327,26 +5311,18 @@ async def list_conversations(
         }
 
     try:
-        from shared.redis_client import get_redis_client
-
-        redis_client = get_redis_client()
-    except Exception:
-        redis_client = None
-
-    try:
         async with get_async_session() as session:
-            # --- Source 1: DB archived conversations ---
+            # --- DB-only conversation source (PR-1: inbox-reliability) ---
             stmt = (
                 select(ConversationHistory)
                 .options(selectinload(ConversationHistory.customer))
-                .order_by(ConversationHistory.started_at.desc())
+                .order_by(ConversationHistory.ended_at.desc().nulls_last())
             )
             if customer_id:
                 stmt = stmt.where(ConversationHistory.customer_id == customer_id)
 
             count_result = await session.execute(stmt)
             db_rows: list[ConversationHistory] = list(count_result.scalars().all())
-            db_conv_ids = {row.conversation_id for row in db_rows}
 
             # --- Fetch triggered escalations for DB conversations in one query ---
             # Maps conversation_id (UUID) → (escalation_id, reason, source, triggered_at)
@@ -5376,79 +5352,30 @@ async def list_conversations(
                         ),
                     }
 
-            db_items = [_resolve_conversation_list_item(row, escalated_conv_map) for row in db_rows]
+            # --- Batched unread-message aggregate (no N+1) ---
+            # Maps ConversationHistory.id (UUID PK) → count of unread customer
+            # messages. ONE query for the whole list, mirroring the escalation
+            # map above — never a per-row query.
+            unread_stmt = (
+                select(
+                    ConversationMessage.conversation_history_id,
+                    func.count().label("unread"),
+                )
+                .where(
+                    ConversationMessage.role == "user",
+                    ConversationMessage.read_at.is_(None),
+                )
+                .group_by(ConversationMessage.conversation_history_id)
+            )
+            unread_result = await session.execute(unread_stmt)
+            unread_map: dict[Any, int] = {
+                r.conversation_history_id: r.unread for r in unread_result
+            }
 
-            # --- Source 2: Active Redis conversations (not yet in DB) ---
-            redis_items = []
-            if redis_client and not customer_id:  # Redis has no customer_id index
-                try:
-                    # Get unique thread_ids from active checkpoints (async scan)
-                    seen_thread_ids: set[str] = set()
-                    async for key in redis_client.scan_iter(match="checkpoint:*", count=500):
-                        key_str = key.decode("utf-8") if isinstance(key, bytes) else key
-                        tid = _parse_thread_id_from_key(key_str)
-                        if tid:
-                            seen_thread_ids.add(tid)
-
-                    # For each active thread_id not already in DB, synthesize a summary
-                    for thread_id in seen_thread_ids:
-                        bare_cid = _bare_conversation_id(thread_id)
-                        if bare_cid in db_conv_ids:
-                            continue  # Already shown from DB
-
-                        state = await _get_latest_checkpoint_state(redis_client, thread_id)
-                        if not state:
-                            continue
-
-                        messages = state.get("messages", [])
-                        msg_count = sum(1 for m in messages if _is_visible_turn(m))
-                        customer_name = state.get("customer_name") or state.get(
-                            "pending_whatsapp_name"
-                        )
-                        customer_id = state.get("customer_id")
-                        summary = state.get("conversation_summary")
-
-                        # Derive timestamps from messages if available
-                        started_at = None
-                        ended_at = None
-                        if messages:
-                            first_ts = (
-                                messages[0].get("timestamp")
-                                if isinstance(messages[0], dict)
-                                else None
-                            )
-                            last_ts = (
-                                messages[-1].get("timestamp")
-                                if isinstance(messages[-1], dict)
-                                else None
-                            )
-                            started_at = first_ts
-                            ended_at = last_ts
-
-                        redis_items.append(
-                            {
-                                "id": f"redis:{thread_id}",  # Synthetic ID — no DB row yet
-                                "conversation_id": bare_cid,
-                                "customer_id": str(customer_id) if customer_id else None,
-                                "customer_name": customer_name,
-                                "started_at": started_at,
-                                "ended_at": ended_at,
-                                "message_count": msg_count,
-                                "summary": summary,
-                                "created_at": started_at,
-                                "source": "redis",
-                                # Safe defaults for inbox-state fields — Redis-only
-                                # conversations have not been paused/toggled yet.
-                                "atencion_automatica": True,
-                                "paused_at": None,
-                                "unread_message_count": 0,
-                            }
-                        )
-                except Exception as e:
-                    logger.warning(f"Could not read active Redis conversations: {e}")
-
-            # --- Merge: Redis-active first (most recent), then DB ---
-            all_items = redis_items + db_items
+            all_items = [
+                _resolve_conversation_list_item(row, escalated_conv_map, unread_map)
+                for row in db_rows
+            ]
             total_unfiltered = len(all_items)
 
             # --- Tab counters (computed over ALL items BEFORE pagination and filter) ---
@@ -5616,13 +5543,31 @@ async def get_conversation(
     """
     Get a single conversation with all messages.
 
-    Accepts two id formats:
+    Accepts three id formats:
     - UUID string: looks up ConversationHistory by PK (archived conversations)
     - "redis:{thread_id}": reads live state from Redis checkpoint (active conversations)
+    - bare numeric string (Chatwoot conversation_id): resolved via DB lookup to the
+      ConversationHistory UUID (ADR-2b — deep-link robustness). This covers
+      paused/inactive/archived conversations that the Redis-only ``/live``
+      endpoint cannot reach (their checkpoint is flushed/absent), which is
+      exactly the case for conversations targeted by notification deep-links.
 
     Returns: all parent metadata fields + messages array.
     """
     from uuid import UUID as _UUID
+
+    # --- Bare numeric Chatwoot conversation_id → resolve to ConversationHistory UUID ---
+    if conversation_id.isdigit():
+        async with get_async_session() as session:
+            result = await session.execute(
+                select(ConversationHistory.id).where(
+                    ConversationHistory.conversation_id == conversation_id
+                )
+            )
+            resolved_id = result.scalar_one_or_none()
+        if resolved_id is None:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        conversation_id = str(resolved_id)
 
     # --- Redis-sourced active conversation ---
     if conversation_id.startswith("redis:"):
@@ -6872,7 +6817,6 @@ from api.models.inbox import (  # noqa: E402
     SidebarCustomer,
     SidebarEscalation,
     SidebarResponse,
-    TemplateListResponse,
     WindowStatusResponse,
 )
 
@@ -7117,38 +7061,12 @@ async def inbox_window_status(
         )
 
 
-@router.get("/conversations/templates", status_code=200)
-async def inbox_list_templates(
-    current_user: Annotated[AdminUser, Depends(require_permission("templates:send"))],
-) -> TemplateListResponse:
-    """Return the list of Meta templates available in the inbox with approval status.
-
-    Templates with status='pending' are shown but disabled in the UI
-    (displayed with 'Plantillas en aprobacion' copy — R2 from proposal).
-
-    Permissions: templates:send (admin + stylist).
-    """
-    from api.models.inbox import ParamDefResponse, TemplateDefResponse
-    from api.services.template_catalog import get_templates
-
-    raw_templates = get_templates()
-    items = [
-        TemplateDefResponse(
-            name=t["name"],
-            display_name=t["display_name"],
-            status=t["status"],
-            params=[
-                ParamDefResponse(
-                    name=p["name"],
-                    label=p["label"],
-                    description=p.get("description", ""),
-                )
-                for p in t["params"]
-            ],
-        )
-        for t in raw_templates
-    ]
-    return TemplateListResponse(items=items)
+# NOTE: GET /conversations/templates is registered ONCE, earlier in this file
+# (see `_inbox_list_templates_early`, before GET /conversations/{conversation_id})
+# so FastAPI matches it ahead of the numeric/UUID path-parameter route. A
+# duplicate registration used to exist here — it was dead code (this later
+# registration never matched, since FastAPI dispatches to the first-registered
+# route) and has been removed (PR-1: inbox-reliability hygiene).
 
 
 # =============================================================================
