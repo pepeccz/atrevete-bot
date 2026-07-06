@@ -29,6 +29,7 @@ import { CustomerCard } from "@/components/inbox/CustomerCard";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import { usePermission } from "@/hooks/use-permission";
+import { useSidebar } from "@/contexts/sidebar-context";
 import { useCustomerCardData } from "@/hooks/use-customer-card-data";
 import { useNotes } from "@/hooks/useNotes";
 import { useMediaQuery } from "@/hooks/use-media-query";
@@ -345,6 +346,35 @@ export default function ConversationsPage() {
   useEffect(() => {
     if (isDesktopXl && cardSheetOpen) setCardSheetOpen(false);
   }, [isDesktopXl, cardSheetOpen]);
+
+  // PR-4 (acceptance follow-up, tests/e2e/runs/20260706_ui_audit/v2/acceptance_report.md
+  // item 9c): at 768px the global nav sidebar's expanded w-64 width plus this
+  // route's 2-column layout (list + thread, customer card in a Sheet drawer)
+  // together overflow the viewport horizontally (scrollWidth 840 > clientWidth
+  // 753); manually collapsing the sidebar to w-16 fixes it. Auto-collapse the
+  // sidebar when THIS route is viewed at a narrow (<xl) width.
+  //
+  // Route-scoped, not global: only /conversations was found to overflow in the
+  // audit — other routes keep the user's persisted sidebar preference
+  // (`sidebar_collapsed` in localStorage) untouched rather than having it
+  // silently overridden on every page load below xl.
+  //
+  // Fires once per narrow-viewport "entry" (isBelowXl transitioning
+  // false -> true) via a ref, not on every render — so it never fights a
+  // manual re-expand while the viewport stays narrow (the toggle button and
+  // `expand()` keep working normally; this only nudges the initial state).
+  // Behavior-only per the useMediaQuery SSR rule: the sidebar's own render
+  // width is still driven by its own `isCollapsed` context state, not by a
+  // media query directly.
+  const { collapse: collapseSidebar } = useSidebar();
+  const isBelowXl = !isDesktopXl;
+  const enteredNarrowViewportRef = useRef(false);
+  useEffect(() => {
+    if (isBelowXl && !enteredNarrowViewportRef.current) {
+      collapseSidebar();
+    }
+    enteredNarrowViewportRef.current = isBelowXl;
+  }, [isBelowXl, collapseSidebar]);
 
   const cardProps = {
     customerId: activeCustomerId,
