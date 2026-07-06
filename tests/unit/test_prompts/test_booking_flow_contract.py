@@ -126,3 +126,28 @@ def test_critical_rules_uses_customer_slot_when_present():
     assert "Nombre:" in content and "customer_known" in content, (
         "critical_rules.md must reference 'Nombre:' line and 'customer_known' arg"
     )
+
+
+# ---------------------------------------------------------------------------
+# F6 — R-50 audience/variant_resolved round-trip across service pivots
+# (agent-grounding-fixes, REQ-F6-1, REQ-F6-2)
+# ---------------------------------------------------------------------------
+
+
+def test_prompt_contains_r50_audience_roundtrip_rule():
+    """booking_flow.md must carry R-50 requiring re-passing an already-established
+    `audience`/`variant_resolved` on every `update_booking` call, including right
+    after a service pivot; tools_contract.md must cross-reference R-50.
+    """
+    booking_flow = _read("booking_flow.md")
+    tools_contract = _read("tools_contract.md")
+
+    assert "R-50" in booking_flow, "booking_flow.md must define rule R-50"
+    assert "audience" in booking_flow.split("R-50", 1)[1][:400], (
+        "R-50 in booking_flow.md must mention 'audience' round-trip"
+    )
+    assert "variant_resolved" in booking_flow.split("R-50", 1)[1][:400], (
+        "R-50 in booking_flow.md must mention 'variant_resolved' round-trip"
+    )
+
+    assert "R-50" in tools_contract, "tools_contract.md must cross-reference R-50"

@@ -80,10 +80,18 @@ BUDGETS: dict[str, int] = {
     # R-39 carve-out ("gracias, y una cosa..." is NOT a pure closing — the
     # pending content must be addressed normally). Re-measured via tiktoken
     # cl100k_base: actual 4569.
+    #
+    # Budgets updated for SDD change agent-grounding-fixes (F6, PR-4):
+    # booking_flow.md: 3050 -> 3150 for R-50 (audience/variant_resolved
+    # round-trip across service pivots, folded into the existing R35 line to
+    # respect the separate hard 75-line cap in test_booking_flow_prompt.py).
+    # Re-measured via this test's own tiktoken cl100k_base: actual 3108.
+    # tools_contract.md: 2100 -> 2150 for the R-50 cross-reference appended to
+    # the existing round-trip-of-flags mandate line. Actual 2106.
     "critical_rules.md": 4600,
-    "booking_flow.md": 3050,
+    "booking_flow.md": 3150,
     "examples.md": 2600,
-    "tools_contract.md": 2100,
+    "tools_contract.md": 2150,
 }
 
 

@@ -43,9 +43,16 @@ class TestTokenBudgets:
         # Recalibrated: Paso 1.5 (service_suggestion_required) and multi-person
         # sequential section added by multi-service-resolution PR 2.
         # Actual current count: ~2364 (chars // 4). Set limit at 10% above actual.
+        #
+        # Recalibrated for SDD change agent-grounding-fixes (F6, PR-4): R-50
+        # (audience/variant_resolved round-trip across service pivots) folded
+        # into the existing R35 line. Actual current count: ~2669 (chars // 4)
+        # — this test's own char-based proxy was already stale/near its old
+        # limit before this change (baseline on master was ~2607, per PR-1's
+        # completion-closing guidance). Set limit at 10% above actual (was 2620).
         assert (
-            len(content) // 4 <= 2620
-        ), f"booking_flow.md exceeds token budget: {len(content) // 4} tokens (limit 2620)"
+            len(content) // 4 <= 2950
+        ), f"booking_flow.md exceeds token budget: {len(content) // 4} tokens (limit 2950)"
 
     def test_booking_flow_orders_pasos(self, prompt_dir):
         """Pasos must appear in order: 1 before 2 before 3 before 4.

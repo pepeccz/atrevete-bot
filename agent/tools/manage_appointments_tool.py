@@ -767,7 +767,7 @@ async def manage_appointments(
             result = await _cancel_appointment(
                 customer_phone=customer_phone,
                 appointment_id=appointment_id or "",
-                reason=None,
+                reason="customer_declined",
                 customer_id=_customer_id,
             )
             return result["message"]
