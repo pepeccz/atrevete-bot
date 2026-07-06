@@ -489,13 +489,17 @@ function SidebarContent({
 // ── Public export ─────────────────────────────────────────────────────────────
 
 export function Sidebar() {
-  const { isCollapsed, isMobileOpen, closeMobile } = useSidebar();
+  // PR-5: render from `effectiveCollapsed` (isCollapsed || autoCollapsed) —
+  // the VISUAL state — not the raw persisted `isCollapsed`, so a route's
+  // temporary auto-collapse (e.g. /conversations below xl) is reflected
+  // without ever touching the user's persisted preference.
+  const { effectiveCollapsed, isMobileOpen, closeMobile } = useSidebar();
 
   return (
     <TooltipProvider delayDuration={0}>
       {/* Desktop sidebar — hidden on mobile */}
       <div className="hidden md:block h-full">
-        <SidebarContent isCollapsed={isCollapsed} />
+        <SidebarContent isCollapsed={effectiveCollapsed} />
       </div>
 
       {/* Mobile Sheet */}

@@ -170,13 +170,28 @@ function MessageBubble({ msg, imageIndexMap, onImageClick }: MessageBubbleProps)
   const attachments = (msg.attachments ?? []).slice().sort((a, b) => a.position - b.position);
 
   return (
-    <div className={cn("flex flex-col gap-0.5 max-w-[80%]", alignClass, onRight ? "self-end" : "self-start")}>
+    // PR-5 (post-deploy bug A: unbroken long URLs — e.g. the Google Calendar
+    // deep-link the bot sends — blow the 768px layout, scrollWidth 1918 vs
+    // 768). `min-w-0` on this flex item and its bubble child lets the box
+    // actually shrink to `max-w-[80%]` instead of growing to fit an
+    // unbreakable token's intrinsic width.
+    <div className={cn("flex flex-col gap-0.5 max-w-[80%] min-w-0", alignClass, onRight ? "self-end" : "self-start")}>
       {roleLabel && (
         <span className="text-[10px] text-muted-foreground px-1">{roleLabel}</span>
       )}
-      <div className={cn("rounded-xl px-3 py-2 text-sm", bubbleClass)}>
+      <div className={cn("rounded-xl px-3 py-2 text-sm min-w-0", bubbleClass)}>
         {msg.content && (
-          <p className="whitespace-pre-wrap break-words">{msg.content}</p>
+          // `break-words` (Tailwind's overflow-wrap: break-word) only wraps a
+          // long token once the box is ALREADY narrower than it — per spec it
+          // does NOT shrink the box's min-content contribution, so with an
+          // unbreakable URL the box (and thus the page) still grows to fit
+          // it, ignoring max-w-[80%]. `overflow-wrap: anywhere` DOES shrink
+          // the min-content contribution (MDN), so the box can actually be
+          // constrained to 80% width and the long token wraps inside it.
+          // Normal Spanish text is unaffected — browsers still prefer
+          // breaking at word boundaries; `anywhere` only kicks in when a
+          // single unbreakable run doesn't fit.
+          <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">{msg.content}</p>
         )}
         {/* PR-3b: render attachments below the text content */}
         {attachments.map((att) => (
