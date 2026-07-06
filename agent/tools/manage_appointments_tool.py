@@ -525,22 +525,6 @@ async def _confirm_or_decline(
         }
 
 
-async def _confirm_appointment(
-    customer_phone: str, appointment_id: str, customer_id: UUID | None = None
-) -> dict:
-    return await _confirm_or_decline(
-        customer_phone, appointment_id, confirm=True, customer_id=customer_id
-    )
-
-
-async def _decline_appointment(
-    customer_phone: str, appointment_id: str, customer_id: UUID | None = None
-) -> dict:
-    return await _confirm_or_decline(
-        customer_phone, appointment_id, confirm=False, customer_id=customer_id
-    )
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 # F2 — confirm/decline disambiguation precondition
 #
