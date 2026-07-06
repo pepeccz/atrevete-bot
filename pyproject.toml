@@ -175,6 +175,7 @@ markers = [
     "slow: Slow running tests",
     "llm: Tests that require live OpenRouter LLM credentials (skip in CI without creds)",
     "rate_limit_required: Tests asserting 429 behaviour — must run with RATE_LIMITING_ENABLED=true",
+    "perf: Non-CI-gating local performance sanity checks (wall-clock, environment-dependent)",
 ]
 
 [tool.coverage.run]
