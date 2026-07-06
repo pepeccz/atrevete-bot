@@ -227,6 +227,7 @@ def _is_bare_completion(reply_content: str) -> bool:
     lowered = reply_content.lower()
     return not any(marker in lowered for marker in _COMPLETION_NEGATION_MARKERS)
 
+
 # Price pattern: matches "25 €", "30€", "25.50 eur", "100 euros" etc.
 _PRICE_RE = re.compile(
     r"\d+[.,]?\d*\s*(€|eur\b|euros\b)",
