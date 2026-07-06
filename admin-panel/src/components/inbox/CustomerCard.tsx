@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import {
   User,
   Phone,
@@ -24,11 +24,10 @@ import { Separator } from "@/components/ui/separator";
 import { formatDate } from "@/components/shared/format-utils";
 import { FetchError } from "@/components/shared/fetch-error";
 import { formatAppointmentStatus } from "@/lib/category-labels";
-import api from "@/lib/api";
-import { useNotes } from "@/hooks/useNotes";
 import type {
   CustomerDetail,
   CustomerAppointment,
+  ConversationNote,
   WhatsappContact,
 } from "@/lib/types";
 import Link from "next/link";
@@ -40,8 +39,8 @@ interface CustomerCardProps {
    */
   customerId: string | null;
   /**
-   * ConversationHistory UUID — used to load operator notes for this
-   * conversation via useNotes hook. PR-2, REQ-4.
+   * ConversationHistory UUID — used by the parent's useNotes call to scope
+   * operator notes to this conversation. PR-2, REQ-4.
    */
   conversationId?: string | null;
   /**
@@ -50,6 +49,24 @@ interface CustomerCardProps {
    * conversations whose webhook ran before sender_phone was persisted.
    */
   whatsappContact?: WhatsappContact | null;
+  /**
+   * PR-3 (ADR-4 container-presentational lift): customer detail + recent
+   * appointments now come from the parent's `useCustomerCardData` hook so a
+   * single fetch feeds both the inline and Sheet-drawer card instances.
+   */
+  customer: CustomerDetail | null;
+  appointments: CustomerAppointment[];
+  loading: boolean;
+  fetchError: boolean;
+  /** Re-fetches customer + appointments — wired to the parent hook's `reload`. */
+  onRetry: () => void;
+  /** Operator notes — lifted to the parent's `useNotes` call (PR-3). */
+  notes: ConversationNote[];
+  notesOpen: boolean;
+  onToggleNotes: () => void;
+  addNote: (content: string) => Promise<void>;
+  editNote: (noteId: string, content: string) => Promise<void>;
+  removeNote: (noteId: string) => Promise<void>;
   /** True when the column is rendered in narrow icon-rail mode. */
   collapsed?: boolean;
   /** Toggle handler — flips collapsed state in the parent. */
@@ -59,7 +76,10 @@ interface CustomerCardProps {
 /**
  * Right column of the inbox layout: customer information card.
  * Shows contact details, last appointments, and agent notes.
- * Reuses the existing /customers/[id] data contract (api.getCustomerDetail).
+ * Presentational (PR-3, ADR-4) — customer/appointments/notes data and their
+ * fetches live in the parent (`page.tsx` + `useCustomerCardData` +
+ * `useNotes`), so the SAME props can feed both the inline (desktop) and
+ * Sheet-drawer (tablet/mobile) instances without duplicate network calls.
  * Supports a collapsed icon-rail mode for more thread real-estate.
  * FR-UI-1.
  */
@@ -67,55 +87,28 @@ export function CustomerCard({
   customerId,
   conversationId = null,
   whatsappContact,
+  customer,
+  appointments,
+  loading,
+  fetchError,
+  onRetry,
+  notes,
+  notesOpen,
+  onToggleNotes,
+  addNote,
+  editNote,
+  removeNote,
   collapsed = false,
   onToggleCollapsed,
 }: CustomerCardProps) {
-  const [customer, setCustomer] = useState<CustomerDetail | null>(null);
-  const [appointments, setAppointments] = useState<CustomerAppointment[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [fetchError, setFetchError] = useState(false);
-
-  // Notes panel state (PR-2)
-  const [notesOpen, setNotesOpen] = useState(false);
+  // Purely-local draft state — only one CustomerCard instance is ever visible
+  // at a time, so invisible-instance draft desync (the other mounted-but-
+  // hidden/closed instance) is unobservable.
   const [newNoteContent, setNewNoteContent] = useState("");
   const [addingNote, setAddingNote] = useState(false);
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [editContent, setEditContent] = useState("");
-  const { notes, addNote, editNote, removeNote } = useNotes(
-    notesOpen ? conversationId : null
-  );
   const newNoteRef = useRef<HTMLTextAreaElement>(null);
-  const reqId = useRef(0);
-
-  const loadCustomer = useCallback(async () => {
-    if (!customerId) {
-      setCustomer(null);
-      setAppointments([]);
-      return;
-    }
-    const myReq = ++reqId.current;
-    setLoading(true);
-    setFetchError(false);
-    try {
-      const [cust, appts] = await Promise.all([
-        api.getCustomerDetail(customerId),
-        api.getCustomerAppointments(customerId, 1, 3),
-      ]);
-      if (myReq !== reqId.current) return; // stale response — a newer request is in flight
-      setCustomer(cust);
-      setAppointments(appts.items);
-    } catch (err) {
-      if (myReq !== reqId.current) return;
-      console.error("[CustomerCard] loadCustomer failed:", err);
-      setFetchError(true);
-    } finally {
-      if (myReq === reqId.current) setLoading(false);
-    }
-  }, [customerId]);
-
-  useEffect(() => {
-    loadCustomer();
-  }, [loadCustomer]);
 
   const waName = whatsappContact?.name?.trim() || null;
   const waPhone = whatsappContact?.phone?.trim() || null;
@@ -253,7 +246,7 @@ export function CustomerCard({
         <CardToggleHeader onToggleCollapsed={onToggleCollapsed} />
         {fetchError ? (
           <div className="flex flex-1 items-center justify-center">
-            <FetchError onRetry={loadCustomer} />
+            <FetchError onRetry={onRetry} />
           </div>
         ) : (
           <div className="flex flex-1 flex-col items-center justify-center text-sm text-muted-foreground gap-2 p-4">
@@ -461,7 +454,7 @@ export function CustomerCard({
                   className="flex items-center gap-1.5 w-full text-left"
                   aria-expanded={notesOpen}
                   aria-controls="notes-panel"
-                  onClick={() => setNotesOpen((o) => !o)}
+                  onClick={onToggleNotes}
                 >
                   <StickyNote className="h-3.5 w-3.5 text-muted-foreground" />
                   <p className="text-[11px] font-bold tracking-widest text-muted-foreground uppercase flex-1">
