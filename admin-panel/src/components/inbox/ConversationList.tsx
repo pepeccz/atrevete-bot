@@ -21,7 +21,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
 import { useConversationPolling } from "@/hooks/useConversationPolling";
 import { useSearch } from "@/hooks/useSearch";
-import { formatDate } from "@/components/shared/format-utils";
+import { formatDate, formatRelativeTime } from "@/components/shared/format-utils";
 import { FetchError } from "@/components/shared/fetch-error";
 import api from "@/lib/api";
 import type { InboxFilter, ConversationHistoryInbox } from "@/lib/types";
@@ -137,9 +137,12 @@ function ConvItem({
               )}
             </div>
           </div>
-          <p className="text-xs text-muted-foreground mt-0.5 truncate">
+          <p
+            className="text-xs text-muted-foreground mt-0.5 truncate"
+            title={conv.started_at ? formatDate(conv.started_at) : undefined}
+          >
             {conv.message_count} mensajes
-            {conv.started_at ? ` · ${formatDate(conv.started_at)}` : ""}
+            {conv.started_at ? ` · ${formatRelativeTime(conv.started_at)}` : ""}
           </p>
           {conv.summary && (
             <p className="text-xs text-muted-foreground mt-0.5 truncate opacity-75">

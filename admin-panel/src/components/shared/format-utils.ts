@@ -1,4 +1,4 @@
-import { format } from "date-fns";
+import { format, formatDistanceToNow } from "date-fns";
 import { es } from "date-fns/locale";
 
 /**
@@ -11,6 +11,22 @@ export function formatDate(dateString: string | null, includeTime = true): strin
   try {
     const pattern = includeTime ? "dd/MM/yyyy HH:mm" : "dd/MM/yyyy";
     return format(new Date(dateString), pattern, { locale: es });
+  } catch {
+    return dateString;
+  }
+}
+
+/**
+ * Format a date string as a Spanish relative time (e.g. "hace 10 minutos").
+ * Extracted from the Dashboard "Necesitan atención" escalations widget
+ * (PR-4, inbox-reliability-p1 acceptance follow-up) so the same relative
+ * formatting is shared across the app instead of duplicated inline.
+ * Falls back to the original string on parse error.
+ */
+export function formatRelativeTime(dateString: string | null): string {
+  if (!dateString) return "-";
+  try {
+    return formatDistanceToNow(new Date(dateString), { addSuffix: true, locale: es });
   } catch {
     return dateString;
   }
