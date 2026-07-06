@@ -25,6 +25,7 @@ TAB-COUNTS.
 
 from __future__ import annotations
 
+import os
 from datetime import UTC, datetime, timedelta
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
@@ -282,6 +283,10 @@ async def test_list_conversations_tab_counts_consistent(fake_admin_user):
 
 
 @pytest.mark.perf
+@pytest.mark.skipif(
+    os.environ.get("RUN_PERF_TESTS") != "1",
+    reason="wall-clock latency test — environment-dependent; set RUN_PERF_TESTS=1 to run",
+)
 async def test_list_conversations_latency_budget_200_rows(fake_admin_user):
     """Informational: listing ~200 conversations completes in well under 2s.
 
