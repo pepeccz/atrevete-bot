@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Loader2, MessageSquare, Paperclip, Download, MoreHorizontal } from "lucide-react";
+import { ChevronLeft, Info, Loader2, MessageSquare, Paperclip, Download, MoreHorizontal } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import {
@@ -221,6 +221,18 @@ interface ConversationThreadProps {
   conversationId: string;
   /** Called with the deleted conversation's ID after a successful delete. */
   onDeleted?: (conversationId: string) => void;
+  /**
+   * PR-3 (responsive master-detail): back-to-list handler, shown as a
+   * chevron button visible only below the `md` breakpoint (mobile
+   * single-column push-nav). Omit to hide the button entirely (desktop/tablet).
+   */
+  onBack?: () => void;
+  /**
+   * PR-3: opens the customer-card Sheet drawer, shown as an info button
+   * visible only below the `xl` breakpoint (mobile + tablet, where the
+   * customer card is not rendered inline). Omit to hide the button (desktop).
+   */
+  onOpenCustomer?: () => void;
 }
 
 /**
@@ -228,7 +240,12 @@ interface ConversationThreadProps {
  * PausedBanner, Composer, and BotToggle in the header.
  * Polls at 3s (focused) / 10s (blurred) cadence (FR-UI-1, FR-UI-6).
  */
-export function ConversationThread({ conversationId, onDeleted }: ConversationThreadProps) {
+export function ConversationThread({
+  conversationId,
+  onDeleted,
+  onBack,
+  onOpenCustomer,
+}: ConversationThreadProps) {
   const [conversation, setConversation] = useState<ConversationHistory | null>(null);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState(false);
@@ -442,12 +459,36 @@ export function ConversationThread({ conversationId, onDeleted }: ConversationTh
       {/* Thread header */}
       <div className="flex items-center justify-between px-4 py-2.5 border-b border-line bg-sidebar flex-shrink-0">
         <div className="flex items-center gap-2 min-w-0">
+          {onBack && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 -ml-1.5 flex-shrink-0 md:hidden"
+              onClick={onBack}
+              aria-label="Volver a la lista de conversaciones"
+              title="Volver"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+          )}
           <MessageSquare className="h-4 w-4 text-muted-foreground flex-shrink-0" />
           <span className="text-sm font-medium truncate">
             {conversation?.customer_name ?? "Conversación"}
           </span>
         </div>
         <div className="flex items-center gap-1 flex-shrink-0">
+          {onOpenCustomer && (
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 xl:hidden"
+              onClick={onOpenCustomer}
+              aria-label="Ver cliente"
+              title="Ver cliente"
+            >
+              <Info className="h-4 w-4" />
+            </Button>
+          )}
           {conversation && (
             <BotToggle
               conversationId={conversationId}
