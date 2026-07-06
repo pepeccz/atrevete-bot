@@ -18,15 +18,20 @@
  * Access gated by conversations:read permission (FR-UI-1, NFR-1).
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { MessageSquare } from "lucide-react";
+import { ChevronLeft, MessageSquare } from "lucide-react";
 
 import { Header } from "@/components/layout/header";
 import { ConversationList } from "@/components/inbox/ConversationList";
 import { ConversationThread } from "@/components/inbox/ConversationThread";
 import { CustomerCard } from "@/components/inbox/CustomerCard";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
+import { Button } from "@/components/ui/button";
 import { usePermission } from "@/hooks/use-permission";
+import { useCustomerCardData } from "@/hooks/use-customer-card-data";
+import { useNotes } from "@/hooks/useNotes";
+import { useMediaQuery } from "@/hooks/use-media-query";
 import api from "@/lib/api";
 import { cn } from "@/lib/utils";
 import type { InboxFilter, ConversationHistory, ConversationHistoryInbox } from "@/lib/types";
@@ -71,20 +76,44 @@ function AccessDenied() {
   );
 }
 
+// ─── Mobile back-to-list button ────────────────────────────────────────────────
+
+/**
+ * Shown only below `md` (mobile single-column push-nav) so a user stuck on a
+ * pending/failed deep-link resolve (numeric id in flight or 404) can always
+ * return to the list — ConversationThread's own back button only exists once
+ * a thread actually mounts, which does not happen in these two states.
+ */
+function MobileBackButton({ onBack }: { onBack?: () => void }) {
+  if (!onBack) return null;
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      className="md:hidden gap-1.5"
+      onClick={onBack}
+    >
+      <ChevronLeft className="h-4 w-4" />
+      Volver a la lista
+    </Button>
+  );
+}
+
 // ─── Empty thread pane ─────────────────────────────────────────────────────────
 
-function EmptyThread() {
+function EmptyThread({ onBack }: { onBack?: () => void }) {
   return (
     <div className="flex flex-col items-center justify-center h-full gap-4 text-muted-foreground">
       <MessageSquare className="h-10 w-10 opacity-20" />
       <p className="text-sm">Selecciona una conversación para ver los mensajes</p>
+      <MobileBackButton onBack={onBack} />
     </div>
   );
 }
 
 // ─── Unavailable thread pane ───────────────────────────────────────────────────
 
-function UnavailableThread() {
+function UnavailableThread({ onBack }: { onBack?: () => void }) {
   return (
     <div className="flex flex-col items-center justify-center h-full gap-4 text-muted-foreground">
       <MessageSquare className="h-10 w-10 opacity-20" />
@@ -94,6 +123,7 @@ function UnavailableThread() {
           Puede que ya no exista o que el enlace ya no sea válido.
         </p>
       </div>
+      <MobileBackButton onBack={onBack} />
     </div>
   );
 }
@@ -128,6 +158,12 @@ export default function ConversationsPage() {
   // session preferences are restored from localStorage.
   const [listCollapsed, setListCollapsed] = useState<boolean>(false);
   const [cardCollapsed, setCardCollapsed] = useState<boolean>(false);
+  // PR-3 (ADR-4 responsive master-detail): the customer card renders inline
+  // at >=xl and inside this Sheet drawer below xl (tablet/mobile).
+  const [cardSheetOpen, setCardSheetOpen] = useState(false);
+  // Ref to the mobile list pane — focus is restored here after "back to list"
+  // so keyboard/screen-reader users land somewhere sensible post push-nav pop.
+  const listContainerRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     try {
       if (localStorage.getItem("inbox.listCollapsed") === "1") setListCollapsed(true);
@@ -270,6 +306,7 @@ export default function ConversationsPage() {
         setActiveConversationId(null);
         setActiveCustomerId(null);
         setActiveWhatsappContact(null);
+        setCardSheetOpen(false);
         updateUrl(undefined, null);
       }
       // The list will refetch on its own polling cycle, but trigger immediately
@@ -278,6 +315,53 @@ export default function ConversationsPage() {
     },
     [activeConversationId, updateUrl]
   );
+
+  // PR-3 (mobile single-column push-nav): pop back to the list, clearing the
+  // active conversation/customer selection and restoring focus to the list pane.
+  const handleBack = useCallback(() => {
+    setActiveConversationId(null);
+    setActiveCustomerId(null);
+    setActiveWhatsappContact(null);
+    setCardSheetOpen(false);
+    updateUrl(undefined, null);
+    requestAnimationFrame(() => listContainerRef.current?.focus());
+  }, [updateUrl]);
+
+  // PR-3 (ADR-4 CustomerCard container-presentational lift): a SINGLE fetch —
+  // owned here — feeds both the inline (desktop) and Sheet-drawer
+  // (tablet/mobile) CustomerCard instances via the same `cardProps` object,
+  // eliminating the duplicate-fetch risk of two independently-fetching cards.
+  const cardData = useCustomerCardData(activeCustomerId);
+  const [notesOpen, setNotesOpen] = useState(false);
+  const notesHook = useNotes(notesOpen ? activeConversationId : null);
+  const toggleNotes = useCallback(() => setNotesOpen((o) => !o), []);
+
+  // PR-3 (useMediaQuery gates BEHAVIOR only, never structural layout — the
+  // Sheet's own responsive visibility is CSS/Tailwind on SheetContent).
+  // Auto-close the drawer if the viewport grows into the desktop (xl) range
+  // where the customer card is shown inline instead, so it can't linger open
+  // as a redundant overlay after a resize.
+  const isDesktopXl = useMediaQuery("(min-width: 1280px)");
+  useEffect(() => {
+    if (isDesktopXl && cardSheetOpen) setCardSheetOpen(false);
+  }, [isDesktopXl, cardSheetOpen]);
+
+  const cardProps = {
+    customerId: activeCustomerId,
+    conversationId: activeConversationId,
+    whatsappContact: activeWhatsappContact,
+    customer: cardData.customer,
+    appointments: cardData.appointments,
+    loading: cardData.loading,
+    fetchError: cardData.fetchError,
+    onRetry: cardData.reload,
+    notes: notesHook.notes,
+    notesOpen,
+    onToggleNotes: toggleNotes,
+    addNote: notesHook.addNote,
+    editNote: notesHook.editNote,
+    removeNote: notesHook.removeNote,
+  };
 
   if (!canRead) return <AccessDenied />;
 
@@ -288,13 +372,24 @@ export default function ConversationsPage() {
         description="Bandeja de entrada — gestiona conversaciones con clientes"
       />
 
-      {/* 3-column grid — fills remaining height */}
+      {/*
+        Responsive master-detail (ADR-4, CSS-first, selection-state driven —
+        NOT route-based, so the URL-SSOT + polling stay on a single page):
+          - <md (mobile):    single column; list OR thread pushes on selection
+          - md..<xl (tablet): list + thread; customer card is a Sheet drawer
+          - >=xl (desktop):   list + thread + customer card, all inline
+        ConversationList stays MOUNTED at every breakpoint (only CSS-hidden)
+        so polling and its own scroll position survive the mobile push/pop.
+      */}
       <div className="flex flex-1 min-h-0 overflow-hidden">
-        {/* Left — conversation list (collapsible icon rail) */}
+        {/* Left — conversation list (full-width push on mobile; collapsible icon rail on md+) */}
         <div
+          ref={listContainerRef}
+          tabIndex={-1}
           className={cn(
-            "flex-shrink-0 overflow-hidden transition-[width] duration-150",
-            listCollapsed ? "w-12" : "w-72"
+            "flex-shrink-0 overflow-hidden transition-[width] duration-150 focus:outline-none",
+            activeConversationId ? "hidden md:flex" : "flex w-full",
+            listCollapsed ? "md:w-12" : "md:w-72"
           )}
         >
           <ConversationList
@@ -309,40 +404,54 @@ export default function ConversationsPage() {
           />
         </div>
 
-        {/* Center — active thread */}
-        <div className="flex-1 min-w-0 overflow-hidden border-r border-line">
+        {/* Center — active thread (full-width push on mobile once selected) */}
+        <div
+          className={cn(
+            "min-w-0 overflow-hidden border-r border-line",
+            activeConversationId ? "flex w-full md:flex-1" : "hidden md:flex md:flex-1"
+          )}
+        >
           {loadableConversationId ? (
             <ConversationThread
               conversationId={loadableConversationId}
               onDeleted={handleConversationDeleted}
+              onBack={handleBack}
+              onOpenCustomer={() => setCardSheetOpen(true)}
             />
           ) : activeConversationId && isBareNumericId(activeConversationId) && !numericResolveFailed ? (
             // Numeric deep-link id: the one-shot resolver above is in flight
             // (or ConversationList's array-scan may still resolve it first).
             // Stay neutral here — no "unavailable" flash — until it fails.
-            <EmptyThread />
+            <EmptyThread onBack={handleBack} />
           ) : activeConversationId && (conversationUnavailable || numericResolveFailed) ? (
-            <UnavailableThread />
+            <UnavailableThread onBack={handleBack} />
           ) : (
             <EmptyThread />
           )}
         </div>
 
-        {/* Right — customer card (collapsible icon rail) */}
+        {/* Right — customer card: inline icon rail at >=xl */}
         <div
           className={cn(
-            "flex-shrink-0 overflow-hidden transition-[width] duration-150",
-            cardCollapsed ? "w-12" : "w-72"
+            "hidden xl:flex flex-shrink-0 overflow-hidden transition-[width] duration-150",
+            cardCollapsed ? "xl:w-12" : "xl:w-72"
           )}
         >
           <CustomerCard
-            customerId={activeCustomerId}
-            conversationId={activeConversationId}
-            whatsappContact={activeWhatsappContact}
+            {...cardProps}
             collapsed={cardCollapsed}
             onToggleCollapsed={toggleCardCollapsed}
           />
         </div>
+
+        {/* Right — customer card: Sheet drawer below xl (tablet/mobile),
+            opened via the thread header's "Ver cliente" info button. */}
+        <Sheet open={cardSheetOpen} onOpenChange={setCardSheetOpen}>
+          <SheetContent side="right" className="w-full sm:max-w-sm p-0 xl:hidden">
+            <SheetTitle className="sr-only">Ficha del cliente</SheetTitle>
+            <CustomerCard {...cardProps} />
+          </SheetContent>
+        </Sheet>
       </div>
     </div>
   );
