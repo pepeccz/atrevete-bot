@@ -17,6 +17,7 @@ import {
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { toast } from "sonner";
 import { useConversationPolling } from "@/hooks/useConversationPolling";
 import { useSearch } from "@/hooks/useSearch";
@@ -75,6 +76,7 @@ function ConvItem({
   onClick: () => void;
 }) {
   const inbox = conv as unknown as ConversationHistoryInbox;
+  const isEscalated = inbox.is_escalated === true;
   const botPaused = inbox.paused_at != null || inbox.atencion_automatica === false;
   const name = conv.customer_name ?? "Cliente desconocido";
 
@@ -89,8 +91,10 @@ function ConvItem({
     >
       <div className="flex items-start gap-2.5">
         <div className="flex-shrink-0 mt-0.5">
-          {botPaused ? (
-            <BotOff className="h-4 w-4 text-amber-500" />
+          {isEscalated ? (
+            <AlertTriangle className="h-4 w-4 text-red-600" />
+          ) : botPaused ? (
+            <BotOff className="h-4 w-4 text-muted-foreground" />
           ) : (
             <MessageSquare className="h-4 w-4 text-green-600" />
           )}
@@ -108,10 +112,28 @@ function ConvItem({
                   {inbox.unread_message_count}
                 </Badge>
               )}
-              {botPaused && (
-                <Badge variant="outline" className="text-[10px] px-1 py-0 border-amber-400 text-amber-700">
-                  Pausado
+              {isEscalated ? (
+                <Badge
+                  variant="destructive"
+                  className="text-[10px] px-1.5 py-0 max-w-[9rem] truncate"
+                  title={
+                    inbox.escalation_reason
+                      ? `Escalada · ${inbox.escalation_reason}`
+                      : "Escalada"
+                  }
+                >
+                  Escalada
+                  {inbox.escalation_reason ? ` · ${inbox.escalation_reason}` : ""}
                 </Badge>
+              ) : (
+                botPaused && (
+                  <Badge
+                    variant="outline"
+                    className="text-[10px] px-1 py-0 border-muted-foreground/30 text-muted-foreground"
+                  >
+                    Pausado
+                  </Badge>
+                )
               )}
             </div>
           </div>
@@ -129,6 +151,25 @@ function ConvItem({
     </button>
   );
 }
+
+// ─── Skeleton placeholder row ──────────────────────────────────────────────────
+
+/** Placeholder row matching ConvItem's height/spacing, shown during first load. */
+function ConvItemSkeleton() {
+  return (
+    <div className="w-full px-3 py-3 rounded-lg">
+      <div className="flex items-start gap-2.5">
+        <Skeleton className="h-4 w-4 rounded-full flex-shrink-0 mt-0.5" />
+        <div className="flex-1 min-w-0 space-y-1.5">
+          <Skeleton className="h-3.5 w-2/3" />
+          <Skeleton className="h-3 w-1/2" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const SKELETON_ROW_COUNT = 6;
 
 // ─── Component ─────────────────────────────────────────────────────────────────
 
@@ -169,6 +210,10 @@ export function ConversationList({
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState(false);
   const hadErrorRef = useRef(false);
+  // Tracks whether the very first fetch (on mount) has settled — success or
+  // failure. Used to gate the skeleton so background polls (and filter
+  // switches) never re-show it once the list has loaded at least once.
+  const hasLoadedOnceRef = useRef(false);
 
   // PR-2: search state
   const [searchQuery, setSearchQuery] = useState("");
@@ -213,6 +258,7 @@ export function ConversationList({
       }
     } finally {
       setLoading(false);
+      hasLoadedOnceRef.current = true;
     }
   }, [activeFilter]);
 
@@ -450,9 +496,11 @@ export function ConversationList({
 
       {/* List */}
       <div className="flex-1 overflow-y-auto p-2 space-y-1">
-        {loading && !isSearching && conversations.length === 0 ? (
-          <div className="flex items-center justify-center h-20 text-sm text-muted-foreground">
-            Cargando…
+        {loading && !isSearching && !hasLoadedOnceRef.current ? (
+          <div className="space-y-1" aria-busy="true" aria-label="Cargando conversaciones">
+            {Array.from({ length: SKELETON_ROW_COUNT }).map((_, i) => (
+              <ConvItemSkeleton key={i} />
+            ))}
           </div>
         ) : fetchError && conversations.length === 0 ? (
           <FetchError onRetry={fetchList} />

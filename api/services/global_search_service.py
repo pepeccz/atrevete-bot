@@ -6,8 +6,8 @@ using PostgreSQL ILIKE queries accelerated by the ``pg_trgm`` GIN indexes
 added in the PR-2 migration.
 
 Design (ADR-D6):
-- ILIKE '%q%' against ``customers.name``, ``customers.phone``, and
-  ``conversation_messages.content``.
+- ILIKE '%q%' against ``customers.first_name``, ``customers.last_name``,
+  ``customers.phone``, and ``conversation_messages.content``.
 - Server-side sanitization: ``%``, ``_``, ``\\`` in the query are escaped so
   they are treated as literals, not ILIKE wildcards.
 - Empty or whitespace-only queries return an empty list immediately.
@@ -85,6 +85,7 @@ async def search_conversations(
         .where(
             or_(
                 Customer.first_name.ilike(pattern),
+                Customer.last_name.ilike(pattern),
                 Customer.phone.ilike(pattern),
             )
         )
