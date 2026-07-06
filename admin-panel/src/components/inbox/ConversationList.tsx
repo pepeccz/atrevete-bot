@@ -210,6 +210,10 @@ export function ConversationList({
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState(false);
   const hadErrorRef = useRef(false);
+  // Tracks whether the very first fetch (on mount) has settled — success or
+  // failure. Used to gate the skeleton so background polls (and filter
+  // switches) never re-show it once the list has loaded at least once.
+  const hasLoadedOnceRef = useRef(false);
 
   // PR-2: search state
   const [searchQuery, setSearchQuery] = useState("");
@@ -254,6 +258,7 @@ export function ConversationList({
       }
     } finally {
       setLoading(false);
+      hasLoadedOnceRef.current = true;
     }
   }, [activeFilter]);
 
@@ -491,7 +496,7 @@ export function ConversationList({
 
       {/* List */}
       <div className="flex-1 overflow-y-auto p-2 space-y-1">
-        {loading && !isSearching && conversations.length === 0 ? (
+        {loading && !isSearching && !hasLoadedOnceRef.current ? (
           <div className="space-y-1" aria-busy="true" aria-label="Cargando conversaciones">
             {Array.from({ length: SKELETON_ROW_COUNT }).map((_, i) => (
               <ConvItemSkeleton key={i} />
