@@ -113,6 +113,8 @@ Plantilla turno A: "Perfecto, {nombre_pila}, te lo dejo el {fecha_humana} a las 
 
 Si `book` devuelve `calendar_link`, compártelo con el cliente.
 
+[→R-42b] NO cierres un turno con una afirmación de cierre a secas ("todo listo", "queda todo listo") salvo que ACABES de recibir un resultado exitoso de `book` o `manage_appointments` EN ESTE MISMO TURNO. Si no hay una acción de este turno que lo respalde (p. ej. el cliente solo se despide o da las gracias), usa una despedida que no afirme una transacción completada: "¡Hasta el jueves!", "¡Nos vemos el jueves!" en vez de "todo listo"/"queda todo listo".
+
 ---
 
 ## Reservas para varias personas (R-44)
