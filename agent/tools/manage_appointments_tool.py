@@ -542,6 +542,141 @@ async def _decline_appointment(
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# F2 — confirm/decline disambiguation precondition
+#
+# When a customer has more than 1 PENDING appointment awaiting confirmation,
+# the target MUST be resolved exclusively from the customer's own message
+# text (ordinal/keyword selectors via confirmation_service.detect_multi_selection)
+# — the LLM-supplied appointment_id is ignored in that case. No date/time/
+# stylist free-text NLU is authorized here (would reopen the wrong-row risk).
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _disambiguation_gate(pending: list, user_message: str) -> dict:
+    """
+    Interpret the customer's own message against an ALREADY-FETCHED pending
+    set (caller only invokes this when len(pending) > 1).
+
+    Recognizes ONLY ordinal/number selectors and ALL-type keywords via
+    confirmation_service.detect_multi_selection — no free-text date/time/
+    stylist NLU.
+
+    Returns one of:
+        {"mode": "list"}
+            No recognized selector found. Caller MUST return the guided
+            disambiguation list and MUST NOT mutate any appointment.
+        {"mode": "all"}
+            Customer used an ALL-type keyword ("todas" / "cancelar todas").
+            Caller applies the action to every appointment in `pending`.
+        {"mode": "resolved", "appointment_id": str}
+            Customer named a valid in-range ordinal/number. Caller acts on
+            that appointment only (pending[n-1].id), ignoring any
+            LLM-supplied appointment_id.
+    """
+    from agent.services.confirmation_service import detect_multi_selection
+
+    is_all, _is_cancel, selection_number = detect_multi_selection(user_message or "")
+    if is_all:
+        return {"mode": "all"}
+    if selection_number is not None and 1 <= selection_number <= len(pending):
+        return {"mode": "resolved", "appointment_id": str(pending[selection_number - 1].id)}
+    return {"mode": "list"}
+
+
+def _build_disambiguation_message(pending: list, *, confirm: bool) -> str:
+    """
+    Build the guided disambiguation list with a usage-guidance footer,
+    mirroring confirmation_service.py's handle_confirmation_response style
+    (numbered list + explicit reply-with-number/ALL-keyword instructions).
+    """
+    from agent.services.confirmation_service import _build_appointment_list
+
+    appt_list = _build_appointment_list(pending)
+    action_verb = "confirmar" if confirm else "cancelar"
+    all_keyword = "TODAS" if confirm else "CANCELAR TODAS"
+    return (
+        f"Tienes {len(pending)} citas pendientes de confirmación:\n\n"
+        f"{appt_list}\n\n"
+        f"¿Cuál quieres {action_verb}?\n"
+        f"• *1*, *2*... - para una cita específica\n"
+        f"• *{all_keyword}* - para {action_verb} todas"
+    )
+
+
+async def _confirm_or_decline_all(
+    customer_phone: str,
+    appointment_ids: list[str],
+    *,
+    confirm: bool,
+    customer_id: UUID | None,
+) -> str:
+    """
+    Apply confirm/decline to every id in appointment_ids, one row at a time,
+    reusing `_confirm_or_decline` so per-row IDOR/FK validation is preserved
+    (no bulk-only code path that could bypass ownership checks).
+    """
+    results = [
+        await _confirm_or_decline(
+            customer_phone=customer_phone,
+            appointment_id=appt_id,
+            confirm=confirm,
+            customer_id=customer_id,
+        )
+        for appt_id in appointment_ids
+    ]
+    ok_count = sum(1 for r in results if r["success"])
+    action_word = "confirmadas" if confirm else "canceladas"
+    if ok_count == len(results):
+        return f"Tus {ok_count} citas han sido {action_word}."
+    lines = "\n".join(r["message"] for r in results)
+    return f"Se procesaron {ok_count} de {len(results)} citas:\n\n{lines}"
+
+
+async def _dispatch_confirm_or_decline(
+    customer_phone: str,
+    appointment_id: str,
+    user_message: str,
+    *,
+    confirm: bool,
+    customer_id: UUID | None,
+) -> str:
+    """
+    Confirm/decline entry point with the F2 disambiguation precondition.
+
+    With 0 or 1 PENDING appointment awaiting confirmation, behavior is
+    unchanged (direct confirm/decline via the LLM-supplied appointment_id).
+    With more than 1 pending, the target is resolved exclusively from the
+    customer's own message (see `_disambiguation_gate`); the LLM-supplied
+    appointment_id is ignored in that case.
+    """
+    resolved_id = appointment_id
+    if customer_id is not None:
+        from agent.services.confirmation_service import get_pending_confirmations
+
+        pending = await get_pending_confirmations(customer_id)
+        if len(pending) > 1:
+            gate = _disambiguation_gate(pending, user_message)
+            if gate["mode"] == "list":
+                return _build_disambiguation_message(pending, confirm=confirm)
+            if gate["mode"] == "all":
+                return await _confirm_or_decline_all(
+                    customer_phone,
+                    [str(appt.id) for appt in pending],
+                    confirm=confirm,
+                    customer_id=customer_id,
+                )
+            resolved_id = gate["appointment_id"]
+
+    result = await _confirm_or_decline(
+        customer_phone=customer_phone,
+        appointment_id=resolved_id,
+        confirm=confirm,
+        customer_id=customer_id,
+    )
+    return result["message"]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Public @tool wrapper
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -613,20 +748,22 @@ async def manage_appointments(
             return result["message"]
 
         if action == "confirm":
-            result = await _confirm_appointment(
+            return await _dispatch_confirm_or_decline(
                 customer_phone=customer_phone,
                 appointment_id=appointment_id or "",
+                user_message=_state.get("user_message") or "",
+                confirm=True,
                 customer_id=_customer_id,
             )
-            return result["message"]
 
         if action == "decline":
-            result = await _decline_appointment(
+            return await _dispatch_confirm_or_decline(
                 customer_phone=customer_phone,
                 appointment_id=appointment_id or "",
+                user_message=_state.get("user_message") or "",
+                confirm=False,
                 customer_id=_customer_id,
             )
-            return result["message"]
 
         if action == "reschedule":
             result = await _reschedule_appointment(
