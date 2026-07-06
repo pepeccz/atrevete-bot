@@ -156,6 +156,77 @@ _CONFIRMATION_FALLBACK_MESSAGE = (
     "¿Te confirmo las opciones?"
 )
 
+# --- F1 v3 — bare-proposal template guard (BLOCKING, REQ-F1-1) -------------
+# Turn-A proposal template ("te lo dejo" + a time/date token). Legit Turn-A phrasing
+# (booking_flow.md, "Puerta de confirmación") always ends in "¿Te lo confirmo?"; the
+# phantom variant is the SAME template MINUS the trailing "?". This guard fires
+# regardless of any this-turn tool backing (REQ-F1-1) — it is not part of the shared
+# _BOOKING_CONFIRMATION_PATTERNS tuple synced with the harness (drift-guard scope
+# unchanged; see module docstring D7 / test_booking_regex_source_matches_harness_helper).
+_BARE_PROPOSAL_PHRASE_RE = re.compile(r"te\s+lo\s+dejo", re.IGNORECASE)
+_TIME_OR_DATE_TOKEN_RE = re.compile(
+    r"\d{1,2}[:.]\d{2}"  # "14:30" / "14.30"
+    r"|\d{1,2}\s+de\s+[a-záéíóúñ]+"  # "9 de julio"
+    r"|\b(lunes|martes|mi[ée]rcoles|jueves|viernes|s[áa]bado|domingo)\b",
+    re.IGNORECASE,
+)
+
+
+def _matches_bare_proposal(reply_content: str) -> bool:
+    """True for the Turn-A proposal template ("te lo dejo" + time/date) with no "?".
+
+    REQ-F1-1: counts a match ONLY when the reply has no "?", regardless of this-turn
+    tool backing — a proposal template phrased as a statement (no question) is flagged
+    unconditionally.
+    """
+    if not isinstance(reply_content, str) or not reply_content:
+        return False
+    if "?" in reply_content:
+        return False
+    if not _BARE_PROPOSAL_PHRASE_RE.search(reply_content):
+        return False
+    return bool(_TIME_OR_DATE_TOKEN_RE.search(reply_content))
+
+
+# --- F1 v3 — bare-completion phrase guard (BLOCKING, REQ-F1-2) -------------
+# Closing/completion phrases ("queda todo listo", "todo listo", "ya está todo") that
+# assert completion without a "?" and without any failure/negation marker nearby. Also
+# fires regardless of this-turn tool backing (REQ-F1-2) and lives in the middleware
+# only — NOT part of the shared drift-guard tuple.
+_COMPLETION_PHRASE_RE = re.compile(
+    r"queda\s+todo\s+listo|\btodo\s+listo\b|ya\s+est[áa]\s+todo\b",
+    re.IGNORECASE,
+)
+
+# Failure/negation marker set for the completion-phrase guard: reuses
+# _MANAGE_ERROR_MARKERS plus the literals "pero" and "no se ha" (REQ-F1-2).
+_COMPLETION_NEGATION_MARKERS: tuple[str, ...] = (*_MANAGE_ERROR_MARKERS, "pero", "no se ha")
+
+# Friendly, neutral closing substituted when a bare-completion phantom is blocked. Does
+# NOT invite re-booking (unlike _CONFIRMATION_FALLBACK_MESSAGE) — it neither asserts nor
+# denies a booking, so the accepted residual FP (post-real-booking closing pleasantry,
+# REQ-F1-7) becomes a harmless warm closing instead of a flow-corrupting re-booking
+# prompt. Castellano, no voseo (project convention).
+_COMPLETION_FALLBACK_MESSAGE = "¡Un placer! Si necesitas cualquier otra cosa, aquí me tienes 😊"
+
+
+def _is_bare_completion(reply_content: str) -> bool:
+    """True for a bare completion-phrase phantom (REQ-F1-2).
+
+    Counts a match ONLY when the message (a) has NO "?" AND (b) contains NONE of the
+    failure/negation marker set (_COMPLETION_NEGATION_MARKERS). A completion phrase that
+    has a "?" OR contains a failure/negation marker is exempted, independent of tool
+    backing.
+    """
+    if not isinstance(reply_content, str) or not reply_content:
+        return False
+    if "?" in reply_content:
+        return False
+    if not _COMPLETION_PHRASE_RE.search(reply_content):
+        return False
+    lowered = reply_content.lower()
+    return not any(marker in lowered for marker in _COMPLETION_NEGATION_MARKERS)
+
 # Price pattern: matches "25 €", "30€", "25.50 eur", "100 euros" etc.
 _PRICE_RE = re.compile(
     r"\d+[.,]?\d*\s*(€|eur\b|euros\b)",
@@ -559,7 +630,35 @@ class ResponseGroundednessMiddleware(AgentMiddleware):
         blocking when there is genuinely no booking phrasing, or a successful book result
         is found in this turn (correlated by tool_call_id, or sliced after the last
         HumanMessage as a fallback).
+
+        F1 v3 — two additional guards run BEFORE the tool-backing check and fire
+        UNCONDITIONALLY (regardless of this-turn tool backing, REQ-F1-1/F1-2):
+          - `_matches_bare_proposal` (Turn-A "te lo dejo" template with no "?")
+          - `_is_bare_completion` (closing/completion phrase with no "?" and no
+            failure/negation marker)
+        Each uses its own branch-specific fallback (REQ-F1-7): the completion-phrase
+        branch uses `_COMPLETION_FALLBACK_MESSAGE`, never the re-booking-invite
+        `_CONFIRMATION_FALLBACK_MESSAGE` used by the proposal-template and legacy
+        booking-assertion branches.
         """
+        if _matches_bare_proposal(reply_content):
+            return self._block_and_replace(
+                response=response,
+                last_msg=last_msg,
+                conversation_id=conversation_id,
+                matched_phrase="bare_proposal_template",
+                fallback_message=_CONFIRMATION_FALLBACK_MESSAGE,
+            )
+
+        if _is_bare_completion(reply_content):
+            return self._block_and_replace(
+                response=response,
+                last_msg=last_msg,
+                conversation_id=conversation_id,
+                matched_phrase="bare_completion_phrase",
+                fallback_message=_COMPLETION_FALLBACK_MESSAGE,
+            )
+
         matched_phrase = _reply_has_booking_confirmation(reply_content)
         if matched_phrase is None:
             # No booking confirmation phrasing → never block.
@@ -582,6 +681,29 @@ class ResponseGroundednessMiddleware(AgentMiddleware):
             return None
 
         # Hallucinated confirmation: replace the reply content with a safe fallback.
+        return self._block_and_replace(
+            response=response,
+            last_msg=last_msg,
+            conversation_id=conversation_id,
+            matched_phrase=matched_phrase,
+            fallback_message=_CONFIRMATION_FALLBACK_MESSAGE,
+        )
+
+    @staticmethod
+    def _block_and_replace(
+        *,
+        response: ModelResponse,
+        last_msg: Any,
+        conversation_id: str,
+        matched_phrase: str,
+        fallback_message: str,
+    ) -> ModelResponse:
+        """Log the block and replace `last_msg.content` with `fallback_message`.
+
+        Shared by all three blocking branches (bare-proposal, bare-completion, legacy
+        booking-assertion) so the replace-and-log mechanics stay identical; only the
+        fallback message and matched-phrase label differ per branch (REQ-F1-7).
+        """
         logger.error(
             "hallucinated_confirmation_blocked",
             extra={
@@ -593,7 +715,7 @@ class ResponseGroundednessMiddleware(AgentMiddleware):
 
         if last_msg is not None and hasattr(last_msg, "content"):
             try:
-                last_msg.content = _CONFIRMATION_FALLBACK_MESSAGE
+                last_msg.content = fallback_message
                 return response
             except Exception as exc:  # pragma: no cover — extremely defensive
                 logger.error(
