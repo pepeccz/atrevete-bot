@@ -93,3 +93,12 @@ Panel Atrevete Bot*.zip
 
 # LLM trace files (debug-only, never commit)
 llm_traces/
+
+# Dependencies
+node_modules/
+
+# Browser automation artifacts
+.playwright-mcp/
+
+# Local debug dumps (may contain customer data)
+conv_list.json
