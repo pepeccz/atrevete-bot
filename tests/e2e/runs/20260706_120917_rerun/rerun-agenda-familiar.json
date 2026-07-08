@@ -1,0 +1,261 @@
+{
+  "scenario_id": "rerun-agenda-familiar",
+  "conversation_id": "eaf2613a-86c3-472e-bed8-4d1550bac2b5",
+  "deployed_commit": "02c3f34",
+  "baseline_run": "tests/e2e/runs/20260706_014706_stress/stress-agenda-familiar.json",
+  "fixes_under_test": ["PR #104 (escalate docstring negative example, issue_summary wiring)", "PR #105 (R-50 audience round-trip)"],
+  "outcome": "multi_completed",
+  "turns_taken": 13,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "hola! necesito cita de corte para mi y para mi hija de 8 años, mejor seguidas si puede ser",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nPerfecto, te anoto un corte para ti 😊 ¿Quieres que reserve también el de tu hija justo después?",
+      "latency_ms": 11745,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "sequential_flow_started_no_escalation"
+    },
+    {
+      "turn": 2,
+      "user_message": "sí porfa, seguidas mejor. yo me llamo Carmen Ruiz",
+      "agent_response": "Perfecto, Carmen. Para tu corte tengo estas opciones, con la estilista con disponibilidad más próxima:\n\n1. Viernes 10 de julio a las 10:00 con Marta\n2. Viernes 10 de julio a las 10:40 con Marta\n3. Viernes 10 de julio a las 12:00 con Marta\n\n¿Cuál te viene mejor?",
+      "latency_ms": 23932,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "get_next_available_options"],
+      "bugs": [],
+      "milestone": "mother_slots_offered"
+    },
+    {
+      "turn": 3,
+      "user_message": "la primera, las 10:00 perfecto",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊 ... ¿La aceptas?",
+      "latency_ms": 13009,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "get_next_available_options"],
+      "bugs": [],
+      "milestone": "policy_gate_shown_mother"
+    },
+    {
+      "turn": 4,
+      "user_message": "sí acepto",
+      "agent_response": "Perfecto, Carmen. Te lo dejo el viernes 10 de julio a las 10:00 con Marta para corte de mujer. ¿Alguna nota para ella?",
+      "latency_ms": 15008,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "policy_accepted_mother_notes_pending"
+    },
+    {
+      "turn": 5,
+      "user_message": "no, nada más para mi. ahora la de mi hija por favor",
+      "agent_response": "Genial, para tu hija también tengo huecos el viernes 10 de julio, y la estilista con disponibilidad más próxima es Marta:\n\n1. Viernes 10 de julio a las 10:00\n2. Viernes 10 de julio a las 10:30\n3. Viernes 10 de julio a las 11:00\n\n¿Cuál te encaja mejor para ella?",
+      "latency_ms": 21741,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "get_next_available_options"],
+      "bugs": [
+        {
+          "severity": "P2",
+          "type": "deferred_book_call",
+          "description": "Mother's draft reached notes_optional (policy_accepted=true, all fields complete) but the LLM pivoted the single active draft to the daughter's booking (audience switched adult_female -> child_female) WITHOUT calling book() for the mother first. R-44 says 'book person 1 fully, then move to person 2' but the draft-overwrite architecture means the mother's slot was not yet persisted when the pivot happened."
+        }
+      ],
+      "milestone": "daughter_slots_offered_mother_draft_still_open",
+      "observation": "R-50 WORKING: audience correctly auto-resolved to child_female for 'corte de niña' without re-asking; policy_accepted carried over true from mother's draft, no re-prompt for policy on daughter's booking."
+    },
+    {
+      "turn": 6,
+      "user_message": "la de las 10:30 para ella, seguido de la mia",
+      "agent_response": "Perfecto, te lo dejo para tu hija el viernes 10 de julio a las 10:30 con Marta para corte de niña. ¿Alguna nota para ella?",
+      "latency_ms": 13667,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "get_next_available_options"],
+      "bugs": [],
+      "milestone": "daughter_slot_selected_10_30",
+      "observation": "R-50 confirmed again: policy_accepted stayed true across the pivot, no redundant policy re-ask."
+    },
+    {
+      "turn": 7,
+      "user_message": "no, sin notas. confirmame las dos por favor",
+      "agent_response": "Claro, te ayudo con eso, pero antes tengo que revalidar ese hueco exacto para asegurar que sigue libre. En cuanto lo compruebe, te dejo las dos seguidas ✅",
+      "latency_ms": 17776,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "check_availability"],
+      "bugs": [],
+      "milestone": "pre_book_validation_triggered",
+      "observation": "check_availability for daughter's 10:30 slot returned 'rejected' / slot_no_longer_available -- caused by a STALE appointment from a different, unrelated QA run ('Elena', phone not +34999xxx, status=pending) occupying Marta 2026-07-10 10:00-10:40 on this SHARED testing deploy. Not a defect in this fix; environmental test-data contention."
+    },
+    {
+      "turn": 8,
+      "user_message": "vale, genial",
+      "agent_response": "Se ha movido el hueco de las 10:30 para tu hija, pero sí tengo alternativas el mismo viernes 10 de julio: 11:00, 12:00 o 12:30 con Marta.\n\nSi quieres, te la dejo a las 11:00 y seguimos con la tuya justo después.",
+      "latency_ms": 17366,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "check_availability"],
+      "bugs": [],
+      "milestone": "daughter_slot_conflict_surfaced_alternatives_offered"
+    },
+    {
+      "turn": 9,
+      "user_message": "vale, las 11:00 para ella entonces",
+      "agent_response": "Perfecto, Carmen: te he dejado preparada la cita de tu hija el viernes 10 de julio a las 11:00 con Marta para corte de niña. Y la tuya sigue para ese mismo viernes 10 de julio a las 10:00 con Marta para corte de mujer. ¿Te lo confirmo ya?",
+      "latency_ms": 22537,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "check_availability"],
+      "bugs": [],
+      "milestone": "daughter_booking_ready_11_00"
+    },
+    {
+      "turn": 10,
+      "user_message": "sí, confirmame las dos",
+      "agent_response": "¡Listo! La cita de tu hija queda agendada para el viernes 10 de julio a las 11:00 con Marta. Te comparto también el enlace del calendario: ... Si quieres, después revisamos la tuya otra vez para dejarla cerrada también.",
+      "latency_ms": 19399,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "check_availability", "book"],
+      "bugs": [
+        {
+          "severity": "P2",
+          "type": "single_active_draft_lost_first_person",
+          "description": "book() was called only for the daughter (appointment_id 22c07bad-963f-4f8c-9c16-68111513c12a). The bot's own reply admits the mother's booking was NOT closed ('la tuya otra vez para dejarla cerrada también'), confirming the single-draft architecture silently dropped the mother's already-policy-accepted booking when the draft pivoted to the daughter in turn 5. User had to explicitly ask again in turn 11-13 to get the mother's appointment booked."
+        }
+      ],
+      "milestone": "daughter_booked_mother_still_pending",
+      "observation": "Note: bot booked daughter (person 2) before mother (person 1) -- inverse of the sequential order the user originally requested and R-44 describes, though functionally recoverable since the user explicitly asked to close both."
+    },
+    {
+      "turn": 11,
+      "user_message": "sí, cierra la mia también",
+      "agent_response": "Puedo hacerlo, pero ahora mismo solo tengo confirmada la de tu hija en el sistema. La tuya no me ha quedado cerrada en esta conversación. Si quieres, te la vuelvo a dejar lista en un momento para viernes 10 de julio a las 10:00 con Marta.",
+      "latency_ms": 13475,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "bot_transparently_admits_mother_not_booked"
+    },
+    {
+      "turn": 12,
+      "user_message": "vale, dejame la mia a las 10:00 entonces, confirmala",
+      "agent_response": "Se ha movido el hueco de las 10:00 para ti. Para el viernes 10 de julio con Marta, me quedan estas alternativas: 1. 12:00 2. 12:40 3. 13:20 ¿Cuál prefieres?",
+      "latency_ms": 18186,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "check_availability"],
+      "bugs": [],
+      "milestone": "mother_10_00_conflict_same_stale_elena_row",
+      "observation": "Confirmed again the 10:00 slot conflict is caused by the pre-existing stale 'Elena' appointment (unrelated to this scenario's customer), not by our own daughter's booking (daughter is at 11:00, not overlapping 10:00-10:40)."
+    },
+    {
+      "turn": 13,
+      "user_message": "vale, las 12:00 entonces, confirmalo",
+      "agent_response": "¡Listo! Ya te he agendado la cita para el viernes 10 de julio a las 12:00 con Marta. También te dejo el enlace del calendario: ... Si quieres, te resumo las dos citas juntas.",
+      "latency_ms": 32193,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "check_availability", "book"],
+      "bugs": [],
+      "milestone": "mother_booked_both_appointments_now_in_db"
+    }
+  ],
+  "bugs": [
+    {
+      "severity": "P0-RESOLVED",
+      "type": "premature_escalation",
+      "description": "PRIMARY FIX VERIFIED: the baseline bug (turn-1 escalate() on the exact same opening message) DID NOT REPRODUCE. The bot ran the R-44 sequential flow from turn 1, asked a clarifying question, and never called escalate at any point across all 13 turns.",
+      "status": "fixed"
+    },
+    {
+      "severity": "P2",
+      "type": "single_active_draft_lost_first_person / deferred_book_call",
+      "description": "The update_booking draft is a single mutable slot. When the LLM pivoted from the mother's fully-collected draft (policy_accepted=true, notes_optional) to start the daughter's booking (turn 5), it did not call book() for the mother first. Person 2 (daughter) ended up booked before person 1 (mother), and the mother's booking had to be manually re-collected and re-confirmed by the user across turns 11-13 after the bot itself flagged it was missing. Both appointments were EVENTUALLY created correctly, so this is a partial-recovery flow issue, not a data-loss bug -- but it inverts R-44's prescribed 'book person 1 fully, then move to person 2' order and adds 3 extra turns of user effort.",
+      "evidence": "turns 5, 10, 11 tool_evidence; final DB state has both appointments correctly attributed (adult_female for mother at 12:00, child_female for daughter at 11:00)."
+    },
+    {
+      "severity": "INFO-ENVIRONMENTAL",
+      "type": "stale_test_data_contention",
+      "description": "A leftover 'pending' appointment for a customer named 'Elena' (unrelated phone, from a different concurrent/prior QA run on this SHARED testing deploy) occupied stylist Marta's 2026-07-10 10:00-10:40 slot, causing repeated slot_no_longer_available rejections for both the mother's and (transitively) the daughter's originally-offered 10:00/10:30 slots. This is NOT a defect in PR #104/#105 -- it is test-data pollution from another parallel harness run sharing the same server/date-relative fixtures. Recommend a broader cleanup or per-run date isolation for concurrent QA batches.",
+      "evidence": "psql: appointments row 8f3782d8-24de-41e9-86d1-9b6ca9c33fe1, first_name=Elena, stylist=Marta, start_time=2026-07-10 08:00:00+00 (10:00 local), status=pending, duration_minutes=40."
+    }
+  ],
+  "milestones_reached": [
+    "conversation_started",
+    "sequential_flow_started_no_escalation",
+    "mother_slots_offered",
+    "policy_gate_shown_mother",
+    "policy_accepted_mother_notes_pending",
+    "daughter_slots_offered_mother_draft_still_open",
+    "daughter_slot_selected_10_30",
+    "pre_book_validation_triggered",
+    "daughter_slot_conflict_surfaced_alternatives_offered",
+    "daughter_booking_ready_11_00",
+    "daughter_booked_mother_still_pending",
+    "bot_transparently_admits_mother_not_booked",
+    "mother_10_00_conflict_same_stale_elena_row",
+    "mother_booked_both_appointments_now_in_db"
+  ],
+  "db_delta": {
+    "customer_count_delta": 1,
+    "appt_count_delta": 2
+  },
+  "snapshot_before": {"customer_count": 0, "appt_count": 0},
+  "snapshot_after": {"customer_count": 1, "appt_count": 2},
+  "db_evidence_appointments": [
+    {
+      "id": "22c07bad-963f-4f8c-9c16-68111513c12a",
+      "first_name": "Carmen",
+      "last_name": "Ruiz",
+      "service": "Corte de Niña",
+      "audience": "child_female",
+      "start_time_utc": "2026-07-10T09:00:00+00:00",
+      "start_time_local": "2026-07-10T11:00:00+02:00",
+      "duration_minutes": 30,
+      "status": "pending",
+      "stylist": "Marta"
+    },
+    {
+      "id": "04be54f2-fde7-49db-93ff-142fae6cd348",
+      "first_name": "Carmen",
+      "last_name": "Ruiz",
+      "service": "Corte de Mujer",
+      "audience": "adult_female",
+      "start_time_utc": "2026-07-10T10:00:00+00:00",
+      "start_time_local": "2026-07-10T12:00:00+02:00",
+      "duration_minutes": 40,
+      "status": "pending",
+      "stylist": "Marta"
+    }
+  ],
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "eaf2613a-86c3-472e-bed8-4d1550bac2b5",
+    "customer_phone": "+34999000033",
+    "customer_id": "e350ff09-66e6-425f-b963-b4b7be122e2c",
+    "customer_name": "Carmen Ruiz",
+    "messages_count": 62,
+    "latest_tool_call_name": "book",
+    "customer_consents_count_per_state_cli": 0,
+    "policy_accepted_at_per_state_cli": null,
+    "policy_accepted_at_per_db": "2026-07-06T10:16:31.170402+00:00",
+    "policy_version_per_db": "1.0",
+    "customer_consents_per_db": [
+      {"customer_id": "e350ff09-66e6-425f-b963-b4b7be122e2c", "policy_version": "1.0", "accepted_at": "2026-07-06T10:16:31.170402+00:00", "accepted_via": "whatsapp"}
+    ],
+    "summary_present": true,
+    "note": "state CLI policy fields are stale vs DB per known issue -- DB (psql) values are authoritative and confirm policy was accepted and audit-logged."
+  },
+  "langfuse_trace_path": null,
+  "langfuse_pull_error": "401 Unauthorized -- Invalid Langfuse credentials configured on the harness host (known issue). Set langfuse_trace_path=null per skill rule 9 and continued.",
+  "r44_check": {
+    "verdict": "PASS (core fix verified)",
+    "note": "No escalation at any point across 13 turns for a combined 2-person (adult + 8yo child) booking request. Bot ran the sequential flow, correctly resolved the child service (Corte de Niña, audience=child_female), and both appointments were created. Secondary finding: draft-pivot ordering caused the mother's booking to be deferred/lost-then-recovered (see P2 bug above) -- this is a distinct, less severe issue from the P0 premature-escalation bug that was the primary target of this re-run."
+  },
+  "r50_check": {
+    "redundant_reask_count": 0,
+    "verdict": "PASS",
+    "note": "Audience was set correctly per-person without a single redundant re-ask: adult_female for the mother throughout, auto-switched to child_female for the daughter's 'corte de niña' without asking the customer to restate it. Policy acceptance (policy_accepted=true) also carried over correctly across the person-pivot in turn 5, avoiding a second policy prompt for the daughter's booking -- this was the exact 'audience reset on pivots' baseline pattern R-50 targets, and it did not reproduce."
+  },
+  "escalation_check": {
+    "verdict": "not_applicable",
+    "note": "No escalate() tool call occurred in this run, so the F4 issue_summary wiring (PR #104) could not be exercised/validated here. This is expected and desired -- the scenario's goal was for escalation to NOT happen."
+  },
+  "expect": {"outcome": "two_appointments_adult_and_child"},
+  "passed": true
+}

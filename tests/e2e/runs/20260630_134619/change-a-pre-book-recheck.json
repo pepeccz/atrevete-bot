@@ -1,0 +1,139 @@
+{
+  "scenario_id": "change-a-pre-book-recheck",
+  "conversation_id": "e0ac5f34-21dc-47c1-8621-77ebafdd9554",
+  "outcome": "booked",
+  "turns_taken": 8,
+  "turns": [
+    {
+      "turn": 1,
+      "role": "user",
+      "message": "Hola, quiero reservar un corte de dama para el martes, con cualquier estilista.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nEntonces te anoto corte de dama, ¿quieres añadir algún otro servicio o lo dejamos solo con ese?",
+      "tool_calls": ["update_booking"],
+      "notes": "Bot acknowledged service and asked about extras"
+    },
+    {
+      "turn": 2,
+      "role": "user",
+      "message": "No, solo el corte, gracias.",
+      "agent_response": "Perdona, para ese servicio la primera fecha disponible es el viernes 3 de julio; el martes no llega a la antelación mínima de 3 días.\n\nTe reservo mejor para el viernes 3 de julio, ¿te viene bien?",
+      "tool_calls": ["update_booking", "update_booking"],
+      "notes": "Advance policy violation detected (martes = today). Bot redirected to first valid date (viernes 3 julio)"
+    },
+    {
+      "turn": 3,
+      "role": "user",
+      "message": "Si, el viernes me viene bien.",
+      "agent_response": "La primera disponibilidad que veo es el sábado 4 de julio con Marta:\n\n1. Sábado 4 de julio a las 9:00\n2. Sábado 4 de julio a las 9:40\n3. Sábado 4 de julio a las 10:20\n\n¿Cuál te viene mejor?",
+      "tool_calls": ["update_booking", "update_booking", "get_next_available_options"],
+      "notes": "No slots on viernes 3 → bot correctly found earliest available: sábado 4 julio with Marta. Presented 3 numbered options."
+    },
+    {
+      "turn": 4,
+      "role": "user",
+      "message": "La opcion 1.",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política\nde privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos\navisar con al menos 24h si necesitas cambiar o cancelar — fuera de\nese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "tool_calls": ["update_booking", "update_booking", "get_next_available_options", "update_booking"],
+      "notes": "BY-NUMBER SELECTION TURN — slot resolved by number ('La opcion 1'). date_iso='2026-07-04' derived from slot_iso='2026-07-04T09:00:00+02:00'. Fix confirmed working. Bot proceeded to policy gate.",
+      "date_iso_at_selection": "2026-07-04",
+      "slot_iso_at_selection": "2026-07-04T09:00:00+02:00"
+    },
+    {
+      "turn": 5,
+      "role": "user",
+      "message": "Si, la acepto.",
+      "agent_response": "Perfecto. Me falta tu nombre y primer apellido para dejarla cerrada.",
+      "tool_calls": ["update_booking", "update_booking", "get_next_available_options", "update_booking", "update_booking"],
+      "notes": "Policy accepted. Bot asked for customer full name."
+    },
+    {
+      "turn": 6,
+      "role": "user",
+      "message": "Sofia Martinez",
+      "agent_response": "Gracias, Sofia Martínez. ¿Quieres añadir alguna nota para Marta o lo dejamos así?",
+      "tool_calls": ["update_booking", "update_booking", "get_next_available_options", "update_booking", "update_booking", "update_booking"],
+      "notes": "Name accepted. Bot asked for notes."
+    },
+    {
+      "turn": 7,
+      "role": "user",
+      "message": "No, sin notas, gracias.",
+      "agent_response": "Perdona, el hueco de las 9:00 ya no está disponible. Para el sábado 4 de julio con Marta tengo estas alternativas:\n\n1. Sábado 4 de julio a las 9:40\n2. Sábado 4 de julio a las 10:20\n3. Sábado 4 de julio a las 11:00\n\n¿Cuál prefieres?",
+      "tool_calls": ["update_booking", "update_booking", "get_next_available_options", "update_booking", "update_booking", "update_booking", "check_availability"],
+      "notes": "check_availability fired (pre-book validation). Slot 9:00 no longer available — race condition. Bot recovered gracefully, offered new numbered alternatives. No escalation triggered."
+    },
+    {
+      "turn": 8,
+      "role": "user",
+      "message": "La opcion 1.",
+      "agent_response": "¡Listo, Sofia! Te he confirmado la cita para el sábado 4 de julio a las 9:40 con Marta para corte de mujer.\n\nAquí tienes el enlace de la cita:\nhttps://calendar.google.com/calendar/render?action=TEMPLATE&text=Corte%20de%20Mujer%20en%20Atr%C3%A9vete&dates=20260704T074000Z/20260704T082000Z&details=Turno%20con%20Marta&location=Atr%C3%A9vete%20Sal%C3%B3n%20de%20Belleza\n",
+      "tool_calls": ["update_booking", "update_booking", "get_next_available_options", "update_booking", "update_booking", "update_booking", "check_availability", "update_booking", "check_availability", "update_booking", "book"],
+      "notes": "BOOKING COMPLETED. book tool called and succeeded. appointment_id=1f719fe3-8d73-409e-aa24-423c1393ddfb, start_iso=2026-07-04T09:40:00+02:00. Calendar link returned."
+    }
+  ],
+  "bugs": [
+    {
+      "type": "policy_not_persisted",
+      "severity": "low",
+      "description": "book tool called with policy_accepted=false even though update_booking state tracked policy_accepted=true. State confirmed customer_consents_count=0 and policy_accepted_at=null after booking. Policy gate functionally passed (booking proceeded) but consent was not persisted to DB.",
+      "turn": 8,
+      "tool": "book"
+    }
+  ],
+  "milestones_reached": {
+    "advance_policy_redirect": true,
+    "get_next_available_options": true,
+    "numbered_slot_selection": true,
+    "date_iso_fix_verified": true,
+    "policy_gate": true,
+    "name_collected": true,
+    "check_availability_prebook": true,
+    "slot_race_recovery": true,
+    "book_tool_called": true,
+    "db_status_confirmed": true
+  },
+  "db_delta": {
+    "appointments_before": 0,
+    "appointments_after": 1,
+    "customers_before": 0,
+    "customers_after": 1,
+    "appointment": {
+      "status": "confirmed",
+      "gcal_sync_status": "not_applicable",
+      "start_time": "2026-07-04 07:40:00+00",
+      "start_time_local": "2026-07-04T09:40:00+02:00",
+      "appointment_id": "1f719fe3-8d73-409e-aa24-423c1393ddfb",
+      "customer_id": "31d7b48d-62b4-411a-ad23-2956f4723a04",
+      "stylist": "Marta"
+    }
+  },
+  "snapshot_before": {
+    "appointments": 0,
+    "customers": 0
+  },
+  "snapshot_after": {
+    "appointments": 1,
+    "customers": 1
+  },
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "e0ac5f34-21dc-47c1-8621-77ebafdd9554",
+    "customer_phone": "+34999000003",
+    "customer_id": "31d7b48d-62b4-411a-ad23-2956f4723a04",
+    "customer_name": "Sofia Martinez",
+    "messages_count": 38,
+    "latest_tool_call_name": "book",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": true
+  },
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "booked",
+    "db_appointment": {
+      "status": "confirmed"
+    },
+    "tool_calls_required": ["check_availability", "book"]
+  },
+  "passed": true
+}

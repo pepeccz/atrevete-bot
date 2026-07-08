@@ -1,0 +1,96 @@
+{
+  "scenario_id": "verify-consent-persistence",
+  "conversation_id": "11112222-3333-4444-5555-000000000056",
+  "phone": "+34999000056",
+  "persona_name": "Ana Lopez",
+  "expected_outcome": "booked",
+  "outcome": "booked",
+  "max_turns": 12,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, quiero pedir cita para un corte de mujer",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nEstas son las próximas citas disponibles para corte de mujer:\n\n1. Martes 23 de junio a las 10:00 con Marta\n2. Martes 23 de junio a las 10:40 con Marta\n3. Martes 23 de junio a las 11:20 con Marta\n\n¿Cuál te viene mejor?",
+      "response_latency_ms": 14021,
+      "timed_out": false,
+      "tool_evidence": ["update_booking", "get_next_available_options"]
+    },
+    {
+      "turn": 2,
+      "user_message": "La primera, el martes 23 a las 10:00 con Marta",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "response_latency_ms": 11935,
+      "timed_out": false,
+      "tool_evidence": ["update_booking", "get_next_available_options", "update_booking"]
+    },
+    {
+      "turn": 3,
+      "user_message": "si, la acepto",
+      "agent_response": "Lo siento, tuve un problema técnico. ¿Puedes intentarlo de nuevo? 💕",
+      "response_latency_ms": 11774,
+      "timed_out": false,
+      "tool_evidence": ["update_booking", "get_next_available_options", "update_booking"],
+      "notes": "TRANSIENT ERROR — 'problema técnico' returned. Retried on turn 4."
+    },
+    {
+      "turn": 4,
+      "user_message": "si, la acepto",
+      "agent_response": "Perfecto, ¿me dices tu nombre y primer apellido?",
+      "response_latency_ms": 12796,
+      "timed_out": false,
+      "tool_evidence": ["update_booking", "get_next_available_options", "update_booking", "update_booking"]
+    },
+    {
+      "turn": 5,
+      "user_message": "Ana Lopez",
+      "agent_response": "¿Alguna nota para Marta?",
+      "response_latency_ms": 13674,
+      "timed_out": false,
+      "tool_evidence": ["update_booking", "get_next_available_options", "update_booking", "update_booking", "update_booking"]
+    },
+    {
+      "turn": 6,
+      "user_message": "No, no hay notas",
+      "agent_response": "¡Listo, Ana! Te he confirmado la cita para el martes 23 de junio a las 10:00 con Marta para corte de mujer.\n\nAquí tienes el enlace del calendario por si lo quieres guardar:\nhttps://calendar.google.com/calendar/render?action=TEMPLATE&text=Corte%20de%20Mujer%20en%20Atr%C3%A9vete&dates=20260623T080000Z/20260623T084000Z&details=Turno%20con%20Marta&location=Atr%C3%A9vete%20Sal%C3%B3n%20de%20Belleza",
+      "response_latency_ms": 20005,
+      "timed_out": false,
+      "tool_evidence": ["update_booking", "get_next_available_options", "update_booking", "update_booking", "update_booking", "update_booking", "check_availability", "book"]
+    }
+  ],
+  "tool_calls_observed": [
+    "update_booking",
+    "get_next_available_options",
+    "update_booking",
+    "get_next_available_options",
+    "update_booking",
+    "update_booking",
+    "get_next_available_options",
+    "update_booking",
+    "update_booking",
+    "get_next_available_options",
+    "update_booking",
+    "update_booking",
+    "update_booking",
+    "get_next_available_options",
+    "update_booking",
+    "update_booking",
+    "update_booking",
+    "update_booking",
+    "check_availability",
+    "book"
+  ],
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "11112222-3333-4444-5555-000000000056",
+    "customer_phone": "+34999000056",
+    "customer_id": "b69090f4-1485-42e7-bfbc-fc824c6bee8d",
+    "customer_name": "Ana Lopez",
+    "messages_count": 26,
+    "latest_tool_call_name": "book",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": true
+  },
+  "claim_vs_backend": "¡Listo, Ana! Te he confirmado la cita para el martes 23 de junio a las 10:00 con Marta para corte de mujer.",
+  "coherence_notes": "The bot correctly resolved the booking intent from the first turn, then gated on the policy before allowing slot confirmation (turn 2). Policy acceptance was processed successfully on retry (turn 4 — tool evidence shows update_booking with policy_accepted: true). The flow was coherent: slots → policy gate → name → notes → confirmation. One transient 'problema técnico' error on turn 3 required a retry of the same acceptance message. Stylist Marta is valid. NOTABLE: final_state shows customer_consents_count=0 and policy_accepted_at=null — consent was accepted by the agent (tool evidence confirms policy_accepted:true in update_booking and book called) but the DB consent record was NOT persisted, indicating a bug in the consent-to-DB write path."
+}

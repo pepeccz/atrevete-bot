@@ -1,0 +1,113 @@
+{
+  "scenario_id": "change-c-reschedule-flow",
+  "conversation_id": "c08fac7f-5c76-42fd-9f11-dfce6b1cc344",
+  "phone": "+34999000012",
+  "persona_name": "Pilar Navarro",
+  "max_turns": 12,
+  "expected": {
+    "outcome": "rescheduled",
+    "db_appointment": {"status": "pending"},
+    "tool_calls_required": ["book", "manage_appointments"],
+    "tool_calls_forbidden": []
+  },
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Quiero reservar un tinte para el lunes y luego cambiarlo al miercoles.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Es para ti o para otra persona?",
+      "timed_out": false,
+      "response_latency_ms": 18251,
+      "tool_evidence": [
+        {"tool_name": "update_booking", "arguments": {"services": ["tinte"], "audience": null, "date_text": "el lunes"}, "result": {"status": "ambiguous", "next_step": "audience_required"}}
+      ]
+    },
+    {
+      "turn": 2,
+      "user_message": "Para mi",
+      "agent_response": "¿Es para señora o caballero?",
+      "timed_out": false,
+      "response_latency_ms": 14137,
+      "tool_evidence": [
+        {"tool_name": "update_booking", "arguments": {"services": ["tinte"], "audience": null}, "result": {"status": "ambiguous", "next_step": "audience_required"}}
+      ]
+    },
+    {
+      "turn": 3,
+      "user_message": "Senora",
+      "agent_response": "Perdona, el salón cierra los lunes. \n\n¿Te viene bien el miércoles?",
+      "timed_out": false,
+      "response_latency_ms": 14644,
+      "tool_evidence": [
+        {"tool_name": "update_booking", "arguments": {"audience": "adult_female", "date_text": "el lunes"}, "result": {"status": "rejected", "next_step": "closed_day_required", "error": "El salón está cerrado el lunes 6 de julio."}}
+      ]
+    },
+    {
+      "turn": 4,
+      "user_message": "Si, el miercoles me viene bien",
+      "agent_response": "Perfecto, te lo puedo dejar el miércoles 8 de julio. \nSi no tienes preferencia de estilista, te encaja cualquiera de las disponibles y la primera con disponibilidad más próxima. ¿Cuál prefieres?",
+      "timed_out": false,
+      "response_latency_ms": 11347,
+      "tool_evidence": [
+        {"tool_name": "check_availability", "arguments": {"service_ids": ["594d3e72-30bd-e015-326b-102352980fcb"], "date_iso": "2026-07-08", "audience": "adult_female", "no_preference": true}, "result": {"status": "ok", "slots_found": true, "first_slot": "2026-07-08T10:00:00+02:00"}}
+      ]
+    },
+    {
+      "turn": 5,
+      "user_message": "No tengo preferencia, cualquiera me va bien",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política\nde privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos\navisar con al menos 24h si necesitas cambiar o cancelar — fuera de\nese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "timed_out": false,
+      "response_latency_ms": 11392,
+      "tool_evidence": [
+        {"tool_name": "book", "arguments": {"policy_accepted": false}, "result": {"status": "rejected", "next_step": "policy_acceptance_required"}},
+        {"tool_name": "update_booking", "arguments": {"policy_accepted": true}, "result": {"status": "partial", "next_step": "notes_optional"}}
+      ]
+    },
+    {
+      "turn": 6,
+      "user_message": "Si, acepto",
+      "agent_response": "Perfecto, Ana. ¿Quieres dejarme alguna nota para la cita?",
+      "timed_out": false,
+      "response_latency_ms": 15337,
+      "tool_evidence": [
+        {"tool_name": "book", "arguments": {"policy_accepted": false}, "result": {"status": "rejected", "next_step": "policy_acceptance_required"}},
+        {"tool_name": "update_booking", "arguments": {"policy_accepted": true, "notes_asked": false}, "result": {"status": "partial", "next_step": "notes_optional"}},
+        {"tool_name": "update_booking", "arguments": {"policy_accepted": true, "notes_asked": true}, "result": {"status": "ok", "next_step": "booking_ready"}}
+      ]
+    },
+    {
+      "turn": 7,
+      "user_message": "No, sin notas",
+      "agent_response": "Te lo he agendado para el miércoles 8 de julio a las 10:00 con Harolyn para tinte.\n\nTe llegará una confirmación 48 horas antes; cuando te llegue, respóndela con un sí y queda lista ✅",
+      "timed_out": false,
+      "response_latency_ms": 19920,
+      "tool_evidence": [
+        {"tool_name": "check_availability", "arguments": {"stylist_id": "341937ec-4656-4ed8-a3b2-1a8fe0887213", "date_iso": "2026-07-08", "slot_time": "10:00"}, "result": {"status": "ok", "exact_match": true, "stylist_name": "Harolyn"}},
+        {"tool_name": "book", "arguments": {"service_ids": ["594d3e72-30bd-e015-326b-102352980fcb"], "stylist_id": "341937ec-4656-4ed8-a3b2-1a8fe0887213", "start_iso": "2026-07-08T10:00:00+02:00", "customer_full_name": "Ana García", "policy_accepted": true}, "result": {"status": "ok", "appointment_id": "6bf01862-0f43-44cb-b0cf-b7d69c63c63b", "start_iso": "2026-07-08T10:00:00+02:00"}}
+      ]
+    },
+    {
+      "turn": 8,
+      "user_message": "Me surgio un compromiso el miercoles, puedo cambiar la cita al jueves?",
+      "agent_response": "Perfecto, ya te la he movido al jueves 9 de julio a las 10:00.",
+      "timed_out": false,
+      "response_latency_ms": 12469,
+      "tool_evidence": [
+        {"tool_name": "manage_appointments", "arguments": {"action": "reschedule", "appointment_id": "6bf01862-0f43-44cb-b0cf-b7d69c63c63b", "new_date": "2026-07-09", "new_time": "10:00"}, "result": {"status": "success", "result_summary": "Tu cita ha sido reprogramada para el 2026-07-09 a las 10:00."}}
+      ]
+    }
+  ],
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "c08fac7f-5c76-42fd-9f11-dfce6b1cc344",
+    "customer_phone": "+34999000012",
+    "customer_id": "55a314ba-98c7-45f0-adaf-ffd6526c2807",
+    "customer_name": "Ana García",
+    "messages_count": 36,
+    "latest_tool_call_name": "manage_appointments",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": true
+  },
+  "outcome_observed": "rescheduled",
+  "runner_notes": "Booking created on Wed Jul 8 (Monday closed — bot redirected) then immediately rescheduled to Thu Jul 9 via manage_appointments. Both required tool calls fired (book + manage_appointments). Two anomalies: (1) bot recognized phone as existing customer 'Ana García' without asking for name — Pilar Navarro persona name never appeared; (2) policy_accepted_at=null and customer_consents_count=0 in final state despite in-flow acceptance — suggests consent row was not written or the state command checks a field that was not updated for this returning customer."
+}

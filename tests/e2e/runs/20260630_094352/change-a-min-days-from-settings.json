@@ -1,0 +1,76 @@
+{
+  "scenario_id": "change-a-min-days-from-settings",
+  "conversation_id": "e2765f35-baa3-4e6b-8a22-ffc8b97239b0",
+  "outcome": "rejected",
+  "turns_taken": 3,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, podeis darme cita para hoy? Necesito urgente un tinte.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nPara hoy no puedo reservarte ese tinte: en Atrévete necesitamos al menos 3 días de antelación, así que la primera fecha válida es el viernes 3 de julio.\n\nComo además \"tinte\" es ambiguo en el catálogo, ¿es para señora o para caballero?",
+      "latency_ms": 10592,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "check_availability"],
+      "bugs": [],
+      "milestone": "advance_policy_violated — bot refused same-day citing 3-day min rule; first_valid_date=2026-07-03"
+    },
+    {
+      "turn": 2,
+      "user_message": "Es que lo necesito para hoy sin falta, no puedo esperar tres dias... de verdad que no hay ninguna forma?",
+      "agent_response": "Lo siento, no puedo saltarme esa política por aquí.  \nSi quieres, puedo dejarte la primera fecha disponible para ese tinte y, si te encaja, seguimos con la reserva.",
+      "latency_ms": 8072,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "check_availability"],
+      "bugs": [],
+      "milestone": "advance_policy_maintained — bot held firm on insistence, no policy bypass"
+    },
+    {
+      "turn": 3,
+      "user_message": "Vale, entiendo. Gracias de todas formas.",
+      "agent_response": "Gracias a ti. Si más adelante quieres dejarlo ya listo, aquí estoy.",
+      "latency_ms": 11202,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "check_availability"],
+      "bugs": [],
+      "milestone": "customer_accepted_rejection — conversation closed gracefully"
+    }
+  ],
+  "bugs": [],
+  "milestones_reached": [
+    "advance_policy_violated",
+    "advance_policy_maintained",
+    "customer_accepted_rejection"
+  ],
+  "db_delta": {
+    "appointments_created": 0,
+    "customers_created": 0
+  },
+  "snapshot_before": {
+    "customer_count": 0,
+    "appointment_count": 0
+  },
+  "snapshot_after": {
+    "customer_count": 0,
+    "appointment_count": 0
+  },
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "e2765f35-baa3-4e6b-8a22-ffc8b97239b0",
+    "customer_phone": "+34999000005",
+    "customer_id": null,
+    "customer_name": null,
+    "messages_count": 9,
+    "latest_tool_call_name": "check_availability",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": false
+  },
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "rejected",
+    "db_appointment": null,
+    "tool_calls_required": ["check_availability"],
+    "tool_calls_forbidden": ["book"]
+  },
+  "passed": true
+}

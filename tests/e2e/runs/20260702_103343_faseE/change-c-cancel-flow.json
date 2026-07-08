@@ -1,0 +1,138 @@
+{
+  "scenario_id": "change-c-cancel-flow",
+  "conversation_id": "402662a7-276b-4ea2-b1c5-7e9e5de91943",
+  "phone": "+34999000011",
+  "persona_name": "Lucia Herrera",
+  "max_turns": 10,
+  "expected": {
+    "outcome": "cancelled",
+    "db_appointment": {"status": "cancelled"},
+    "tool_calls_required": ["book", "manage_appointments"],
+    "tool_calls_forbidden": []
+  },
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Quiero reservar un corte y luego cancelarlo porque no voy a poder ir.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nPara ayudarte bien: ¿quieres reservar el corte primero o cancelar una cita que ya tienes?",
+      "timed_out": false,
+      "response_latency_ms": 9548,
+      "tool_evidence": []
+    },
+    {
+      "turn": 2,
+      "user_message": "Reservar primero",
+      "agent_response": "Para reservar tu corte, ¿es para señora, caballero, niña, niño o bebé?",
+      "timed_out": false,
+      "response_latency_ms": 12049,
+      "tool_evidence": [
+        {"tool_name": "update_booking", "result_status": "success"}
+      ]
+    },
+    {
+      "turn": 3,
+      "user_message": "Para senora",
+      "agent_response": "Estas son las próximas citas disponibles para corte de mujer:\n\n1. Martes 7 de julio a las 10:40 con Marta\n2. Martes 7 de julio a las 10:00 con Victor\n3. Martes 7 de julio a las 11:20 con Marta\n\n¿Te viene bien alguna?",
+      "timed_out": false,
+      "response_latency_ms": 17533,
+      "tool_evidence": [
+        {"tool_name": "update_booking", "result_status": "success"},
+        {"tool_name": "update_booking", "result_status": "success"},
+        {"tool_name": "get_next_available_options", "result_status": "success"}
+      ]
+    },
+    {
+      "turn": 4,
+      "user_message": "La primera, el martes a las 10:40 con Marta",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "timed_out": false,
+      "response_latency_ms": 12602,
+      "tool_evidence": [
+        {"tool_name": "update_booking", "result_status": "success"},
+        {"tool_name": "update_booking", "result_status": "success"},
+        {"tool_name": "get_next_available_options", "result_status": "success"},
+        {"tool_name": "update_booking", "result_status": "success"}
+      ]
+    },
+    {
+      "turn": 5,
+      "user_message": "Si, acepto",
+      "agent_response": "Perfecto. Para dejarla cerrada, ¿me das tu nombre y primer apellido?",
+      "timed_out": false,
+      "response_latency_ms": 11912,
+      "tool_evidence": [
+        {"tool_name": "update_booking", "result_status": "success"},
+        {"tool_name": "update_booking", "result_status": "success"},
+        {"tool_name": "get_next_available_options", "result_status": "success"},
+        {"tool_name": "update_booking", "result_status": "success"},
+        {"tool_name": "update_booking", "result_status": "success"}
+      ]
+    },
+    {
+      "turn": 6,
+      "user_message": "Lucia Herrera",
+      "agent_response": "¿Quieres añadir alguna nota para Marta o la dejamos así?",
+      "timed_out": false,
+      "response_latency_ms": 19084,
+      "tool_evidence": [
+        {"tool_name": "update_booking", "result_status": "success"},
+        {"tool_name": "update_booking", "result_status": "success"},
+        {"tool_name": "get_next_available_options", "result_status": "success"},
+        {"tool_name": "update_booking", "result_status": "success"},
+        {"tool_name": "update_booking", "result_status": "success"},
+        {"tool_name": "update_booking", "result_status": "success"}
+      ]
+    },
+    {
+      "turn": 7,
+      "user_message": "No, sin notas",
+      "agent_response": "Te he agendado la cita para el martes 7 de julio a las 10:40 con Marta. Te enviaré una confirmación 48h antes; respóndela con un \"sí\" y queda lista ✅\n\nAquí tienes el enlace del calendario por si te viene bien:\nhttps://calendar.google.com/calendar/render?action=TEMPLATE&text=Corte%20de%20Mujer%20en%20Atr%C3%A9vete&dates=20260707T084000Z/20260707T092000Z&details=Turno%20con%20Marta&location=Atr%C3%A9vete%20Sal%C3%B3n%20de%20Belleza\n\nSi luego quieres, también te puedo ayudar a cancelarla.",
+      "timed_out": false,
+      "response_latency_ms": 19960,
+      "tool_evidence": [
+        {"tool_name": "update_booking", "result_status": "success"},
+        {"tool_name": "update_booking", "result_status": "success"},
+        {"tool_name": "get_next_available_options", "result_status": "success"},
+        {"tool_name": "update_booking", "result_status": "success"},
+        {"tool_name": "update_booking", "result_status": "success"},
+        {"tool_name": "update_booking", "result_status": "success"},
+        {"tool_name": "update_booking", "result_status": "success"},
+        {"tool_name": "check_availability", "result_status": "success"},
+        {"tool_name": "book", "result_status": "success", "appointment_id": "68bf99d6-ed10-46e5-b871-ff8a8c86e860"}
+      ]
+    },
+    {
+      "turn": 8,
+      "user_message": "Gracias! Pero me acabo de dar cuenta que no voy a poder ir ese dia. Puedes cancelarla por favor?",
+      "agent_response": "Hecho: tu cita del martes 7 de julio a las 10:40 con Marta ha quedado cancelada.\n\nSi quieres, te ayudo a reservar otra para otro día.",
+      "timed_out": false,
+      "response_latency_ms": 13212,
+      "tool_evidence": [
+        {"tool_name": "update_booking", "result_status": "success"},
+        {"tool_name": "update_booking", "result_status": "success"},
+        {"tool_name": "get_next_available_options", "result_status": "success"},
+        {"tool_name": "update_booking", "result_status": "success"},
+        {"tool_name": "update_booking", "result_status": "success"},
+        {"tool_name": "update_booking", "result_status": "success"},
+        {"tool_name": "update_booking", "result_status": "success"},
+        {"tool_name": "check_availability", "result_status": "success"},
+        {"tool_name": "book", "result_status": "success", "appointment_id": "68bf99d6-ed10-46e5-b871-ff8a8c86e860"},
+        {"tool_name": "manage_appointments", "action": "cancel", "appointment_id": "68bf99d6-ed10-46e5-b871-ff8a8c86e860", "result_status": "success"}
+      ]
+    }
+  ],
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "402662a7-276b-4ea2-b1c5-7e9e5de91943",
+    "customer_phone": "+34999000011",
+    "customer_id": "f779d887-f99c-4c09-8180-785a1d17ad3d",
+    "customer_name": "Lucia Herrera",
+    "messages_count": 36,
+    "latest_tool_call_name": "manage_appointments",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": true
+  },
+  "outcome_observed": "cancelled",
+  "runner_notes": "Full book-then-cancel flow completed successfully in 8 turns. Appointment 68bf99d6-ed10-46e5-b871-ff8a8c86e860 was created via book tool (PENDING, >48h out) then immediately cancelled via manage_appointments in the same conversation. Bot proactively offered cancel help after booking. Minor anomaly: customer_consents_count=0 and policy_accepted_at=null in final state despite policy_accepted=true in tool arguments during booking — consent may not be persisted when the appointment is subsequently cancelled, or consent recording has a bug."
+}

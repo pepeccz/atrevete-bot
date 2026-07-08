@@ -1,0 +1,234 @@
+{
+  "scenario_id": "flow3-offtopic-price",
+  "conversation_id": "f66d9a41-3aed-4c96-bedd-9d995e136649",
+  "persona": {
+    "name": "Diego Sanz",
+    "phone": "+34999000132",
+    "gender": "male"
+  },
+  "expected": {
+    "outcome": "booked",
+    "service": "Corte de Caballero",
+    "coherent_behavior": "Bot must ANSWER the price tangent AND explicitly (or implicitly via context carry) RETURN to the pending audience question. Must not lose the booking thread, must not silently assume audience, must not ignore the price question."
+  },
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, quiero cortarme el pelo",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Es para señora, caballero, niña, niño o bebé?",
+      "tool_calls_observed": [
+        {
+          "tool": "update_booking",
+          "key_args": {"services": ["corte"], "audience": null},
+          "result_next_step": "audience_required"
+        }
+      ],
+      "coherence_note": "Correctly greets and asks audience. Service term 'corte' captured and flagged as ambiguous pending audience.",
+      "bugs": []
+    },
+    {
+      "turn": 2,
+      "user_message": "¿y cuánto cuesta un corte?",
+      "agent_response": "Los precios se confirman en el salón en el momento de la cita. Si quieres, te ayudo a reservar tu corte.",
+      "tool_calls_observed": [
+        {
+          "tool": "update_booking",
+          "key_args": {"services": ["corte"], "audience": null},
+          "result_next_step": "audience_required"
+        }
+      ],
+      "coherence_note": "Bot handled the price tangent (answered that prices are confirmed at the salon) and redirected back to booking. HOWEVER, it did NOT explicitly re-ask the pending audience question ('¿para quién?'). The response implied willingness to continue booking but left the user without a clear question to answer. Booking context (corte, audience pending) was preserved in the draft.",
+      "bugs": [
+        {
+          "type": "soft_context_loss",
+          "description": "After answering the price tangent, bot said 'Si quieres, te ayudo a reservar tu corte' without re-asking the pending audience question. The flow resumes only because Diego volunteers the audience on the next turn, not because the bot explicitly re-asked it.",
+          "severity": "minor"
+        }
+      ]
+    },
+    {
+      "turn": 3,
+      "user_message": "es para mí, un hombre",
+      "agent_response": "¿Quieres corte de hombre o corte de caballero?",
+      "tool_calls_observed": [
+        {
+          "tool": "update_booking",
+          "key_args": {"services": ["corte"], "audience": null},
+          "result_next_step": "audience_required"
+        },
+        {
+          "tool": "update_booking",
+          "key_args": {"services": ["corte"], "audience": "adult_male"},
+          "result_next_step": "audience_required"
+        }
+      ],
+      "coherence_note": "Context was retained across the tangent. Bot correctly interpreted 'es para mí, un hombre' as the audience answer (adult_male) and further disambiguated between 'Corte de Hombre' and 'Corte de Caballero' — two distinct services in the catalog. Coherent service disambiguation.",
+      "bugs": []
+    },
+    {
+      "turn": 4,
+      "user_message": "corte de caballero",
+      "agent_response": "Entonces te anoto corte de caballero, ¿quieres añadir algún otro servicio o solo ese?",
+      "tool_calls_observed": [
+        {
+          "tool": "update_booking",
+          "key_args": {"services": ["corte de caballero"], "audience": "adult_male"},
+          "result_next_step": "extras_loop_required",
+          "service_id_resolved": "39251edd-8ac0-efb3-9836-fa744baa08cc"
+        }
+      ],
+      "coherence_note": "Correctly resolved 'Corte de Caballero' service UUID. Extras step handled correctly.",
+      "bugs": []
+    },
+    {
+      "turn": 5,
+      "user_message": "solo ese",
+      "agent_response": "Te dejo las próximas opciones disponibles para corte de caballero:\n\n1. Martes 30 de junio a las 10:00 con Marta\n2. Martes 30 de junio a las 10:40 con Marta\n3. Martes 30 de junio a las 11:20 con Marta\n\n¿Cuál te viene mejor?",
+      "tool_calls_observed": [
+        {
+          "tool": "update_booking",
+          "key_args": {"no_more_services": true, "no_preference_stylist": true},
+          "result_next_step": "offer_slots"
+        },
+        {
+          "tool": "get_next_available_options",
+          "key_args": {"service_ids": ["39251edd-8ac0-efb3-9836-fa744baa08cc"], "strategy": "any_stylist"},
+          "result_status": "ok"
+        }
+      ],
+      "coherence_note": "Correctly offered 3 slots for Corte de Caballero with Marta on 30 June.",
+      "bugs": []
+    },
+    {
+      "turn": 6,
+      "user_message": "la primera, el martes a las 10",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "tool_calls_observed": [
+        {
+          "tool": "update_booking",
+          "key_args": {"slot_iso": "2026-06-30T10:00:00+02:00", "policy_accepted": false},
+          "result_next_step": "policy_acceptance_required"
+        }
+      ],
+      "coherence_note": "Correctly presented policy before confirming. Slot 10:00 selected (correctly parsed from 'la primera, el martes a las 10').",
+      "bugs": []
+    },
+    {
+      "turn": 7,
+      "user_message": "sí, la acepto",
+      "agent_response": "Perfecto. ¿Me dices tu nombre y primer apellido, por favor?",
+      "tool_calls_observed": [
+        {
+          "tool": "update_booking",
+          "key_args": {"policy_accepted": true},
+          "result_next_step": "name_required"
+        }
+      ],
+      "coherence_note": "Policy accepted correctly. Bot requests customer name as expected.",
+      "bugs": []
+    },
+    {
+      "turn": 8,
+      "user_message": "Diego Sanz",
+      "agent_response": "¿Quieres dejar alguna nota para la cita?",
+      "tool_calls_observed": [
+        {
+          "tool": "update_booking",
+          "key_args": {"customer_full_name": "Diego Sanz"},
+          "result_next_step": "notes_optional"
+        }
+      ],
+      "coherence_note": "Name accepted, notes step correctly triggered.",
+      "bugs": []
+    },
+    {
+      "turn": 9,
+      "user_message": "no, sin notas",
+      "agent_response": "El hueco de las 10:00 ya no está disponible. Te dejo estas alternativas para el martes 30 de junio con Marta:\n\n1. A las 10:40\n2. A las 11:20\n3. A las 12:00\n\n¿Cuál prefieres?",
+      "tool_calls_observed": [
+        {
+          "tool": "check_availability",
+          "key_args": {"slot_time": "10:00"},
+          "result_status": "rejected",
+          "note": "Slot 10:00 was taken by another booking between offering and confirming"
+        }
+      ],
+      "coherence_note": "Graceful fallback: the 10:00 slot was taken concurrently (sandbox race condition). Bot correctly detected it, informed the user, and offered alternatives without losing context.",
+      "bugs": []
+    },
+    {
+      "turn": 10,
+      "user_message": "la primera, a las 10:40",
+      "agent_response": "¡Listo, Diego! Te he confirmado la cita para el martes 30 de junio a las 10:40 con Marta para corte de caballero.\n\nAquí tienes el enlace para añadirla al calendario:\nhttps://calendar.google.com/calendar/render?action=TEMPLATE&text=Corte%20de%20Hombre%20en%20Atr%C3%A9vete&dates=20260630T084000Z/20260630T092000Z&details=Turno%20con%20Marta&location=Atr%C3%A9vete%20Sal%C3%B3n%20de%20Belleza",
+      "tool_calls_observed": [
+        {
+          "tool": "check_availability",
+          "key_args": {"slot_time": "10:40"},
+          "result_status": "ok"
+        },
+        {
+          "tool": "book",
+          "key_args": {
+            "service_ids": ["39251edd-8ac0-efb3-9836-fa744baa08cc"],
+            "stylist_id": "5f1745ba-d2b1-4d87-8d47-79821a99ae93",
+            "start_iso": "2026-06-30T10:40:00+02:00",
+            "customer_full_name": "Diego Sanz",
+            "confirmed": true,
+            "pre_book_validated": true,
+            "policy_accepted": true
+          },
+          "result_status": "ok",
+          "appointment_id": "43c81b6d-df9e-4d63-aaf4-de1e2ffdeba4"
+        }
+      ],
+      "coherence_note": "Booking confirmed successfully for Diego Sanz, Corte de Caballero, 30 June at 10:40 with Marta. HOWEVER: the Google Calendar link label reads 'Corte de Hombre' instead of 'Corte de Caballero'. The booking itself is correct; only the calendar link template text is wrong.",
+      "bugs": [
+        {
+          "type": "wrong_gcal_label",
+          "description": "Calendar link URL contains 'text=Corte%20de%20Hombre%20en%20Atr%C3%A9vete' but the booked service is 'Corte de Caballero'. The appointment in the DB is correct; only the GCal template title is wrong.",
+          "severity": "minor"
+        }
+      ]
+    }
+  ],
+  "outcome": "booked",
+  "service_booked": "Corte de Caballero",
+  "appointment_id": "43c81b6d-df9e-4d63-aaf4-de1e2ffdeba4",
+  "slot": "2026-06-30T10:40:00+02:00",
+  "stylist": "Marta",
+  "coherent_with_expectation": {
+    "verdict": "PASS_WITH_MINOR_ISSUES",
+    "reasons": [
+      "PASS: Bot answered the price tangent (Turn 2) — said prices are confirmed at the salon and offered to continue booking.",
+      "PASS: Booking context (service='corte', audience pending) was preserved across the tangent; no context loss.",
+      "PASS: When Diego volunteered his audience ('es para mí, un hombre') on Turn 3, the bot correctly picked it up and disambiguated between 'Corte de Hombre' and 'Corte de Caballero'.",
+      "PASS: Full booking completed for Corte de Caballero as expected.",
+      "MINOR ISSUE: After the tangent in Turn 2, the bot did NOT explicitly re-ask the pending audience question. It said 'Si quieres, te ayudo a reservar tu corte' — this implies the flow should continue but does not state what the user needs to provide next. Flow recovered only because Diego proactively answered the audience on Turn 3.",
+      "MINOR BUG: Google Calendar link template uses 'Corte de Hombre' as the event title instead of 'Corte de Caballero' — cosmetic mismatch."
+    ]
+  },
+  "bugs_summary": [
+    {
+      "id": "B1",
+      "type": "soft_context_loss",
+      "turn": 2,
+      "description": "After answering the price tangent, bot did not explicitly re-ask the pending audience question. Said 'Si quieres, te ayudo a reservar tu corte' without specifying what information was still needed. Recovery happened because the user volunteered the answer unprompted.",
+      "severity": "minor"
+    },
+    {
+      "id": "B2",
+      "type": "wrong_gcal_label",
+      "turn": 10,
+      "description": "GCal calendar link template title is 'Corte de Hombre' but the booked service is 'Corte de Caballero'. DB appointment is correct.",
+      "severity": "minor"
+    },
+    {
+      "id": "B3",
+      "type": "redundant_tool_replay",
+      "turn": "6-10",
+      "description": "On each turn, the agent replays the full sequence of update_booking calls from the beginning of the conversation (e.g. Turn 10 makes 8 update_booking calls to reconstruct state). This is an LLM context/checkpointing behavior issue — not user-facing but increases latency and token cost significantly.",
+      "severity": "low"
+    }
+  ],
+  "notes": "Scenario ran cleanly. The off-topic price tangent was handled — bot answered and returned to booking context. The main gap vs expected behavior is that after the tangent, the bot did not re-pose the pending audience question explicitly; it relied on the user to proactively re-anchor. In real conversation with a less cooperative user, this could cause the flow to stall. A slot-collision race occurred on Turn 9 (10:00 slot taken concurrently); bot recovered gracefully with alternatives."
+}

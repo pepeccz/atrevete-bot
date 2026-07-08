@@ -1,0 +1,77 @@
+{
+  "scenario_id": "change-b-rules-pruned",
+  "conversation_id": "cf566468-2838-4891-a313-caa986f4ebdc",
+  "outcome": "info_provided",
+  "turns_taken": 3,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola! Tengo unas dudas, ¿cómo funciona el sistema de reservas aquí? ¿Y si luego necesito cambiar mi cita, se puede?",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nClaro. Funciona con cita previa y te voy guiando paso a paso: me dices qué servicio quieres, tu preferencia de estilista si la tienes, y el día o la franja que te viene bien; yo voy comprobando huecos reales y te propongo opciones válidas.\n\nSi luego necesitas cambiar tu cita, sí, se puede gestionar por aquí: puedo consultar, cancelar o reprogramar la cita. Si quieres, también te explico cómo reservar en dos minutos.",
+      "latency_ms": 8198,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "faq_answered_intro"
+    },
+    {
+      "turn": 2,
+      "user_message": "Vale, ¿y hay algún límite de tiempo para poder cambiar la cita? No quiero que luego me digan que no se puede por algo que no sabía",
+      "agent_response": "Sí, para cambios o cancelaciones pedimos avisar con al menos 24 horas de antelación. Si se hace fuera de ese plazo, se aplica el cargo indicado en la política de reservas.\n\nSi quieres, te ayudo a dejarlo claro con tu cita cuando la reserves.",
+      "latency_ms": 8350,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "faq_answered_cancellation_policy"
+    },
+    {
+      "turn": 3,
+      "user_message": "Ah perfecto, muchas gracias por la info. Ya lo entiendo mejor, luego os escribo para reservar con calma",
+      "agent_response": "Perfecto, cuando te venga bien me escribes y lo dejamos mirado 😊",
+      "latency_ms": 8660,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "conversation_closed_naturally"
+    }
+  ],
+  "bugs": [],
+  "milestones_reached": ["faq_answered_intro", "faq_answered_cancellation_policy", "conversation_closed_naturally"],
+  "db_delta": {"customer_count_delta": 0, "appt_count_delta": 0},
+  "snapshot_before": {"customer_count": 0, "appt_count": 0},
+  "snapshot_after": {"customer_count": 0, "appt_count": 0},
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "cf566468-2838-4891-a313-caa986f4ebdc",
+    "customer_phone": "+34999000009",
+    "customer_id": null,
+    "customer_name": null,
+    "messages_count": 6,
+    "latest_tool_call_name": null,
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": false
+  },
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "info_provided",
+    "db_appointment": null,
+    "tool_calls_required": [],
+    "tool_calls_forbidden": [],
+    "tags": ["change-b", "rules-pruned"]
+  },
+  "passed": true,
+  "quality_observations": {
+    "extras_question_own_turn": "N/A — not a booking flow, no stylist/date step reached",
+    "confirmation_last": "N/A — no booking attempted, no '¿Te lo confirmo?' expected",
+    "rejection_both_facts": "N/A — no closed-day/under-advance rejection occurred",
+    "stylist_menu_option0": "N/A — no stylist menu appeared",
+    "tone": "Warm/cercano throughout — natural register with light emoji, no robotic FAQ dump. Quote: '¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸... yo voy comprobando huecos reales y te propongo opciones válidas.'",
+    "unbacked_slots": "None observed — no concrete slot times were presented at all in this scenario (pure FAQ, no availability tool called), so no unbacked-slot risk applies."
+  },
+  "rule_pruning_check": {
+    "forbidden_rule_ids_checked": ["R2", "R3", "R9", "R15", "R33"],
+    "found_in_any_agent_response": false,
+    "note": "Verified against agent/prompts/shared/critical_rules.md — current numbering skips R2, R3, R9 (only R9b present), R15, and R33 (only R34/R35/R36 present at that range), confirming these were pruned. No agent_response across the 3 turns mentioned any rule ID, rule number, or content unique to the deleted rules."
+  }
+}

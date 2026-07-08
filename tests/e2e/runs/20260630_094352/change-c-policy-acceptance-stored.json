@@ -1,0 +1,117 @@
+{
+  "scenario_id": "change-c-policy-acceptance-stored",
+  "conversation_id": "662982f5-65db-43e7-8d9d-117b57cfe35a",
+  "outcome": "policy_accepted",
+  "turns_taken": 7,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, me gustaria reservar una cita. Es la primera vez que os contacto.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nClaro, ¿qué servicio quieres reservar?",
+      "latency_ms": 14950,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "greeting_received"
+    },
+    {
+      "turn": 2,
+      "user_message": "Me gustaria hacerme un corte de pelo",
+      "agent_response": "¿Es para señora, caballero, niña, niño o bebé?",
+      "latency_ms": 13770,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "service_selected"
+    },
+    {
+      "turn": 3,
+      "user_message": "Para senora",
+      "agent_response": "¿Quieres añadir algún otro servicio o solo el corte?",
+      "latency_ms": 11352,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "audience_selected"
+    },
+    {
+      "turn": 4,
+      "user_message": "Solo el corte, gracias",
+      "agent_response": "¿Tienes alguna preferencia de estilista?  \n1) Harolyn  \n2) Marta  \n3) Pilar  \n4) Victor  \n0) La primera con disponibilidad (mín. 3 días de antelación)",
+      "latency_ms": 12228,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "extras_declined"
+    },
+    {
+      "turn": 5,
+      "user_message": "Me da igual la estilista, la primera que haya disponible",
+      "agent_response": "Estas son las próximas citas disponibles para tu corte de mujer:\n\n1. Sábado 4 de julio a las 9:00 con Marta  \n2. Sábado 4 de julio a las 9:40 con Marta  \n3. Sábado 4 de julio a las 10:20 con Marta\n\n¿Cuál te viene mejor?",
+      "latency_ms": 15543,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "get_next_available_options"],
+      "bugs": [],
+      "milestone": "slots_offered"
+    },
+    {
+      "turn": 6,
+      "user_message": "La primera opcion, el sabado a las 9:00 con Marta",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política\nde privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos\navisar con al menos 24h si necesitas cambiar o cancelar — fuera de\nese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "latency_ms": 13085,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "get_next_available_options"],
+      "bugs": [],
+      "milestone": "policy_gate_presented"
+    },
+    {
+      "turn": 7,
+      "user_message": "Si, la acepto",
+      "agent_response": "Perfecto, ¿me dices tu nombre y primer apellido?",
+      "latency_ms": 11382,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "get_next_available_options"],
+      "bugs": [],
+      "milestone": "policy_accepted"
+    }
+  ],
+  "bugs": [],
+  "milestones_reached": [
+    "greeting_received",
+    "service_selected",
+    "audience_selected",
+    "extras_declined",
+    "slots_offered",
+    "policy_gate_presented",
+    "policy_accepted"
+  ],
+  "db_delta": {
+    "snapshot_before": "0 0",
+    "snapshot_after": "0 0",
+    "appointments_created": 0,
+    "customers_created": 0,
+    "notes": "No customer row created and no appointment booked — expected. Customer row and policy_accepted_at are written atomically at book time (not at acceptance-only). customer_consents_count=0 per final_state. policy_accepted_at=null (customer row does not exist yet: SELECT COUNT(*) FROM customers WHERE phone='+34999000014' returned 0)."
+  },
+  "snapshot_before": "0 0",
+  "snapshot_after": "0 0",
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "662982f5-65db-43e7-8d9d-117b57cfe35a",
+    "customer_phone": "+34999000014",
+    "customer_id": null,
+    "customer_name": null,
+    "messages_count": 30,
+    "latest_tool_call_name": "update_booking",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": true
+  },
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "policy_accepted",
+    "db_appointment": null,
+    "tool_calls_required": [],
+    "tool_calls_forbidden": []
+  },
+  "passed": true
+}

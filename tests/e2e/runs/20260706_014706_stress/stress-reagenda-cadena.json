@@ -1,0 +1,311 @@
+{
+  "scenario_id": "stress-reagenda-cadena",
+  "conversation_id": "62b34db0-f87e-40c3-9d2f-4e992a706549",
+  "persona": {
+    "name": "Lucía Gómez",
+    "phone": "+34999000023",
+    "style": "indecisa con la agenda, se disculpa mucho"
+  },
+  "goal": "(1) Book a 'Tinte' appointment ~5 days out, completing the full flow. (2) Reschedule to another day ('planes cambiaron'). (3) Reschedule AGAIN to a third day ('uy perdona, al final tampoco puedo'). (4) Cancel altogether ('lo siento muchísimo, mejor lo dejamos').",
+  "expected_outcome": "single_appointment_rescheduled_twice_then_cancelled",
+  "outcome": "cancelled",
+  "outcome_note": "expected_outcome is a custom stress-test label not in the canonical v1/v2 outcome enum (booked -> rescheduled -> rescheduled -> cancelled chain on a SINGLE appointment row). 'cancelled' is used as the closest canonical terminal-state fit since it reflects the final DB state; all four phases of the scenario's goal were completed successfully in-conversation.",
+  "turns_taken": 16,
+  "turns": [
+    {
+      "turn": 1,
+      "phase": "booking",
+      "user_message": "Hola! Perdona que te escriba tan de repente, quería ver si podría pedir cita para un tinte, sería para el sábado que viene si puede ser",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nClaro, te lo miro 😊  \n¿Es para ti o para otra persona?",
+      "latency_ms": 12981,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "intent_recognized_ambiguous_audience"
+    },
+    {
+      "turn": 2,
+      "phase": "booking",
+      "user_message": "Ay perdona, es para mí",
+      "agent_response": "Perfecto, entonces lo vemos para ti 😊  \n¿Eres señora o caballero?",
+      "latency_ms": 11535,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "second_audience_clarification"
+    },
+    {
+      "turn": 3,
+      "phase": "booking",
+      "user_message": "Señora, perdón por no aclararlo antes",
+      "agent_response": "Perfecto, gracias por aclararlo. Para el tinte de señora, ¿quieres añadir algún otro servicio o solo el tinte?",
+      "latency_ms": 12234,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "audience_resolved_adult_female"
+    },
+    {
+      "turn": 4,
+      "phase": "booking",
+      "user_message": "Solo el tinte, gracias",
+      "agent_response": "Genial, para el sábado 18 de julio ya lo tengo encaminado 😊  \nMe falta tu nombre y primer apellido para poder seguir con la reserva.",
+      "latency_ms": 13207,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "date_resolved_2026-07-18",
+      "observation": "'el sábado que viene' (ambiguous phrasing chosen by the runner) resolved to 2026-07-18 (12 days out) rather than the closer 2026-07-11 (5 days out, next calendar Saturday). Genuinely ambiguous Spanish phrase — not conclusively a bot bug, but worth noting as a date-NLU edge case."
+    },
+    {
+      "turn": 5,
+      "phase": "booking",
+      "user_message": "Lucía Gómez, perdona que no lo puse antes",
+      "agent_response": "Perfecto, Lucía 😊  \n¿Quieres dejarme alguna nota para la cita o prefieres que la deje sin observaciones?",
+      "latency_ms": 11574,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "name_captured"
+    },
+    {
+      "turn": 6,
+      "phase": "booking",
+      "user_message": "Sin observaciones, gracias",
+      "agent_response": "He mirado huecos y, para el tinte, lo más cercano que tengo es el martes 21 de julio con Marta:\n\n1. Martes 21 de julio a las 10:00  \n2. Martes 21 de julio a las 10:40  \n3. Martes 21 de julio a las 11:20  \n\n¿Cuál te viene mejor?",
+      "latency_ms": 22717,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "get_next_available_options"],
+      "bugs": [],
+      "milestone": "no_slots_on_requested_date_alternatives_offered"
+    },
+    {
+      "turn": 7,
+      "phase": "booking",
+      "user_message": "Vale, la primera, las 10:00 el martes 21",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "latency_ms": 17842,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "get_next_available_options", "check_availability"],
+      "bugs": [],
+      "milestone": "policy_gate_presented"
+    },
+    {
+      "turn": 8,
+      "phase": "booking",
+      "user_message": "Sí, la acepto",
+      "agent_response": "Te la he agendado para el martes 21 de julio a las 10:00 con Marta para tinte 😊\n\nTe enviaré una confirmación 48h antes; respóndela con un \"sí\" y queda lista ✅\n\nSi quieres, también te paso el enlace del calendario.",
+      "latency_ms": 22620,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "check_availability", "book"],
+      "bugs": [],
+      "milestone": "PHASE_1_BOOKED — appointment_id=0b0e48e5-0da8-45e0-a225-b745f76356f1, 2026-07-21T10:00 CEST, status=pending"
+    },
+    {
+      "turn": 9,
+      "phase": "reschedule_1",
+      "user_message": "Hola, perdona la molestia, me han surgido unos planes y no voy a poder ir el martes 21. ¿Podría cambiar mi cita a otro día?",
+      "agent_response": "Claro, te ayudo con eso. Veo tu cita del martes 21 de julio a las 10:00 con Marta para tinte.\n\n¿A qué día te vendría bien moverla?",
+      "latency_ms": 14072,
+      "timed_out": false,
+      "tool_calls_observed": ["manage_appointments(action=list)"],
+      "bugs": [],
+      "milestone": "reschedule_intent_recognized_correct_appointment_recalled"
+    },
+    {
+      "turn": 10,
+      "phase": "reschedule_1",
+      "user_message": "El jueves 23 me vendría mejor, si hay hueco",
+      "agent_response": "Sí, el jueves 23 de julio con Marta sí tiene hueco 😊  \nTe puedo mover la cita a las 10:00, 10:40, 11:20, 12:00, 12:40, 13:20, 16:00, 16:40, 17:20, 18:00, 18:40, 19:20 o 20:00.\n\n¿Cuál prefieres?",
+      "latency_ms": 12547,
+      "timed_out": false,
+      "tool_calls_observed": ["check_availability(date=2026-07-23, stylist=Marta)"],
+      "bugs": [],
+      "milestone": "availability_rechecked_before_move"
+    },
+    {
+      "turn": 11,
+      "phase": "reschedule_1",
+      "user_message": "Las 12:00 me viene genial, muchas gracias",
+      "agent_response": "Listo, te la he reprogramado para el jueves 23 de julio a las 12:00 con Marta 😊",
+      "latency_ms": 12334,
+      "timed_out": false,
+      "tool_calls_observed": ["manage_appointments(action=reschedule, appointment_id=0b0e48e5-..., new_date=2026-07-23, new_time=12:00)"],
+      "bugs": [],
+      "milestone": "PHASE_2_RESCHEDULED_1 — same appointment_id, new start 2026-07-23T12:00 CEST, confirmation states correct new date/time"
+    },
+    {
+      "turn": 12,
+      "phase": "reschedule_2",
+      "user_message": "Uy perdona, qué vergüenza, al final tampoco puedo el jueves... ¿sería mucha molestia cambiarla otra vez? Lo siento de verdad",
+      "agent_response": "No pasa nada, tranquila 😊  \nVeo tu cita del jueves 23 de julio a las 12:00 con Marta.\n\n¿Para qué día te la cambio esta vez?",
+      "latency_ms": 15268,
+      "timed_out": false,
+      "tool_calls_observed": ["manage_appointments(action=list)"],
+      "bugs": [],
+      "milestone": "second_reschedule_intent_recognized_correct_current_state_recalled_no_stale_echo"
+    },
+    {
+      "turn": 13,
+      "phase": "reschedule_2",
+      "user_message": "El sábado 25 sería perfecto, si puede ser por la mañana",
+      "agent_response": "Sí, el sábado 25 por la mañana con Marta tiene hueco 😊  \nTe puedo mover la cita a las 9:00, 9:40, 10:20, 11:00, 11:40, 12:20 o 13:00.\n\n¿Cuál te va mejor?",
+      "latency_ms": 12169,
+      "timed_out": false,
+      "tool_calls_observed": ["check_availability(date=2026-07-25, stylist=Marta, preferred_window=morning)"],
+      "bugs": [],
+      "milestone": "availability_rechecked_before_second_move"
+    },
+    {
+      "turn": 14,
+      "phase": "reschedule_2",
+      "user_message": "Las 10:20 perfecto, mil gracias por la paciencia",
+      "agent_response": "Hecho, te la he cambiado al sábado 25 de julio a las 10:20 con Marta 😊",
+      "latency_ms": 12791,
+      "timed_out": false,
+      "tool_calls_observed": ["manage_appointments(action=reschedule, appointment_id=0b0e48e5-..., new_date=2026-07-25, new_time=10:20)"],
+      "bugs": [],
+      "milestone": "PHASE_3_RESCHEDULED_2 — same appointment_id, new start 2026-07-25T10:20 CEST, confirmation states correct new date/time"
+    },
+    {
+      "turn": 15,
+      "phase": "cancel",
+      "user_message": "Ay, lo siento muchísimo, de verdad, pero mejor lo dejamos por ahora, no quiero seguir molestando con cambios. Ya escribiré cuando tenga las cosas más claras",
+      "agent_response": "No te preocupes, de verdad 😊 Cuando lo tengas más claro, me escribes y te ayudo encantada.",
+      "latency_ms": 8586,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [
+        {
+          "type": "ambiguous_cancel_not_confirmed",
+          "detail": "Message 'mejor lo dejamos por ahora... ya escribiré cuando tenga las cosas más claras' is genuinely ambiguous (could mean 'drop the whole booking' or 'stop making changes but keep the existing appointment'). Bot did not call manage_appointments(cancel) AND did not explicitly ask whether to keep or cancel the still-active appointment (2026-07-25 10:20). It replied warmly but left the customer's actual appointment status unstated/unclear. Not calling cancel on an ambiguous message is defensible (avoids accidental cancellation), but the bot should have asked a clarifying question referencing the still-booked appointment instead of a generic pleasant reply that implies nothing is pending."
+        }
+      ],
+      "milestone": "ambiguous_cancellation_language_not_actioned"
+    },
+    {
+      "turn": 16,
+      "phase": "cancel",
+      "user_message": "Perdona, me refería a que canceles la cita del tinte, no quiero dejarla pendiente. Siento las molestias",
+      "agent_response": "Cancelada, ya está 😊  \nSi más adelante quieres volver a reservar, aquí me tienes.",
+      "latency_ms": 10808,
+      "timed_out": false,
+      "tool_calls_observed": ["manage_appointments(action=cancel, appointment_id=0b0e48e5-...)"],
+      "bugs": [
+        {
+          "type": "missing_cancellation_reason_marker",
+          "detail": "DB row 0b0e48e5-0da8-45e0-a225-b745f76356f1 ends with status=cancelled, cancelled_at set, but cancellation_reason IS NULL. Root cause confirmed in agent/tools/manage_appointments_tool.py:606-612 — the 'cancel' action branch calls _cancel_appointment(..., reason=None, ...) with a hardcoded None. CLAUDE.md documents 3 canonical cancellation_reason marker values ('auto_cancelled_no_confirmation', 'operator_cancelled', 'customer_declined') but the general customer-initiated cancel path (this one) sets none of them, leaving an audit gap: admins/reporting cannot distinguish a customer self-service cancel from any other blank-reason cancellation."
+        }
+      ],
+      "milestone": "PHASE_4_CANCELLED — explicit customer request required (ambiguous phrasing in turn 15 was correctly not auto-actioned); appointment_id unchanged, single row, no duplicates/orphans"
+    }
+  ],
+  "bugs": [
+    {
+      "type": "ambiguous_cancel_not_confirmed",
+      "severity": "low",
+      "turn": 15,
+      "detail": "See turn 15. Defensible caution but the bot's reply should have surfaced the still-active appointment and asked for an explicit yes/no instead of a generic pleasant non-answer."
+    },
+    {
+      "type": "missing_cancellation_reason_marker",
+      "severity": "medium",
+      "turn": 16,
+      "file": "agent/tools/manage_appointments_tool.py:606-612",
+      "detail": "General customer-initiated cancel action always passes reason=None to _cancel_appointment(), so cancellation_reason is left NULL in the DB. No 'customer_declined' or equivalent marker is stamped for this path, unlike the confirmation-decline flow. Audit/reporting cannot attribute this cancellation to the customer via the cancellation_reason column alone."
+    },
+    {
+      "type": "date_nlu_ambiguity_observation",
+      "severity": "info",
+      "turn": 4,
+      "detail": "'el sábado que viene' resolved to +12 days (2026-07-18) rather than the nearer Saturday (+5 days, 2026-07-11). Genuinely ambiguous Spanish phrase chosen by the runner persona, not a clear-cut bug — flagged for awareness only."
+    }
+  ],
+  "milestones_reached": [
+    "PHASE_1_BOOKED",
+    "PHASE_2_RESCHEDULED_1",
+    "PHASE_3_RESCHEDULED_2",
+    "PHASE_4_CANCELLED"
+  ],
+  "db_delta": {
+    "customer_count_delta": 1,
+    "appt_count_delta": 1
+  },
+  "snapshot_before": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "snapshot_after": {
+    "customer_count": 1,
+    "appt_count": 1
+  },
+  "phase_db_snapshots": [
+    {
+      "phase": "PHASE_1_booked",
+      "appointment_id": "0b0e48e5-0da8-45e0-a225-b745f76356f1",
+      "status": "pending",
+      "start_time_utc": "2026-07-21T08:00:00+00:00",
+      "cancellation_reason": null,
+      "gcal_sync_status": "not_applicable"
+    },
+    {
+      "phase": "PHASE_2_rescheduled_1",
+      "appointment_id": "0b0e48e5-0da8-45e0-a225-b745f76356f1",
+      "status": "pending",
+      "start_time_utc": "2026-07-23T10:00:00+00:00",
+      "cancellation_reason": null,
+      "gcal_sync_status": "not_applicable"
+    },
+    {
+      "phase": "PHASE_3_rescheduled_2",
+      "appointment_id": "0b0e48e5-0da8-45e0-a225-b745f76356f1",
+      "status": "pending",
+      "start_time_utc": "2026-07-25T08:20:00+00:00",
+      "cancellation_reason": null,
+      "gcal_sync_status": "not_applicable"
+    },
+    {
+      "phase": "PHASE_4_cancelled_final",
+      "appointment_id": "0b0e48e5-0da8-45e0-a225-b745f76356f1",
+      "status": "cancelled",
+      "start_time_utc": "2026-07-25T08:20:00+00:00",
+      "cancellation_reason": null,
+      "gcal_sync_status": "not_applicable",
+      "cancelled_at": "2026-07-05T23:57:28.293102+00:00"
+    }
+  ],
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "62b34db0-f87e-40c3-9d2f-4e992a706549",
+    "customer_phone": "+34999000023",
+    "customer_id": "80766790-d360-4c00-a567-77499c7f1246",
+    "customer_name": "Lucía Gómez",
+    "messages_count": 68,
+    "latest_tool_call_name": "manage_appointments",
+    "customer_consents_count_per_state_helper": 0,
+    "policy_accepted_at_per_state_helper": null,
+    "note": "state helper reports policy_accepted_at=null/consents=0, but direct DB query on customers/customer_consents shows policy_accepted_at=2026-07-05T23:54:10.308879+00:00, policy_version=1.0, and 1 row in customer_consents (accepted_via=whatsapp). This is a KNOWN state-vs-DB discrepancy in qa_turn_helper.py's 'state' subcommand (already logged in prior Fase E findings — judge policy consent via DB reconcile, not the state command)."
+  },
+  "observations": {
+    "hook_1_single_row_no_duplicates": "PASS — exactly one appointment row (id=0b0e48e5-0da8-45e0-a225-b745f76356f1) existed throughout. Both reschedules mutated the SAME row in place (verified via direct DB query after each phase: same id, new start_time each time). No duplicate or orphaned rows were created at any point.",
+    "hook_2_reschedule_confirmations_state_new_date": "PASS — both reschedule confirmations stated the new date/time correctly: turn 11 said 'jueves 23 de julio a las 12:00' (matches new DB start_time), turn 14 said 'sábado 25 de julio a las 10:20' (matches new DB start_time). No stale-date echo observed in either confirmation. Turn 12 also correctly recalled the CURRENT state (jueves 23, 12:00) before asking for the next change, not a stale prior date.",
+    "hook_3_availability_rechecked_before_move": "PASS — tool evidence shows explicit check_availability calls scoped to the target date and current stylist (Marta) immediately before both reschedule calls: check_availability(date_iso=2026-07-23, stylist_id=Marta) at turn 10, and check_availability(date_iso=2026-07-25, stylist_id=Marta, preferred_window=morning) at turn 13 — both before the corresponding manage_appointments(action=reschedule) call.",
+    "hook_4_final_cancellation_marker": "PARTIAL FAIL — final state is CANCELLED as expected (status=cancelled, cancelled_at populated), but cancellation_reason is NULL, not 'customer_declined' or any other documented marker. Root cause: agent/tools/manage_appointments_tool.py's 'cancel' action branch hardcodes reason=None when calling _cancel_appointment(). This is a real, reproducible gap versus the documented cancellation_reason convention in CLAUDE.md (which only covers auto_cancel, operator, and decline-a-pending-confirmation paths, not this general customer cancel path).",
+    "hook_5_tone_warmth_under_indecision": "PASS — the bot stayed warm and non-judgmental through all three changes-of-mind ('No pasa nada, tranquila', 'No te preocupes, de verdad', no scolding or friction language). No escalation to a human, no rejection-strike/warning language, no rigidity or impatience detected across 16 turns despite the customer rescheduling twice and then cancelling. The one soft spot was turn 15 (see bug 'ambiguous_cancel_not_confirmed') where warmth arguably substituted for a needed clarifying question rather than genuine rigidity."
+  },
+  "langfuse_trace_path": null,
+  "langfuse_pull_error": "UnauthorizedError 401 'Invalid credentials. Confirm that you've configured the correct host.' — known Langfuse credential rotation issue per CLAUDE.md 'Langfuse credential regeneration runbook'.",
+  "cleanup_result": {
+    "checkpoints_deleted": 352,
+    "customer_redis_deleted": 1,
+    "artifacts_deleted": 0,
+    "appointments_deleted": 1,
+    "customer_deleted": true,
+    "clean": false
+  },
+  "expect": {
+    "outcome": "single_appointment_rescheduled_twice_then_cancelled"
+  },
+  "passed": true,
+  "passed_note": "All 4 phases of the scenario's actual goal (book -> reschedule -> reschedule -> cancel, single appointment, no duplicates) completed successfully and were verified against the DB after each phase. 'passed' is set true based on full goal completion rather than a literal enum match, since expect.outcome is a custom label outside the canonical v1/v2 outcome enum."
+}

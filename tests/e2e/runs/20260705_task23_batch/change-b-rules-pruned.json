@@ -1,0 +1,96 @@
+{
+  "scenario_id": "change-b-rules-pruned",
+  "conversation_id": "3d5c0e86-e5b0-434a-9005-ea57e8cca9cd",
+  "outcome": "info_provided",
+  "turns_taken": 4,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "¿Cómo funciona el sistema de reservas? ¿Puedo cambiar mi cita después?",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nSí, claro: las citas se reservan con antelación y, si luego necesitas moverla o cancelarla, también se puede gestionar.\n\nSi quieres, te explico cómo reservar paso a paso o te ayudo a ver tu cita actual y cambiarla.",
+      "latency_ms": 14922,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "explained_booking_and_change_process"
+    },
+    {
+      "turn": 2,
+      "user_message": "Vale, ¿y si quiero cambiarla con poca antelación, qué pasa? ¿Hay alguna penalización o regla especial?",
+      "agent_response": "Si quieres cambiarla con poca antelación, la regla general es avisar con al menos 24 horas. Si se hace fuera de ese plazo, se aplica un cargo del 50% del servicio en tu próxima visita.\n\nSi quieres, te ayudo a ver tu cita y gestionar el cambio.",
+      "latency_ms": 14091,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "explained_cancellation_penalty_policy"
+    },
+    {
+      "turn": 3,
+      "user_message": "Ah vale, entiendo. ¿Y si simplemente no me presento a la cita, qué pasa? ¿Me penalizáis igual?",
+      "agent_response": "Si no te presentas, se aplica la misma política de aviso: la cita queda sujeta al cargo del 50% del servicio en tu próxima visita si no se ha avisado con al menos 24 horas.\n\nSi quieres, puedo ayudarte a revisar tu cita para que no se te pase.",
+      "latency_ms": 12901,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "explained_no_show_policy"
+    },
+    {
+      "turn": 4,
+      "user_message": "Vale, muchas gracias, ya lo tengo claro. Ya reservaré luego con más calma.",
+      "agent_response": "Perfecto, cuando quieras lo vemos con calma 😊",
+      "latency_ms": 11179,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "conversation_closed_naturally"
+    }
+  ],
+  "bugs": [],
+  "milestones_reached": [
+    "explained_booking_and_change_process",
+    "explained_cancellation_penalty_policy",
+    "explained_no_show_policy",
+    "conversation_closed_naturally"
+  ],
+  "db_delta": {
+    "customer_count_delta": 0,
+    "appt_count_delta": 0
+  },
+  "snapshot_before": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "snapshot_after": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "3d5c0e86-e5b0-434a-9005-ea57e8cca9cd",
+    "customer_phone": "+34999000009",
+    "customer_id": null,
+    "customer_name": null,
+    "messages_count": 8,
+    "latest_tool_call_name": null,
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": false
+  },
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "info_provided",
+    "db_appointment": null,
+    "tool_calls_required": [],
+    "tool_calls_forbidden": [],
+    "tags": ["change-b", "rules-pruned"]
+  },
+  "passed": true,
+  "quality_observations": {
+    "extras_question_own_turn": "n/a — not a booking flow, no stylist/date step reached",
+    "confirmation_last": "n/a — no booking confirmation step in this conversation",
+    "rejection_both_facts": "n/a — no closed-day/under-advance rejection occurred",
+    "stylist_menu_option0": "n/a — no stylist menu was presented",
+    "tone": "warm/cercano — self-introduces as 'Maite', uses emoji, offers help proactively. Quote: \"¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\" and closing \"Perfecto, cuando quieras lo vemos con calma 😊\"",
+    "unbacked_slots": "none observed — this conversation never discussed concrete slot times (info-only Q&A, no check_availability/get_next_available_options calls at all, consistent with no slots being offered)"
+  }
+}

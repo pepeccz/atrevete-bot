@@ -1,0 +1,191 @@
+{
+  "scenario_id": "change-c-cancel-flow",
+  "conversation_id": "e9a1d02d-bc07-47c7-a865-98c7ad861857",
+  "outcome": "cancelled",
+  "turns_taken": 11,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, quiero reservar un corte de pelo para esta semana",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nClaro, ¿es para señora, caballero, niña, niño o bebé?",
+      "latency_ms": 11653,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "audience_required"
+    },
+    {
+      "turn": 2,
+      "user_message": "Para mí, corte de mujer",
+      "agent_response": "Perfecto, te anoto corte de mujer 😊 ¿Quieres añadir algún otro servicio o solo el corte?",
+      "latency_ms": 13603,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "extras_question_own_turn"
+    },
+    {
+      "turn": 3,
+      "user_message": "Solo el corte, gracias",
+      "agent_response": "Perfecto, te anoto solo el corte 😊  \n¿Me dices qué día de esta semana te viene bien, con día y mes?",
+      "latency_ms": 11028,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "date_clarification_required"
+    },
+    {
+      "turn": 4,
+      "user_message": "El miércoles 8 de julio",
+      "agent_response": "Genial, para el miércoles 8 de julio ya lo tengo claro 😊  \n¿Me das tu nombre y primer apellido?",
+      "latency_ms": 10487,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "name_required"
+    },
+    {
+      "turn": 5,
+      "user_message": "Lucía Herrera",
+      "agent_response": "Perfecto, Lucía 😊  \n¿Quieres dejar alguna nota para la cita o lo dejamos así?",
+      "latency_ms": 13717,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "notes_optional"
+    },
+    {
+      "turn": 6,
+      "user_message": "No, sin notas, así está bien",
+      "agent_response": "Perfecto, Lucía. Me falta elegir una hora concreta para verificarla antes de cerrarte la cita.  \n¿Te va mejor por la mañana o por la tarde?",
+      "latency_ms": 14539,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "pre_book_validation_required"
+    },
+    {
+      "turn": 7,
+      "user_message": "Por la mañana, mejor",
+      "agent_response": "Genial, para el miércoles 8 de julio por la mañana tengo hueco 😊  \nEstas son las opciones más próximas:\n\n1. Martes 8 de julio a las 10:00 con Marta  \n2. Martes 8 de julio a las 10:00 con Victor  \n3. Martes 8 de julio a las 10:00 con Harolyn  \n\n¿Con cuál te quedas?",
+      "latency_ms": 13031,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "check_availability"],
+      "bugs": [
+        {
+          "type": "hallucination",
+          "detail": "check_availability tool result labeled the date 'miércoles 8 de julio' (Wednesday) but the agent's spoken text called all three slot options 'Martes 8 de julio' (Tuesday) — a day-of-week mismatch between tool evidence and the reply text. Self-corrected in turn 8 onward (subsequent turns correctly say 'miércoles')."
+        }
+      ],
+      "milestone": "stylist_menu_offered"
+    },
+    {
+      "turn": 8,
+      "user_message": "Con Marta, la primera opción",
+      "agent_response": "Perfecto, Lucía, te dejo el miércoles 8 de julio a las 10:00 con Marta para corte de mujer.\n\nAntes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "latency_ms": 16653,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "check_availability"],
+      "bugs": [],
+      "milestone": "policy_acceptance_required"
+    },
+    {
+      "turn": 9,
+      "user_message": "Sí, la acepto",
+      "agent_response": "Perfecto, Lucía, te lo dejo el miércoles 8 de julio a las 10:00 con Marta para corte de mujer. ¿Te lo confirmo?",
+      "latency_ms": 12379,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "booking_ready"
+    },
+    {
+      "turn": 10,
+      "user_message": "Sí, confírmamela",
+      "agent_response": "¡Listo, Lucía! Te agendé la cita para el miércoles 8 de julio a las 10:00 con Marta para corte de mujer.\n\nTe enviaré una confirmación 48h antes; respóndela con un “sí” y queda lista ✅\n\nSi quieres, también te paso el enlace del calendario.",
+      "latency_ms": 17204,
+      "timed_out": false,
+      "tool_calls_observed": ["check_availability", "book"],
+      "bugs": [],
+      "milestone": "booked"
+    },
+    {
+      "turn": 11,
+      "user_message": "Perdona, al final me ha surgido un imprevisto y no voy a poder ir. ¿Puedes cancelarme la cita?",
+      "agent_response": "Claro, Lucía, ya está cancelada tu cita del miércoles 8 de julio a las 10:00 con Marta.  \nSi quieres, te ayudo a buscar otra fecha.",
+      "latency_ms": 12652,
+      "timed_out": false,
+      "tool_calls_observed": ["manage_appointments"],
+      "bugs": [],
+      "milestone": "cancelled"
+    }
+  ],
+  "bugs": [
+    {
+      "turn": 7,
+      "type": "hallucination",
+      "detail": "Agent text said 'Martes 8 de julio' (Tuesday) for all three stylist slot options while the backing check_availability tool result and every other turn correctly labeled the date 'miércoles 8 de julio' (Wednesday). Self-corrected from turn 8 onward. Cosmetic day-of-week wording bug, not a scheduling/data bug — the actual slot_iso/date_iso used throughout was always 2026-07-08 (Wednesday)."
+    }
+  ],
+  "milestones_reached": [
+    "audience_required",
+    "extras_question_own_turn",
+    "date_clarification_required",
+    "name_required",
+    "notes_optional",
+    "pre_book_validation_required",
+    "stylist_menu_offered",
+    "policy_acceptance_required",
+    "booking_ready",
+    "booked",
+    "cancelled"
+  ],
+  "db_delta": {
+    "customer_count_delta": 1,
+    "appt_count_delta": 1
+  },
+  "snapshot_before": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "snapshot_after": {
+    "customer_count": 1,
+    "appt_count": 1,
+    "appointment_status": "cancelled",
+    "gcal_sync_status": "not_applicable",
+    "cancellation_reason": null,
+    "cancelled_at": "2026-07-05 20:18:30.165153+00"
+  },
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "e9a1d02d-bc07-47c7-a865-98c7ad861857",
+    "customer_phone": "+34999000011",
+    "customer_id": "684b27d5-126d-401c-819b-6edabcb67035",
+    "customer_name": "Lucía Herrera",
+    "messages_count": 46,
+    "latest_tool_call_name": "manage_appointments",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": true,
+    "note": "qa_turn_helper.py state reported policy_accepted_at=null and customer_consents_count=0, but a direct DB query immediately after showed customers.policy_accepted_at='2026-07-05 20:18:04.985963+00' and 1 row in customer_consents (accepted_via='whatsapp', policy_version='1.0'). Likely a stale-read/reporting quirk in the state helper, not an actual persistence bug — flagging for harness maintainers."
+  },
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "cancelled",
+    "db_appointment": {
+      "status": "cancelled"
+    },
+    "tool_calls_required": ["book", "manage_appointments"],
+    "tool_calls_forbidden": [],
+    "tags": ["change-c", "cancel"]
+  },
+  "passed": true,
+  "quality_observations": {
+    "extras_question_own_turn": "Yes — turn 2 asked '¿Quieres añadir algún otro servicio o solo el corte?' as its own turn before any stylist/date question.",
+    "confirmation_last": "Yes — '¿Te lo confirmo?' appeared only in turn 9, after policy (turn 8) → name (turn 4) → notes (turn 5) had already been collected.",
+    "rejection_both_facts": "N/A — this scenario had no closed-day/under-advance rejection to evaluate.",
+    "stylist_menu_option0": "No — the stylist menu in turn 7 offered 3 named stylists (Marta, Victor, Harolyn) with no 'la primera con disponibilidad' option 0 present at all.",
+    "tone": "Warm/cercano throughout — consistent use of emoji, first name, and soft phrasing. Verbatim quote: '¡Listo, Lucía! Te agendé la cita para el miércoles 8 de julio a las 10:00 con Marta para corte de mujer.'",
+    "unbacked_slots": "No unbacked slots observed — every concrete slot time presented (turn 7 options, turn 8 confirmation) was backed by a preceding check_availability tool call in the same or prior turn evidence."
+  }
+}

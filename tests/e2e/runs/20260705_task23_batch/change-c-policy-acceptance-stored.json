@@ -1,0 +1,184 @@
+{
+  "scenario_id": "change-c-policy-acceptance-stored",
+  "conversation_id": "eaf0fdad-3d0b-4fe2-9a50-abc3bd9ac046",
+  "outcome": "booked",
+  "turns_taken": 9,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, me gustaría reservar una cita. Es la primera vez que os contacto.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Para qué servicio te gustaría la cita?\n\n¿Para qué servicio te gustaría la cita?",
+      "latency_ms": 11778,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [
+        {"type": "duplicate_sentence", "note": "The greeting/service question was repeated verbatim twice in the same message."}
+      ],
+      "milestone": "greeting_service_asked"
+    },
+    {
+      "turn": 2,
+      "user_message": "Quiero un corte de pelo, por favor.",
+      "agent_response": "Perfecto, para el corte necesito saber para quién es: ¿es para ti o para otra persona?",
+      "latency_ms": 12866,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "service_selected_ambiguous_audience"
+    },
+    {
+      "turn": 3,
+      "user_message": "Es para mí.",
+      "agent_response": "Vale, ¿es para señora o para caballero?",
+      "latency_ms": 11334,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "audience_still_ambiguous"
+    },
+    {
+      "turn": 4,
+      "user_message": "Para señora.",
+      "agent_response": "Genial, te anoto corte de mujer. ¿Quieres añadir algún otro servicio o solo el corte?",
+      "latency_ms": 14274,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "audience_resolved_extras_asked"
+    },
+    {
+      "turn": 5,
+      "user_message": "Solo el corte, gracias.",
+      "agent_response": "Te propongo estos huecos para corte de mujer, con la estilista con disponibilidad más próxima:\n\n1. Miércoles 9 de julio a las 10:00 con Marta\n2. Miércoles 9 de julio a las 10:40 con Marta\n3. Miércoles 9 de julio a las 11:20 con Marta\n\n¿Cuál te viene mejor?",
+      "latency_ms": 18086,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "get_next_available_options"],
+      "bugs": [
+        {"type": "hallucination", "note": "Bot labeled 2026-07-09 as 'Miércoles' (Wednesday) in all 3 slot options. Given today=Sunday 2026-07-05, July 9 is actually Thursday (jueves) -- confirmed by the final confirmation message in turn 9 which correctly said 'jueves 9 de julio', and by the DB start_time (2026-07-09, a Thursday). Weekday-name/date mismatch in the slot-offer turn."}
+      ],
+      "milestone": "slots_offered"
+    },
+    {
+      "turn": 6,
+      "user_message": "La primera, el miércoles a las 10:00 me viene bien.",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "latency_ms": 12593,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "policy_gate_presented"
+    },
+    {
+      "turn": 7,
+      "user_message": "Sí, la acepto.",
+      "agent_response": "Perfecto. Para dejarlo listo, ¿me dices tu nombre y primer apellido?",
+      "latency_ms": 13031,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "policy_accepted_name_required"
+    },
+    {
+      "turn": 8,
+      "user_message": "Beatriz Jiménez.",
+      "agent_response": "Genial, Beatriz. ¿Quieres dejarme alguna nota para la cita, o lo dejamos así?",
+      "latency_ms": 12596,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "name_collected_notes_optional"
+    },
+    {
+      "turn": 9,
+      "user_message": "No, así está bien. Confírmamela por favor.",
+      "agent_response": "Te he agendado la cita para el jueves 9 de julio a las 10:00 con Marta para corte de mujer. Te llegará una confirmación 48h antes; respóndela con un “sí” y queda lista ✅\n\nSi quieres, también te paso el enlace del calendario.",
+      "latency_ms": 16361,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "check_availability", "book"],
+      "bugs": [],
+      "milestone": "booked"
+    }
+  ],
+  "bugs": [
+    {"turn": 1, "type": "duplicate_sentence", "note": "Greeting/service question repeated verbatim twice in the same message."},
+    {"turn": 5, "type": "hallucination", "note": "Weekday label 'Miércoles' used for 2026-07-09, which is actually Thursday (jueves) -- confirmed wrong by self-correction in turn 9 and by DB start_time."}
+  ],
+  "milestones_reached": [
+    "greeting_service_asked",
+    "service_selected_ambiguous_audience",
+    "audience_still_ambiguous",
+    "audience_resolved_extras_asked",
+    "slots_offered",
+    "policy_gate_presented",
+    "policy_accepted_name_required",
+    "name_collected_notes_optional",
+    "booked"
+  ],
+  "db_delta": {
+    "customer_count_delta": 1,
+    "appt_count_delta": 1
+  },
+  "snapshot_before": {"customer_count": 0, "appt_count": 0},
+  "snapshot_after": {"customer_count": 1, "appt_count": 1},
+  "policy_persistence_verification": {
+    "method": "direct_db_query",
+    "note": "Judged via direct psql against customers/customer_consents -- NOT the qa_turn_helper 'state' command, which reflects a stale checkpoint snapshot (known artifact, see fase-e/results engram #7335).",
+    "customers_row": {
+      "id": "7a9de0cc-3cd0-46c0-8665-c73c23be4d79",
+      "phone": "+34999000014",
+      "first_name": "Beatriz",
+      "last_name": "Jiménez",
+      "policy_accepted_at": "2026-07-05 20:17:39.220155+00",
+      "policy_version": "1.0"
+    },
+    "customer_consents_row": {
+      "customer_id": "7a9de0cc-3cd0-46c0-8665-c73c23be4d79",
+      "policy_version": "1.0",
+      "accepted_at": "2026-07-05 20:17:39.220155+00",
+      "accepted_via": "whatsapp"
+    },
+    "appointment_row": {
+      "id": "55be6878-2932-4ee1-a565-44cfe336226f",
+      "status": "pending",
+      "gcal_sync_status": "not_applicable",
+      "start_time": "2026-07-09 08:00:00+00"
+    },
+    "stale_state_command_output": {
+      "has_checkpoint": true,
+      "customer_consents_count": 0,
+      "policy_accepted_at": null,
+      "note": "This is the KNOWN stale-checkpoint artifact -- the live DB values above are authoritative, not this."
+    },
+    "verdict": "CONFIRMED: policy_accepted_at and customer_consents row are correctly populated in the DB. The scenario's expected behavior (customer.policy_accepted_at populated) PASSES."
+  },
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "eaf0fdad-3d0b-4fe2-9a50-abc3bd9ac046",
+    "customer_phone": "+34999000014",
+    "customer_id": "7a9de0cc-3cd0-46c0-8665-c73c23be4d79",
+    "customer_name": "Beatriz Jiménez",
+    "messages_count": 40,
+    "latest_tool_call_name": "book",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": true,
+    "caveat": "STALE snapshot view -- see policy_persistence_verification for ground truth from direct DB query."
+  },
+  "langfuse_trace_path": null,
+  "langfuse_error": "401 UnauthorizedError -- known Langfuse credential issue on server, single retry attempted per skill rule, then abandoned.",
+  "expect": {
+    "outcome": "booked",
+    "db_appointment": {"status": "pending"},
+    "tool_calls_required": ["check_availability", "book"],
+    "tool_calls_forbidden": [],
+    "tags": ["change-c", "policy-acceptance"]
+  },
+  "passed": true,
+  "cleanup": {
+    "checkpoints_deleted": 204,
+    "customer_redis_deleted": 1,
+    "artifacts_deleted": 0,
+    "appointments_deleted": 1,
+    "customer_deleted": true
+  }
+}

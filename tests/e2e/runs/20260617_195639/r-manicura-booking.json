@@ -1,0 +1,124 @@
+{
+  "scenario_id": "r-manicura-booking",
+  "conversation_id": "392ea4c3-d805-4173-a793-0ac8ef700fed",
+  "phone": "+34999000010",
+  "persona_name": "Ana Torres",
+  "expected_outcome": "booked",
+  "outcome": "booked",
+  "max_turns": 10,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Quiero reservar una manicura para el miercoles a las 11.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Qué tipo de manicura quieres? Tengo manicura, manicura permanente o manicura permanente con tratamiento.",
+      "response_latency_ms": 15363,
+      "timed_out": false,
+      "tool_evidence": [
+        {"tool_name": "update_booking", "result_summary": "status=ambiguous, next_step=variant_required"}
+      ]
+    },
+    {
+      "turn": 2,
+      "user_message": "Manicura normal, la basica.",
+      "agent_response": "Para dejarla reservada, ¿me das tu nombre y primer apellido?",
+      "response_latency_ms": 14168,
+      "timed_out": false,
+      "tool_evidence": [
+        {"tool_name": "update_booking", "result_summary": "status=partial, next_step=name_required, service resolved to Manicura (cc30a1c4-b1c7-56f4-2f19-14a88a6f09b1)"}
+      ]
+    },
+    {
+      "turn": 3,
+      "user_message": "Ana Torres.",
+      "agent_response": "¿Alguna nota para la cita?",
+      "response_latency_ms": 13392,
+      "timed_out": false,
+      "tool_evidence": [
+        {"tool_name": "update_booking", "result_summary": "status=partial, next_step=notes_optional, customer_full_name=Ana Torres"}
+      ]
+    },
+    {
+      "turn": 4,
+      "user_message": "No, sin notas.",
+      "agent_response": "Lo siento, tuve un problema técnico. ¿Puedes intentarlo de nuevo? 💕",
+      "response_latency_ms": 12148,
+      "timed_out": false,
+      "tool_evidence": [
+        {"tool_name": "update_booking", "result_summary": "status=partial, next_step=notes_optional (technical error on response)"}
+      ]
+    },
+    {
+      "turn": 5,
+      "user_message": "Sin notas, puedes continuar con la reserva.",
+      "agent_response": "Me falta validar la hora exacta antes de confirmártela. ¿Quieres que compruebe las 11:00 del miércoles 24 de junio?",
+      "response_latency_ms": 19050,
+      "timed_out": false,
+      "tool_evidence": [
+        {"tool_name": "update_booking", "result_summary": "status=partial, next_step=pre_book_validation_required"}
+      ]
+    },
+    {
+      "turn": 6,
+      "user_message": "Si, comprueba las 11:00 del miercoles 24.",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política\nde privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos\navisar con al menos 24h si necesitas cambiar o cancelar — fuera de\nese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "response_latency_ms": 17268,
+      "timed_out": false,
+      "tool_evidence": [
+        {"tool_name": "check_availability", "result_summary": "status=ok, slot=2026-06-24T11:00:00+02:00, stylist=Rosa"},
+        {"tool_name": "update_booking", "result_summary": "status=partial, next_step=policy_acceptance_required"}
+      ]
+    },
+    {
+      "turn": 7,
+      "user_message": "Si, la acepto.",
+      "agent_response": "Lo siento, tuve un problema técnico. ¿Puedes intentarlo de nuevo? 💕",
+      "response_latency_ms": 8447,
+      "timed_out": false,
+      "tool_evidence": [
+        {"tool_name": "check_availability", "result_summary": "status=ok, slot=2026-06-24T11:00:00+02:00, stylist=Rosa"},
+        {"tool_name": "update_booking", "result_summary": "status=partial, next_step=policy_acceptance_required (technical error on response)"}
+      ]
+    },
+    {
+      "turn": 8,
+      "user_message": "Si acepto la politica de privacidad.",
+      "agent_response": "¡Listo! Te queda la cita confirmada para el miércoles 24 de junio a las 11:00 con Rosa para manicura.  \nSi quieres, también te paso el enlace del calendario.",
+      "response_latency_ms": 14786,
+      "timed_out": false,
+      "tool_evidence": [
+        {"tool_name": "check_availability", "result_summary": "status=ok, slot=2026-06-24T11:00:00+02:00, stylist=Rosa"},
+        {"tool_name": "update_booking", "result_summary": "status=ok, next_step=booking_ready, policy_accepted=true"},
+        {"tool_name": "book", "result_summary": "status=ok, appointment_id=c69c54c9-f23e-4684-a2c7-419d808373af, stylist=Rosa, start=2026-06-24T11:00:00+02:00"}
+      ]
+    }
+  ],
+  "tool_calls_observed": [
+    "update_booking",
+    "update_booking",
+    "update_booking",
+    "update_booking",
+    "update_booking",
+    "check_availability",
+    "update_booking",
+    "check_availability",
+    "update_booking",
+    "check_availability",
+    "update_booking",
+    "update_booking",
+    "book"
+  ],
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "392ea4c3-d805-4173-a793-0ac8ef700fed",
+    "customer_phone": "+34999000010",
+    "customer_id": "9afef05e-bd78-477d-a564-f7b3b112cb38",
+    "customer_name": "Ana Torres",
+    "messages_count": 30,
+    "latest_tool_call_name": "book",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": true
+  },
+  "claim_vs_backend": "Te queda la cita confirmada para el miércoles 24 de junio a las 11:00 con Rosa para manicura.",
+  "coherence_notes": "The bot fully resolved the intent: Manicura (basic) booked with Rosa (aesthetics stylist) on Wednesday June 24 at 11:00. Service stayed correctly as Manicura throughout — no drift to other services. Rosa was assigned as expected for aesthetics services. Two technical error responses occurred mid-flow (turns 4 and 7) where the bot said it had a problem despite state advancing correctly; the user had to repeat their message on both occasions, inflating turns. No voseo observed. No hallucinated stylists — Rosa is a valid aesthetics stylist."
+}

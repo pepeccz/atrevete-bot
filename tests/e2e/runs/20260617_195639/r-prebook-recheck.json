@@ -1,0 +1,124 @@
+{
+  "scenario_id": "r-prebook-recheck",
+  "conversation_id": "25ab2a35-cb48-4fe0-bcea-4f2f1020a53b",
+  "phone": "+34999000003",
+  "persona_name": "Sofia Martinez",
+  "expected_outcome": "booked",
+  "outcome": "booked",
+  "max_turns": 10,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, quiero reservar un corte de dama para el martes, con cualquier estilista.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nPara registrarte la cita, ¿me das tu nombre y apellido?",
+      "response_latency_ms": 14956,
+      "timed_out": false,
+      "tool_evidence": ["update_booking"]
+    },
+    {
+      "turn": 2,
+      "user_message": "Me llamo Sofia Martinez.",
+      "agent_response": "Para ayudarte bien, ¿me dices qué servicio quieres reservar?",
+      "response_latency_ms": 11395,
+      "timed_out": false,
+      "tool_evidence": ["update_booking", "update_booking"]
+    },
+    {
+      "turn": 3,
+      "user_message": "Quiero un corte de dama para el martes.",
+      "agent_response": "Perfecto, Sofia. ¿Quieres añadir alguna nota para la cita?",
+      "response_latency_ms": 13403,
+      "timed_out": false,
+      "tool_evidence": ["update_booking", "update_booking", "update_booking"]
+    },
+    {
+      "turn": 4,
+      "user_message": "No, sin notas.",
+      "agent_response": "Perdona, se me ha descolocado el servicio. Quiero dejarte correctamente tu corte de dama para el martes, pero necesito que me lo confirmes otra vez: ¿quieres reservar corte de dama?",
+      "response_latency_ms": 11071,
+      "timed_out": false,
+      "tool_evidence": ["update_booking", "update_booking", "update_booking", "update_booking"]
+    },
+    {
+      "turn": 5,
+      "user_message": "Si, quiero reservar corte de dama.",
+      "agent_response": "Me falta concretar la hora antes de poder seguir. ¿Qué hora te viene bien el martes?",
+      "response_latency_ms": 10982,
+      "timed_out": false,
+      "tool_evidence": ["update_booking", "update_booking", "update_booking", "update_booking", "update_booking"]
+    },
+    {
+      "turn": 6,
+      "user_message": "A las 10 de la manana me viene bien.",
+      "agent_response": "Lo siento, tuve un problema técnico. ¿Puedes intentarlo de nuevo? 💕",
+      "response_latency_ms": 17185,
+      "timed_out": false,
+      "tool_evidence": ["update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "check_availability"]
+    },
+    {
+      "turn": 7,
+      "user_message": "Quiero reservar corte de dama el martes a las 10 de la manana, me llamo Sofia Martinez.",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "response_latency_ms": 15303,
+      "timed_out": false,
+      "tool_evidence": ["update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "check_availability", "update_booking"]
+    },
+    {
+      "turn": 8,
+      "user_message": "Si, la acepto.",
+      "agent_response": "Se ha ocupado ese hueco justo antes de confirmarlo. Te ofrezco alternativas próximas para el martes con disponibilidad más cercana, y también puedo buscar otra hora si prefieres.",
+      "response_latency_ms": 18090,
+      "timed_out": false,
+      "tool_evidence": ["update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "check_availability", "update_booking", "update_booking", "book", "get_next_available_options"]
+    },
+    {
+      "turn": 9,
+      "user_message": "Ok, que alternativas tienes el martes por la manana?",
+      "agent_response": "El martes por la mañana no me salen huecos; la opción más próxima es el miércoles 24 de junio a las 10:00 con Marta.\n\nTe dejo las opciones más cercanas:\n1. miércoles 24 de junio a las 10:00 con Marta\n2. miércoles 24 de junio a las 10:40 con Marta\n3. miércoles 24 de junio a las 11:20 con Marta\n\n¿Cuál te viene mejor?",
+      "response_latency_ms": 12216,
+      "timed_out": false,
+      "tool_evidence": ["update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "check_availability", "update_booking", "update_booking", "book", "get_next_available_options"]
+    },
+    {
+      "turn": 10,
+      "user_message": "La opcion 1, miercoles 24 de junio a las 10:00 con Marta.",
+      "agent_response": "¡Listo, Sofia! Tu cita ha quedado confirmada para el miércoles 24 de junio a las 10:00 con Marta para corte de dama.\n\nTe dejo también el enlace del calendario por si quieres guardarlo:\nhttps://calendar.google.com/calendar/render?action=TEMPLATE&text=Corte%20de%20Mujer%20en%20Atr%C3%A9vete&dates=20260624T080000Z/20260624T084000Z&details=Turno%20con%20Marta&location=Atr%C3%A9vete%20Sal%C3%B3n%20de%20Belleza",
+      "response_latency_ms": 27451,
+      "timed_out": false,
+      "tool_evidence": ["update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "check_availability", "update_booking", "update_booking", "book", "get_next_available_options", "update_booking", "check_availability", "update_booking", "book"]
+    }
+  ],
+  "tool_calls_observed": [
+    "update_booking",
+    "update_booking",
+    "update_booking",
+    "update_booking",
+    "update_booking",
+    "check_availability",
+    "update_booking",
+    "update_booking",
+    "book",
+    "get_next_available_options",
+    "update_booking",
+    "check_availability",
+    "update_booking",
+    "book"
+  ],
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "25ab2a35-cb48-4fe0-bcea-4f2f1020a53b",
+    "customer_phone": "+34999000003",
+    "customer_id": "2838375b-a45b-4b30-bf53-3e91d1dc324e",
+    "customer_name": "Sofia Martinez",
+    "messages_count": 48,
+    "latest_tool_call_name": "book",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": true,
+    "appointment_id": "f1c29441-dc05-4625-b31b-e6e2e4a91ffc",
+    "booked_slot": "2026-06-24T10:00:00+02:00",
+    "booked_stylist": "Marta"
+  },
+  "claim_vs_backend": "Tu cita ha quedado confirmada para el miércoles 24 de junio a las 10:00 con Marta para corte de dama. (appointment_id: f1c29441-dc05-4625-b31b-e6e2e4a91ffc)",
+  "coherence_notes": "The bot successfully completed a booking, but the path was notably troubled. After the initial slot (martes 23 at 10:00) was rejected by the `book` tool (already taken), the bot correctly called `get_next_available_options` and presented real Wednesday 24 June alternatives — so it did NOT hallucinate availability. The F1 regression (bare fabricated confirmation without a real slot check) did NOT occur: the final confirmation explicitly mentions a concrete calendar link backed by a real persisted appointment (ID f1c29441-dc05-4625-b31b-e6e2e4a91ffc). However, the bot exhibited a significant defect: on turns 2 and 4 it lost the service context from the draft state (update_booking with pre_resolved_service_ids was rejected with 'No reconozco el servicio: cb7ae91c...'), causing repeated recovery loops and one spurious 'technical error' reply. No voseo detected; stylists mentioned (Marta) are valid. The conversation required 10 turns to complete what should be a 4-5 turn flow, exposing a pre_resolved_service_ids state corruption bug."
+}

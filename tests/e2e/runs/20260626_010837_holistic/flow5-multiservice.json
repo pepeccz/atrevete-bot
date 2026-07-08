@@ -1,0 +1,113 @@
+{
+  "scenario_id": "flow5-multiservice",
+  "conversation_id": "05a4b4cd-e063-4686-8f7d-a82c4f71f945",
+  "persona": {
+    "name": "Sofia Marin",
+    "phone": "+34999000134",
+    "description": "Mother wanting a corte for her 7-year-old son and a buzz cut (pelado) for her husband"
+  },
+  "expected": {
+    "outcome": "multi_completed",
+    "coherent_behavior": "Bot MUST recognize TWO distinct services and NOT collapse or silently drop either. It should clarify each (who each is for, what 'pelado' means) and track BOTH through the flow. Must not lose the second service. Ideally both get booked. A silent drop or collapse to one service = FAIL."
+  },
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, quiero un corte para un niño y un pelado",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Qué es exactamente \"pelado\"?",
+      "tool_calls_observed": [
+        {
+          "tool": "update_booking",
+          "args": {
+            "services": ["corte de niño", "pelado"],
+            "audience": "child_male",
+            "no_more_services": false
+          },
+          "result_status": "rejected",
+          "result_summary": "No reconozco el servicio: pelado"
+        }
+      ],
+      "coherence_note": "GOOD: Bot recognized both services. Set services=['corte de niño','pelado']. Asked clarifying question about 'pelado'. However, audience was set to 'child_male' only — did not differentiate the two audiences (child vs adult_male). The 'pelado' service was not in the catalog; bot correctly asked for clarification.",
+      "bugs": []
+    },
+    {
+      "turn": 2,
+      "user_message": "Un rapado, para mi marido. Y el corte es para mi hijo de 7 años.",
+      "agent_response": "Perdona, se ha quedado bloqueado al reconocer uno de los servicios. Te paso con alguien del equipo del salón ahora mismo.",
+      "tool_calls_observed": [
+        {
+          "tool": "update_booking",
+          "args": {
+            "services": ["corte de niño", "pelado"],
+            "audience": "child_male"
+          },
+          "result_status": "rejected",
+          "result_summary": "No reconozco el servicio: pelado — consecutive rejection 1"
+        },
+        {
+          "tool": "update_booking",
+          "args": {
+            "services": ["corte de niño", "rapado"],
+            "audience": "child_male"
+          },
+          "result_status": "rejected",
+          "result_summary": "No reconozco el servicio: rapado — consecutive rejection 2 → escalation_required"
+        },
+        {
+          "tool": "escalate",
+          "args": {
+            "reason": "technical_error"
+          },
+          "result_status": "success"
+        }
+      ],
+      "coherence_note": "CRITICAL FAILURE: Bot attempted 'pelado' again (stale) then tried 'rapado' as synonym. Neither is a catalog item. After 2 consecutive rejections the anti-loop guard fired and forced escalation. Bot never offered the human catalog names (e.g. 'Corte de Hombre', 'Corte de Niño'). Never distinguished the two audiences. Conversation ended via escalation — both services unbooked.",
+      "bugs": [
+        "service_disambiguation_failure: 'pelado'/'rapado' are colloquial Spanish terms for a shaved/very-short haircut that should map to a catalog service (Corte de Hombre or similar), but the bot has no fuzzy mapping and treated them as unknown rather than offering alternatives",
+        "no_catalog_fallback: when the validator rejects a service name, the bot should offer the customer the closest known alternatives from the catalog, not immediately escalate after 2 failures",
+        "audience_context_confusion: both services were sent together in a single update_booking call with a single 'audience' field (child_male), losing the per-service audience distinction (one is for child, one for adult_male)",
+        "stale_service_retry: on turn 2 the bot sent 'pelado' again first (the old unresolved name from turn 1), burning one of its 2 consecutive-rejection slots before trying the new synonym",
+        "escalation_without_alternatives: bot escalated as technical_error instead of presenting available men's haircut services by name and asking which one the customer wanted"
+      ]
+    }
+  ],
+  "outcome": "escalated",
+  "coherent_with_expectation": {
+    "verdict": "FAIL",
+    "reasons": [
+      "Both services were recognized in turn 1 (positive), but 'pelado' is not in the catalog — the bot asked for clarification (acceptable)",
+      "In turn 2, user provided the synonym 'rapado' and context (husband = adult male, son = 7yo child), but the bot still could not map to a catalog service",
+      "The bot never offered catalog alternatives for men's haircuts to help resolve the ambiguity",
+      "The anti-loop escalation guard fired after 2 consecutive rejections, ending the conversation via escalation",
+      "NEITHER service was booked — the multi-service scenario did not progress past service identification",
+      "Silent collapse did not occur (both were tracked), but total escalation is functionally equivalent to a failure: 0 of 2 services booked"
+    ]
+  },
+  "bugs_summary": [
+    {
+      "id": "B1",
+      "severity": "CRITICAL",
+      "type": "service_disambiguation_failure",
+      "description": "Colloquial terms 'pelado'/'rapado' (common Spanish/LatAm terms for a buzz cut) have no fuzzy catalog mapping. The bot treats them as unknown services and escalates instead of offering the closest catalog alternatives."
+    },
+    {
+      "id": "B2",
+      "severity": "HIGH",
+      "type": "no_catalog_fallback_on_rejection",
+      "description": "When update_booking rejects an unrecognized service, the bot should present available options from the catalog (e.g. 'Corte de Hombre') rather than retrying synonyms until the anti-loop guard fires."
+    },
+    {
+      "id": "B3",
+      "severity": "HIGH",
+      "type": "audience_conflation_in_multi_service",
+      "description": "update_booking was called with both services in a single call and a single 'audience' field (child_male). In a multi-service booking with different audiences (child + adult_male), audience must be tracked per-service or disambiguated before merging."
+    },
+    {
+      "id": "B4",
+      "severity": "MEDIUM",
+      "type": "stale_service_name_retry",
+      "description": "On turn 2, the bot re-sent the already-rejected 'pelado' name in a tool call before trying 'rapado', consuming one of its 2 allowed consecutive-rejection slots unnecessarily."
+    }
+  ],
+  "notes": "The original bug report ('bot collapsed two services into one and lost the pelado') was partially reproduced in a different form: the bot did NOT collapse or silently drop 'pelado' — it recognized both from the start. However, the actual failure mode is that 'pelado'/'rapado' have no catalog mapping and no fuzzy disambiguation, causing the anti-loop guard to escalate after 2 rejections. The net result is identical to the reported bug: the customer cannot complete ANY booking. Root cause: missing colloquial-to-catalog service synonym layer (or LLM-side instruction to offer catalog alternatives when a service is unrecognized)."
+}

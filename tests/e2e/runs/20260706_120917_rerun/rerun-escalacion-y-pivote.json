@@ -1,0 +1,245 @@
+{
+  "scenario_id": "rerun-escalacion-y-pivote",
+  "conversation_id": "9a3e8876-9b8c-4a86-b426-a7fa141c2346",
+  "outcome": "multi_completed",
+  "turns_taken": 11,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola! Es que me caso y quiero organizar peinado y maquillaje para 6 personas el mismo día, ¿me puede llamar alguien para organizarlo?",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nCon mucho gusto te paso con alguien del equipo del salón. Te atenderán en el próximo horario disponible. 🙏",
+      "latency_ms": 14164,
+      "timed_out": false,
+      "tool_calls_observed": [
+        "escalate"
+      ],
+      "bugs": [],
+      "milestone": "BLOCK A: wedding group request escalated on first turn via escalate(reason=manual_request), issue_summary populated inline."
+    },
+    {
+      "turn": 2,
+      "user_message": "Ah, mientras esperan, aprovecho y quiero un corte",
+      "agent_response": "Claro, te ayudo con ese corte. ¿Es para ti o para otra persona?",
+      "latency_ms": 9482,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "BLOCK B start: booking flow begins inside the same conversation, post-escalation. Bot correctly separates the two threads (no re-escalation, no contamination)."
+    },
+    {
+      "turn": 3,
+      "user_message": "Para mí",
+      "agent_response": "Perfecto. Para el corte, ¿es para señora, caballero, niña, niño o bebé?",
+      "latency_ms": 12955,
+      "timed_out": false,
+      "tool_calls_observed": [
+        "update_booking"
+      ],
+      "bugs": [],
+      "milestone": "Audience question answered ('para mí'); bot asks a further disambiguation question (which corte variant) since 'corte' matches multiple catalog entries."
+    },
+    {
+      "turn": 4,
+      "user_message": "Señora",
+      "agent_response": "Genial, te anoto el corte de señora. ¿Quieres añadir algún otro servicio o solo el corte?",
+      "latency_ms": 15023,
+      "timed_out": false,
+      "tool_calls_observed": [
+        "update_booking(audience=adult_female)"
+      ],
+      "bugs": [],
+      "milestone": "audience=adult_female resolved and persisted in booking state (service_ids=[corte de mujer])."
+    },
+    {
+      "turn": 5,
+      "user_message": "Mmm mejor un tinte",
+      "agent_response": "Perfecto, para **corte de mujer + tinte** tengo estas opciones próximas:\n\n1. Viernes 10 de julio a las 10:00 con Pilar\n2. Viernes 10 de julio a las 12:40 con Marta\n3. Viernes 10 de julio a las 14:00 con Marta\n\n¿Cuál te viene mejor?",
+      "latency_ms": 19675,
+      "timed_out": false,
+      "tool_calls_observed": [
+        "update_booking(services=[corte,tinte], audience=adult_female preserved)",
+        "get_next_available_options"
+      ],
+      "bugs": [
+        {
+          "type": "misinterpreted_pivot_as_addon",
+          "detail": "'Mmm mejor un tinte' is a natural-Spanish pivot/replace phrasing ('actually, [make it] a tinte [instead]'), not an add-on request. The bot appended tinte to the existing corte selection (services=[corte,tinte]) instead of asking for clarification or treating it as a service swap. This is a service-intent-interpretation issue, separate from the R-50 audience-retention behavior under test."
+        }
+      ],
+      "milestone": "PIVOT TURN — critical observation point for R-50. Bot did NOT re-ask '¿es para ti o para otra persona?' — audience=adult_female carried over silently into the new service combination. R-50 (audience retention) HOLDS. However, the bot combined corte+tinte rather than swapping, which is a separate, minor bug (service-combination interpretation, not audience handling)."
+    },
+    {
+      "turn": 6,
+      "user_message": "Ah perdón, me expliqué mal: no quiero el corte, solo el tinte",
+      "agent_response": "Claro, entonces solo el tinte 😊\n\nTe dejo las próximas opciones disponibles:\n\n1. Viernes 10 de julio a las 10:40 con Marta\n2. Viernes 10 de julio a las 10:00 con Pilar\n3. Viernes 10 de julio a las 12:00 con Marta",
+      "latency_ms": 18773,
+      "timed_out": false,
+      "tool_calls_observed": [
+        "update_booking(services=[tinte])",
+        "get_next_available_options"
+      ],
+      "bugs": [],
+      "milestone": "Runner-injected clarification (not a baseline persona turn) to correct the corte+tinte combination back down to tinte-only, so the booking could complete matching the scenario's intent ('the tinte booking'). Bot correctly dropped corte and kept audience=adult_female without re-asking. This is additional confirmation R-50 holds across a second correction turn."
+    },
+    {
+      "turn": 7,
+      "user_message": "La primera opción, gracias",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊 ... ¿La aceptas?",
+      "latency_ms": 14319,
+      "timed_out": false,
+      "tool_calls_observed": [
+        "update_booking(slot_iso=2026-07-10T10:40:00+02:00, date_iso=2026-07-10)"
+      ],
+      "bugs": [],
+      "milestone": "Slot selected (viernes 10 julio 10:40, Marta). Policy gate reached."
+    },
+    {
+      "turn": 8,
+      "user_message": "Sí, la acepto",
+      "agent_response": "Perfecto, ya tengo la política aceptada. Para dejarte la cita, ¿me dices tu nombre y primer apellido?",
+      "latency_ms": 13432,
+      "timed_out": false,
+      "tool_calls_observed": [
+        "update_booking(policy_accepted=true)"
+      ],
+      "bugs": [],
+      "milestone": "Policy accepted, name requested."
+    },
+    {
+      "turn": 9,
+      "user_message": "Marta Iglesias",
+      "agent_response": "Perfecto, Marta. ¿Quieres dejar alguna nota para la cita?",
+      "latency_ms": 14600,
+      "timed_out": false,
+      "tool_calls_observed": [
+        "update_booking(customer_full_name='Marta Iglesias')"
+      ],
+      "bugs": [],
+      "milestone": "Name captured."
+    },
+    {
+      "turn": 10,
+      "user_message": "No, ninguna nota, gracias",
+      "agent_response": "Perfecto, Marta. Te lo dejo el viernes 10 de julio con Marta para tinte. ¿Te lo confirmo?",
+      "latency_ms": 15693,
+      "timed_out": false,
+      "tool_calls_observed": [
+        "update_booking(notes_asked=true)",
+        "check_availability"
+      ],
+      "bugs": [],
+      "milestone": "Pre-book validation passed (check_availability exact_match=true), final confirmation requested."
+    },
+    {
+      "turn": 11,
+      "user_message": "Sí, confírmalo",
+      "agent_response": "¡Listo! Te he agendado el viernes 10 de julio a las 10:40 con Marta para tinte. Te llegará una confirmación 48h antes; respóndela con un sí y queda lista ✅",
+      "latency_ms": 15351,
+      "timed_out": false,
+      "tool_calls_observed": [
+        "book"
+      ],
+      "bugs": [],
+      "milestone": "BLOCK B complete: appointment 87de9b09-5836-4111-94d2-d68a85ab1889 created, status=pending (lead time >48h), service=Tinte only, gcal_sync_status=not_applicable."
+    }
+  ],
+  "bugs": [
+    {
+      "type": "misinterpreted_pivot_as_addon",
+      "severity": "minor",
+      "detail": "On turn 5, 'Mmm mejor un tinte' following an in-progress corte booking was combined as corte+tinte (an add-on) rather than treated as a service swap/pivot or clarified. A runner-injected correction turn ('no quiero el corte, solo el tinte') was needed to reach the scenario's intended tinte-only booking. Not an audience-retention (R-50) issue — audience stayed correct throughout, including across this correction.",
+      "evidence": "turn 5 tool_evidence: update_booking(services=['corte','tinte'], audience='adult_female')"
+    }
+  ],
+  "milestones_reached": [
+    "wedding_group_escalated_with_summary",
+    "corte_booking_started",
+    "audience_resolved_adult_female",
+    "pivot_no_audience_reask",
+    "tinte_only_after_correction",
+    "policy_accepted",
+    "tinte_booked_pending"
+  ],
+  "db_delta": {
+    "customer_count_delta": 1,
+    "appt_count_delta": 1,
+    "escalation_count_delta": 1
+  },
+  "snapshot_before": {
+    "customer_count": 0,
+    "appt_count": 0,
+    "escalation_count": 9
+  },
+  "snapshot_after_pre_cleanup": {
+    "customer_count": 1,
+    "appt_count": 1,
+    "escalation_count": 10,
+    "appointment_detail": {
+      "id": "87de9b09-5836-4111-94d2-d68a85ab1889",
+      "status": "pending",
+      "start_time": "2026-07-10T08:40:00+00:00",
+      "gcal_sync_status": "not_applicable",
+      "service_ids": [
+        "594d3e72-30bd-e015-326b-102352980fcb"
+      ],
+      "service_name": "Tinte"
+    },
+    "escalation_detail": {
+      "id": "c8396fc0-241f-4053-ad6a-28a874f015b3",
+      "reason": "manual_request",
+      "issue_summary": "La clienta pide organizar un evento de boda para 6 personas el mismo día y solicita que le llame alguien para coordinarlo. Es una petición de grupo y coordinación que necesita gestión humana.",
+      "triggered_at": "2026-07-06T10:17:38.404956+00:00"
+    }
+  },
+  "snapshot_after_cleanup": {
+    "customer_count": 0,
+    "appt_count": 0,
+    "escalation_count": 10,
+    "note": "Cleanup (state_reset.py) removed the sandbox customer and appointment as expected. Escalations table is a known gap in state_reset.py — the +34999-tagged escalation row (id c8396fc0-241f-4053-ad6a-28a874f015b3) intentionally remains, per runbook instructions."
+  },
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "9a3e8876-9b8c-4a86-b426-a7fa141c2346",
+    "customer_phone": "+34999000034",
+    "customer_id": "4671149d-9bd6-4f8c-a19c-d9aa1dd5713c",
+    "customer_name": "Marta Iglesias",
+    "messages_count": 47,
+    "latest_tool_call_name": "book",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": true,
+    "note": "state CLI policy fields (customer_consents_count=0, policy_accepted_at=null) are known-stale vs DB per env facts; DB is source of truth and shows the appointment booked with policy_accepted=true in the update_booking tool trail."
+  },
+  "langfuse_trace_path": null,
+  "langfuse_error": "401 Unauthorized — known Langfuse credential issue on this deploy (see CLAUDE.md context-coherence PR-B credential regeneration runbook). Traces null as expected.",
+  "expect": {
+    "block_a": {
+      "outcome": "escalated",
+      "issue_summary_non_empty": true
+    },
+    "block_b": {
+      "outcome": "booked",
+      "r50_no_redundant_audience_reask": true
+    }
+  },
+  "passed": true,
+  "observations": [
+    "BLOCK A (F4 issue_summary) — PASS. The wedding/group request ('me caso y quiero organizar peinado y maquillaje para 6 personas el mismo día') triggered escalate(reason='manual_request') on the very first turn. The escalations row (id c8396fc0-241f-4053-ad6a-28a874f015b3) has a NON-EMPTY, accurate issue_summary, verified via psql: \"La clienta pide organizar un evento de boda para 6 personas el mismo día y solicita que le llame alguien para coordinarlo. Es una petición de grupo y coordinación que necesita gestión humana.\" This directly and specifically describes the customer's request (wedding, group of 6, same-day coordination, request for a human call) — F4 regression is fixed.",
+    "BLOCK B (F6/R-50 pivot) — PASS on the audience-retention question. Flow: 'quiero un corte' -> bot asks '¿Es para ti o para otra persona?' -> 'Para mí' -> bot asks corte sub-type ('señora, caballero, niña, niño o bebé') -> 'Señora' -> audience=adult_female persisted. Pivot message 'Mmm mejor un tinte' -> bot did NOT re-ask the audience/'para quién' question; it silently carried audience='adult_female' forward into the new service selection (verified in update_booking tool_evidence across all subsequent turns, and in the final booked appointment). R-50 compliance CONFIRMED: zero redundant audience re-asks across the entire pivot and a follow-up correction turn.",
+    "SEPARATE FINDING (not part of R-50, flagged for visibility): on the pivot turn the bot interpreted 'mejor un tinte' as ADDING tinte to the existing corte selection (services=[corte,tinte]) rather than swapping/replacing corte with tinte, or asking for clarification. A natural Spanish speaker reading 'mmm mejor un tinte' after already discussing a corte would most likely mean 'actually, [give me] a tinte instead' — not 'also add a tinte'. The runner injected one clarifying turn ('no quiero el corte, solo el tinte') to steer the booking back to tinte-only per the scenario's goal ('Complete the tinte booking to the end'). This is logged as a minor bug (misinterpreted_pivot_as_addon) — separate from and does not affect the R-50 audience-retention verdict.",
+    "Booking completed correctly: appointment 87de9b09-5836-4111-94d2-d68a85ab1889 for +34999000034, service=Tinte only (single service_id 594d3e72-30bd-e015-326b-102352980fcb), stylist=Marta, start=2026-07-10T10:40:00+02:00, status=pending (correct — lead time from 2026-07-06 to 2026-07-10 is >48h), gcal_sync_status=not_applicable (TEST_MODE_GCAL_SKIP honored).",
+    "No contamination between the escalation and booking flows: escalation count for the phone stayed at exactly 1 throughout Block B (no duplicate/spurious escalations fired during the booking), and the booking flow proceeded normally after the initial escalate() call without the bot re-attempting to escalate or losing track of the original wedding request context."
+  ],
+  "cleanup": {
+    "scope": "state_reset.py --conversation-id 9a3e8876-9b8c-4a86-b426-a7fa141c2346 --phone +34999000034 (own data only, no global cleanup.py used)",
+    "result": {
+      "checkpoints_deleted": 242,
+      "customer_redis_deleted": 1,
+      "artifacts_deleted": 0,
+      "appointments_deleted": 1,
+      "customer_deleted": true,
+      "clean": false
+    },
+    "note": "'clean': false is expected — reflects the known gap that escalations rows are not covered by state_reset.py. Verified post-cleanup: customers=0, appointments=0, escalations=1 (left in place, +34999-tagged, harmless)."
+  }
+}

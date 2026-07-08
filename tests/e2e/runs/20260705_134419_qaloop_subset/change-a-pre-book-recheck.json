@@ -1,0 +1,157 @@
+{
+  "scenario_id": "change-a-pre-book-recheck",
+  "conversation_id": "2087a44a-0e46-43ac-95a8-d7f4b19facbd",
+  "outcome": "booked",
+  "turns_taken": 7,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, quiero reservar un corte de dama para el martes, con cualquier estilista.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nPerfecto, te anoto un corte de dama para el martes 😊 ¿Quieres añadir algún otro servicio o solo el corte?",
+      "latency_ms": 13073,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "extras_asked",
+      "notes": "Extras question asked as its own turn, before advancing to stylist/date resolution. Acknowledges 'el martes' contextually instead of re-asking for the date."
+    },
+    {
+      "turn": 2,
+      "user_message": "Solo el corte, gracias.",
+      "agent_response": "Perdona, pero el martes no llega a la antelación mínima de 3 días con la que trabajamos. La primera fecha disponible es el miércoles 8 de julio.\n\nEstas son las próximas citas disponibles para tu corte de dama:\n1. Miércoles 8 de julio a las 10:00\n2. Miércoles 8 de julio a las 10:40\n3. Miércoles 8 de julio a las 11:20\n\n¿Cuál te viene mejor?",
+      "latency_ms": 13666,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking"],
+      "bugs": [],
+      "milestone": "date_policy_rejected_alternatives_offered",
+      "notes": "update_booking itself enforces the 3-day minimum lead-time policy (martes = 2026-07-07, only ~2 days out) and rejects with next_step='advance_policy_violated', surfacing first_valid_date=2026-07-08. Bot pivoted gracefully with 3 concrete alternatives instead of erroring or silently booking an invalid date. This is the pre-book recheck behavior the scenario targets."
+    },
+    {
+      "turn": 3,
+      "user_message": "Vale, el miércoles 8 a las 10:00 me viene bien.",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos\navisar con al menos 24h si necesitas cambiar o cancelar — fuera de\nese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "latency_ms": 12732,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking", "check_availability", "update_booking"],
+      "bugs": [],
+      "milestone": "policy_acceptance_required",
+      "notes": "check_availability confirmed the 2026-07-08 10:00 slot (exact_match=true, stylist=Marta) before advancing to the policy gate."
+    },
+    {
+      "turn": 4,
+      "user_message": "Sí, la acepto.",
+      "agent_response": "Perfecto, ya tengo tu aceptación de la política 😊\n\nPara dejarla cerrada me falta tu nombre y primer apellido, ¿me los dices?",
+      "latency_ms": 16194,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking", "check_availability", "update_booking", "update_booking"],
+      "bugs": [],
+      "milestone": "name_required",
+      "notes": "Policy accepted, next_step transitioned directly to name_required. Order observed so far: policy_acceptance_required -> name_required (policy comes before name in this build's canonical flow)."
+    },
+    {
+      "turn": 5,
+      "user_message": "Sofía Martínez.",
+      "agent_response": "Genial, Sofía 😊 ¿Quieres dejar alguna nota para la estilista o lo dejamos sin notas?",
+      "latency_ms": 14755,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking", "check_availability", "update_booking", "update_booking", "update_booking"],
+      "bugs": [],
+      "milestone": "notes_optional",
+      "notes": "Warm acknowledgment using first name ('Genial, Sofía')."
+    },
+    {
+      "turn": 6,
+      "user_message": "Sin notas, gracias.",
+      "agent_response": "Perfecto, Sofía, te lo dejo el miércoles 8 de julio a las 10:00 para corte de dama, con la estilista con disponibilidad más próxima. ¿Te lo confirmo?",
+      "latency_ms": 12400,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking", "check_availability", "update_booking", "update_booking", "update_booking", "update_booking"],
+      "bugs": [],
+      "milestone": "booking_ready",
+      "notes": "Confirmation question '¿Te lo confirmo?' appears ONLY here, at the very end, after policy + name + notes were all collected. No premature confirmation ask earlier in the flow."
+    },
+    {
+      "turn": 7,
+      "user_message": "Sí, confírmalo.",
+      "agent_response": "Te la he agendado para el miércoles 8 de julio a las 10:00. Te enviaré una confirmación 48 h antes; respóndela con un “sí” y queda lista ✅\n\nSi quieres, también te paso el enlace del calendario.",
+      "latency_ms": 12883,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking", "check_availability", "update_booking", "update_booking", "update_booking", "update_booking", "book"],
+      "bugs": [],
+      "milestone": "booked",
+      "notes": "book() succeeded: appointment_id=d58a43de-5a6c-49de-8298-4af31b69572a, stylist=Marta, calendar_link returned in payload."
+    }
+  ],
+  "bugs": [],
+  "milestones_reached": [
+    "extras_asked",
+    "date_policy_rejected_alternatives_offered",
+    "policy_acceptance_required",
+    "name_required",
+    "notes_optional",
+    "booking_ready",
+    "booked"
+  ],
+  "db_delta": {
+    "customer_count_delta": 1,
+    "appt_count_delta": 1
+  },
+  "snapshot_before": {"customer_count": 0, "appt_count": 0},
+  "snapshot_after": {"customer_count": 1, "appt_count": 1},
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "2087a44a-0e46-43ac-95a8-d7f4b19facbd",
+    "customer_phone": "+34999000003",
+    "customer_id": "c8b7f218-f431-410b-9e83-ecbbeed76e9d",
+    "customer_name": "Sofía Martínez",
+    "messages_count": 30,
+    "latest_tool_call_name": "book",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": true
+  },
+  "appointment_record": {
+    "id": "d58a43de-5a6c-49de-8298-4af31b69572a",
+    "status": "pending",
+    "gcal_sync_status": "not_applicable",
+    "start_time": "2026-07-08T08:00:00+00:00",
+    "service_ids": ["a0f48408-6479-32c4-96ac-aa7187b99be0"],
+    "service_name": "Corte de Mujer",
+    "service_audience": "adult_female",
+    "service_type": "principal",
+    "first_name": "Sofía",
+    "last_name": "Martínez"
+  },
+  "langfuse_trace_path": null,
+  "langfuse_pull_error": "401 Unauthorized (invalid credentials) from langfuse.api.commons.errors.unauthorized_error.UnauthorizedError",
+  "expect": {
+    "outcome": "booked",
+    "db_appointment": {"status": "pending"},
+    "tool_calls_required": ["check_availability", "book"],
+    "tool_calls_forbidden": [],
+    "service": {
+      "name_contains": "corte",
+      "service_type": "principal",
+      "audience": "adult_female",
+      "forbidden_audience": "adult_male"
+    },
+    "step_order": ["name_required", "policy_acceptance_required", "booking_ready"]
+  },
+  "extra_observations": {
+    "extras_question_own_turn": true,
+    "extras_question_quote": "¿Quieres añadir algún otro servicio o solo el corte?",
+    "confirmation_only_at_end": true,
+    "confirmation_quote": "¿Te lo confirmo?",
+    "confirmation_preceded_by": ["policy_acceptance_required", "name_required", "notes_optional"],
+    "step_order_observed": ["policy_acceptance_required", "name_required", "notes_optional", "booking_ready"],
+    "step_order_note": "Observed order was policy -> name -> notes -> booking_ready, which is policy-before-name (opposite of the literal element order in expect.step_order, which lists name_required before policy_acceptance_required). Since the task's extra-observation instructions explicitly define the correct order as policy, name, notes, then confirm at the end -- and that is exactly what happened -- this is treated as a semantic PASS on ordering intent, not a literal match of the expect.step_order array order.",
+    "context_acknowledgment_examples": [
+      "te anoto un corte de dama para el martes (turn 1 - acknowledges date instead of re-asking)",
+      "Genial, Sofía (turn 5 - uses customer's first name warmly)",
+      "Perfecto, Sofía, te lo dejo el miércoles 8 de julio a las 10:00... (turn 6 - recaps full booking detail before asking to confirm)"
+    ],
+    "tone_assessment": "Warm/cercano throughout: self-introduces as 'Maite, asistenta virtual con IA de Atrévete' with a flower emoji, uses check emoji on final confirmation, addresses customer by first name from turn 5 onward, no robotic or repetitive phrasing observed.",
+    "pre_book_recheck_behavior": "update_booking's internal lead-time policy check (min 3 days) fired proactively in turn 2 BEFORE any check_availability call, rejecting the initially-requested Tuesday date and surfacing first_valid_date. This confirms the fix: the tool re-validates against policy at each update rather than trusting a stale/invalid date carried from the initial user intent."
+  },
+  "passed": true
+}

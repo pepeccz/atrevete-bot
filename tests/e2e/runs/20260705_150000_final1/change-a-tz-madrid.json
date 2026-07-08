@@ -1,0 +1,188 @@
+{
+  "scenario_id": "change-a-tz-madrid",
+  "conversation_id": "f7bcd3a3-d46f-4673-828e-e86204d7342c",
+  "outcome": "booked",
+  "turns_taken": 10,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Buenas noches, ¿tenéis huecos mañana por la tarde?",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nClaro, pero antes necesito saber qué servicio quieres reservar.",
+      "latency_ms": 10259,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "greeting_service_required"
+    },
+    {
+      "turn": 2,
+      "user_message": "Quiero un corte de dama, para mañana por la tarde si puede ser",
+      "agent_response": "Genial, te anoto un corte de dama para mañana 😊  \n¿Quieres añadir algún otro servicio o solo el corte?",
+      "latency_ms": 12383,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking"],
+      "bugs": [],
+      "milestone": "service_selected_extras_asked"
+    },
+    {
+      "turn": 3,
+      "user_message": "Solo el corte, nada más",
+      "agent_response": "Lo siento, el lunes 6 de julio el salón está cerrado y, además, por antelación mínima la primera fecha válida es el miércoles 8 de julio.  \n\nEstas son las próximas citas disponibles:\n1. Miércoles 8 de julio a las 10:00\n2. Miércoles 8 de julio a las 10:40\n3. Miércoles 8 de julio a las 11:20\n4. Miércoles 8 de julio a las 12:00\n5. Jueves 9 de julio a las 10:00\n6. Jueves 9 de julio a las 10:40\n7. Jueves 9 de julio a las 11:20\n8. Jueves 9 de julio a las 12:00\n9. Viernes 10 de julio a las 10:00\n10. Viernes 10 de julio a las 10:40\n11. Viernes 10 de julio a las 12:00\n12. Viernes 10 de julio a las 12:40\n\nSi quieres, te reservo el miércoles 8 de julio.",
+      "latency_ms": 19321,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking", "update_booking"],
+      "bugs": [
+        {
+          "type": "unbacked_slots",
+          "detail": "Bot presented 12 concrete alternative slot times (Mié 8, Jue 9, Vie 10 julio) with no check_availability or get_next_available_options tool call evidence in this turn's tool_evidence (only 3 update_booking calls observed)."
+        }
+      ],
+      "milestone": "dual_fact_rejection_closed_day_and_advance"
+    },
+    {
+      "turn": 4,
+      "user_message": "Vale, el miércoles 8 de julio a las 10:00 me viene bien",
+      "agent_response": "Perfecto, te lo dejo el miércoles 8 de julio a las 10:00 con Marta para corte de dama. ¿Te lo confirmo?",
+      "latency_ms": 14884,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking", "update_booking", "check_availability"],
+      "bugs": [
+        {
+          "type": "confirmation_last_violation",
+          "detail": "Bot asked '¿Te lo confirmo?' before policy acceptance and before collecting the real customer name (state still had policy_accepted=false, customer_full_name=null at this point)."
+        }
+      ],
+      "milestone": "premature_confirm_prompt"
+    },
+    {
+      "turn": 5,
+      "user_message": "Sí, confírmalo",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "latency_ms": 19620,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking", "update_booking", "check_availability", "book"],
+      "bugs": [],
+      "milestone": "book_tool_correctly_gated_on_policy"
+    },
+    {
+      "turn": 6,
+      "user_message": "Sí, la acepto",
+      "agent_response": "Perfecto, ya tengo aceptada la política.  \n¿Quieres dejar alguna nota para Marta antes de cerrar la reserva?",
+      "latency_ms": 14669,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking", "update_booking", "check_availability", "book", "update_booking"],
+      "bugs": [],
+      "milestone": "policy_accepted"
+    },
+    {
+      "turn": 7,
+      "user_message": "No, ninguna nota, gracias",
+      "agent_response": "Perfecto, No Disponible, te lo dejo el miércoles 8 de julio a las 10:00 con Marta para corte de dama. ¿Te lo confirmo?",
+      "latency_ms": 21020,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking", "update_booking", "check_availability", "book", "update_booking", "update_booking"],
+      "bugs": [
+        {
+          "type": "placeholder_name_leak",
+          "detail": "Bot addressed the customer literally as 'No Disponible' (an internal placeholder value for customer_full_name) in a user-facing message. The bot never explicitly asked for the customer's real name; the placeholder leaked into the confirmation copy."
+        }
+      ],
+      "milestone": "notes_skipped_placeholder_name_exposed"
+    },
+    {
+      "turn": 8,
+      "user_message": "Sí, confírmalo por favor. Por cierto, mi nombre es Elena García",
+      "agent_response": "Se me ha adelantado ese hueco y ya no está disponible.  \n¿Quieres que te busque otro horario para el miércoles 8 de julio?",
+      "latency_ms": 15710,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking", "update_booking", "check_availability", "book", "update_booking", "update_booking", "book"],
+      "bugs": [],
+      "milestone": "pre_book_recheck_caught_stale_slot"
+    },
+    {
+      "turn": 9,
+      "user_message": "Vale, entonces a las 10:40 con Marta ese mismo día",
+      "agent_response": "Perfecto, te lo dejo el miércoles 8 de julio a las 10:40 con Marta para corte de dama. ¿Te lo confirmo?",
+      "latency_ms": 14910,
+      "timed_out": false,
+      "tool_calls_observed": ["check_availability"],
+      "bugs": [],
+      "milestone": "alternative_slot_confirmed_available"
+    },
+    {
+      "turn": 10,
+      "user_message": "Sí, confírmalo",
+      "agent_response": "Te he agendado la cita para el miércoles 8 de julio a las 10:40 con Marta. Te llegará una confirmación 48h antes; respóndela con un “sí” y queda lista ✅\n\nSi quieres, también te paso el enlace del calendario.",
+      "latency_ms": 12059,
+      "timed_out": false,
+      "tool_calls_observed": ["book"],
+      "bugs": [],
+      "milestone": "booking_confirmed"
+    }
+  ],
+  "bugs": [
+    {"turn": 3, "type": "unbacked_slots", "detail": "12 concrete slot times presented without check_availability/get_next_available_options tool evidence in that turn."},
+    {"turn": 4, "type": "confirmation_last_violation", "detail": "'¿Te lo confirmo?' appeared before policy acceptance and before real name collection."},
+    {"turn": 7, "type": "placeholder_name_leak", "detail": "'No Disponible' placeholder addressed to the customer as if it were their name."}
+  ],
+  "milestones_reached": [
+    "greeting_service_required",
+    "service_selected_extras_asked",
+    "dual_fact_rejection_closed_day_and_advance",
+    "premature_confirm_prompt",
+    "book_tool_correctly_gated_on_policy",
+    "policy_accepted",
+    "notes_skipped_placeholder_name_exposed",
+    "pre_book_recheck_caught_stale_slot",
+    "alternative_slot_confirmed_available",
+    "booking_confirmed"
+  ],
+  "db_delta": {"customer_count_delta": 1, "appt_count_delta": 1},
+  "snapshot_before": {"customer_count": 0, "appt_count": 0},
+  "snapshot_after": {"customer_count": 1, "appt_count": 1},
+  "appointment_detail": {
+    "id": "83386f48-4a4d-4e25-8d14-0d4797330cc1",
+    "status": "pending",
+    "start_time_utc": "2026-07-08 08:40:00+00",
+    "start_time_madrid": "2026-07-08T10:40:00+02:00",
+    "gcal_sync_status": "not_applicable",
+    "service_ids": ["a0f48408-6479-32c4-96ac-aa7187b99be0"]
+  },
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "f7bcd3a3-d46f-4673-828e-e86204d7342c",
+    "customer_phone": "+34999000004",
+    "customer_id": "8e87e050-86bc-4a56-b99a-404a80c87218",
+    "customer_name": "Elena García",
+    "messages_count": 40,
+    "latest_tool_call_name": "book",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": true,
+    "note": "policy_accepted_at/customer_consents_count read null/0 from this harness command, but a direct DB query confirmed customer_consents has 1 row (accepted_at 2026-07-05 12:00:50+00, accepted_via whatsapp) and customers.policy_accepted_at = 2026-07-05 12:00:50.628532+00. Treated as a state-command staleness artifact, not a real DB gap (same pattern noted in Fase E results)."
+  },
+  "langfuse_trace_path": null,
+  "langfuse_pull_error": "401 Unauthorized — known server credential issue per runner briefing, not retried beyond one attempt",
+  "expect": {
+    "outcome": "booked",
+    "db_appointment": {"status": "pending"},
+    "tool_calls_required": ["check_availability"],
+    "tool_calls_forbidden": [],
+    "tags": ["change-a", "timezone", "madrid"]
+  },
+  "passed": true,
+  "quality_observations": {
+    "extras_question_own_turn": true,
+    "extras_question_own_turn_detail": "Turn 2: '¿Quieres añadir algún otro servicio o solo el corte?' appeared as the bot's own turn before stylist/date were discussed.",
+    "confirmation_last": false,
+    "confirmation_last_detail": "VIOLATED. Turn 4 said '¿Te lo confirmo?' while policy_accepted=false and customer_full_name=null (placeholder 'No Disponible'). The book() tool correctly rejected it (policy_acceptance_required), and the bot recovered by asking for policy then notes, but repeated '¿Te lo confirmo?' twice more (turns 7 and 9) — the intended order (policy → name → notes → confirm) was not respected on the first pass.",
+    "rejection_both_facts": true,
+    "rejection_both_facts_detail": "Turn 3: 'el lunes 6 de julio el salón está cerrado y, además, por antelación mínima la primera fecha válida es el miércoles 8 de julio.' Both facts (closed day AND advance policy / first valid date) present in a single message. PASS.",
+    "stylist_menu_option0": null,
+    "stylist_menu_option0_detail": "Not applicable — no stylist selection menu appeared; customer had no_preference_stylist=true throughout and Marta was auto-assigned.",
+    "tone": "Warm/cercano — friendly emojis and diminutive phrasing throughout ('¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸', 'Perfecto, te lo dejo...', closing with '✅').",
+    "tone_quote": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nClaro, pero antes necesito saber qué servicio quieres reservar.",
+    "unbacked_slots": true,
+    "unbacked_slots_detail": "Turn 3: bot listed 12 concrete alternative slots (Mié 8, Jue 9, Vie 10 julio, various times) with only update_booking tool evidence shown for that turn — no check_availability or get_next_available_options call backing the specific times offered."
+  }
+}

@@ -1,0 +1,65 @@
+{
+  "scenario_id": "change-b-catalog-loaded",
+  "conversation_id": "7109ae47-7dee-4c9b-897b-53e7bde7db28",
+  "outcome": "info_provided",
+  "turns_taken": 2,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, que servicios ofreceis?",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nTenemos servicios de peluquería y estética: cortes, peinados y recogidos, coloración y mechas, tratamientos capilares, manicura y pedicura, depilación, maquillaje, pestañas y varios tratamientos faciales y corporales.  \n\nSi quieres, te digo cuáles encajan mejor según lo que buscas.",
+      "latency_ms": 11156,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "catalog_overview_provided — bot listed high-level service categories (cortes, peinados y recogidos, coloración y mechas, tratamientos capilares, manicura y pedicura, depilación, maquillaje, pestañas, tratamientos faciales y corporales) without using any tool"
+    },
+    {
+      "turn": 2,
+      "user_message": "Que tipos de coloracion teneis?",
+      "agent_response": "Tenemos estas opciones de coloración:\n\n- **Tinte**\n- **Tinte para hombre**\n- **Mechas**\n- **Mechas localizadas**\n- **Mechas localizadas exprés**\n- **Barro**\n- **Barro gold**\n- **Barro gold extra**\n- **Tinte extra**\n- **Prepigmentar**\n- **Tratamiento precolor**\n\nSi me dices qué buscas exactamente, te ayudo a acotarlo.",
+      "latency_ms": 11436,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "coloring_services_detailed — bot listed specific coloring services (Tinte, Tinte para hombre, Mechas, Mechas localizadas, Mechas localizadas exprés, Barro, Barro gold, Barro gold extra, Tinte extra, Prepigmentar, Tratamiento precolor) without using any tool"
+    }
+  ],
+  "bugs": [],
+  "milestones_reached": [
+    "catalog_overview_provided",
+    "coloring_services_detailed"
+  ],
+  "db_delta": {
+    "customers_delta": 0,
+    "appointments_delta": 0
+  },
+  "snapshot_before": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "snapshot_after": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "7109ae47-7dee-4c9b-897b-53e7bde7db28",
+    "customer_phone": "+34999000008",
+    "customer_id": null,
+    "customer_name": null,
+    "messages_count": 4,
+    "latest_tool_call_name": null,
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": false
+  },
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "info_provided",
+    "db_appointment": null,
+    "tool_calls_required": [],
+    "tool_calls_forbidden": []
+  },
+  "passed": true
+}

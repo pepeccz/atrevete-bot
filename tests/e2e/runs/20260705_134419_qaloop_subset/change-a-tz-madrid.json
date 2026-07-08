@@ -1,0 +1,199 @@
+{
+  "scenario_id": "change-a-tz-madrid",
+  "conversation_id": "20fe4d2a-7db0-414f-9712-7e6f6a7e45e2",
+  "outcome": "booked",
+  "turns_taken": 10,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Buenas noches, ¿tenéis huecos mañana por la tarde?",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Para qué servicio lo quieres?",
+      "latency_ms": 11665,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "greeting_service_asked"
+    },
+    {
+      "turn": 2,
+      "user_message": "Un corte de pelo, por favor",
+      "agent_response": "Claro, para un corte necesito saber para quién es.\n\n¿Es para señora, caballero, niña, niño o bebé?",
+      "latency_ms": 10546,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "service_family_resolved_audience_required"
+    },
+    {
+      "turn": 3,
+      "user_message": "Para señora, soy yo",
+      "agent_response": "Perfecto, te anoto el corte de mujer 😊\n\n¿Quieres añadir algún otro servicio o solo el corte?",
+      "latency_ms": 10461,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "audience_resolved_extras_asked"
+    },
+    {
+      "turn": 4,
+      "user_message": "Solo el corte, gracias. ¿Y para mañana por la tarde tenéis hueco?",
+      "agent_response": "Lo siento, el lunes 6 de julio el salón está cerrado y, además, para reservar necesitamos al menos 3 días de antelación: la primera fecha disponible es el miércoles 8 de julio.\n\nEstas son las próximas opciones que tengo para tu corte de mujer:\n1. Miércoles 8 de julio a las 10:00\n2. Miércoles 8 de julio a las 10:40\n3. Miércoles 8 de julio a las 11:20\n\n¿Te encaja alguna?",
+      "latency_ms": 12795,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [
+        {
+          "type": "hallucination",
+          "detail": "Bot offered 3 concrete slot times (miércoles 10:00/10:40/11:20) with no check_availability or get_next_available_options tool call anywhere in the cumulative checkpoint tool_evidence for this turn. The closed_day_required update_booking rejection only returned first_valid_date=2026-07-08, not slot times. The times were also morning slots despite the user asking for 'por la tarde' — both facts (closed day + 3-day window) were correctly explained in prose, but the concrete slot list appears fabricated / not tool-backed."
+        },
+        {
+          "type": "ignored_preference",
+          "detail": "User explicitly asked for 'por la tarde' (afternoon); bot offered morning times (10:00-11:20) instead, requiring the user to re-state the preference in turn 5."
+        }
+      ],
+      "milestone": "closed_day_and_advance_window_explained_both_facts"
+    },
+    {
+      "turn": 5,
+      "user_message": "Esas son de mañana por la mañana, yo te decía por la tarde. ¿Tenéis algo el miércoles por la tarde?",
+      "agent_response": "Sí, el miércoles 8 de julio por la tarde tengo huecos para tu corte de mujer 😊\n\nTe dejo algunas opciones:\n1. Miércoles 8 de julio a las 15:20 con Victor\n2. Miércoles 8 de julio a las 15:20 con Harolyn\n3. Miércoles 8 de julio a las 16:00 con Marta\n4. Miércoles 8 de julio a las 16:00 con Victor\n5. Miércoles 8 de julio a las 16:40 con Marta\n\nSi no tienes preferencia, también te puedo buscar la estilista con disponibilidad más próxima. ¿Cuál te encaja mejor?",
+      "latency_ms": 13369,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "check_availability"],
+      "bugs": [
+        {
+          "type": "menu_order",
+          "detail": "Stylist options were listed as 5 named-stylist slots (1-5); the 'primera con disponibilidad' (no-preference) option was mentioned as an aside AFTER the numbered list rather than presented as option 0 first, per expected UX pattern."
+        }
+      ],
+      "milestone": "afternoon_slots_offered_correct_madrid_offset",
+      "notes": "check_availability returned start_iso values with explicit +02:00 (Madrid/CEST) offset, e.g. 2026-07-08T15:20:00+02:00 — confirms no UTC-shift bug once the tool was actually called."
+    },
+    {
+      "turn": 6,
+      "user_message": "Perfecto, me viene bien la 1, con Victor a las 15:20",
+      "agent_response": "Perfecto, te lo dejo el miércoles 8 de julio a las 15:20 con Victor para corte de mujer.\n\nAntes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "latency_ms": 14638,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "stylist_slot_selected_policy_gate_shown"
+    },
+    {
+      "turn": 7,
+      "user_message": "Sí, la acepto",
+      "agent_response": "Genial, ya tengo aceptada la política 😊\n\nPara dejarlo cerrado me falta tu nombre y primer apellido, ¿me los dices?",
+      "latency_ms": 13972,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "policy_accepted_name_requested"
+    },
+    {
+      "turn": 8,
+      "user_message": "Elena García",
+      "agent_response": "Perfecto, Elena 😊\n\n¿Quieres dejar alguna nota para Victor?",
+      "latency_ms": 15704,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "name_collected_notes_asked"
+    },
+    {
+      "turn": 9,
+      "user_message": "No, sin notas, gracias",
+      "agent_response": "Perfecto, Elena, te lo dejo el miércoles 8 de julio a las 15:20 con Victor para corte de mujer.\n\n¿Te lo confirmo?",
+      "latency_ms": 11034,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "final_confirmation_question_after_policy_name_notes"
+    },
+    {
+      "turn": 10,
+      "user_message": "Sí, confírmalo",
+      "agent_response": "¡Listo! Te he agendado la cita para el miércoles 8 de julio a las 15:20 con Victor para corte de mujer.\n\nTe llegará una confirmación 48 h antes, y entonces quedará lista ✅\n\nSi quieres, también te paso el enlace del calendario.",
+      "latency_ms": 18872,
+      "timed_out": false,
+      "tool_calls_observed": ["check_availability", "book"],
+      "bugs": [],
+      "milestone": "appointment_booked",
+      "notes": "book() returned appointment_id=5e15198f-262a-483a-a973-0c916c7fe5b4, start_iso=2026-07-08T15:20:00+02:00. DB row confirms status=pending, start_time=2026-07-08 13:20:00+00 (UTC), gcal_sync_status=not_applicable."
+    }
+  ],
+  "bugs": [
+    {
+      "turn": 4,
+      "type": "hallucination",
+      "summary": "Bot offered 3 specific slot times (10:00/10:40/11:20) with no backing check_availability/get_next_available_options tool call in the full cumulative checkpoint tool_evidence."
+    },
+    {
+      "turn": 4,
+      "type": "ignored_preference",
+      "summary": "Offered morning slots despite explicit 'por la tarde' request; user had to correct the bot in turn 5."
+    },
+    {
+      "turn": 5,
+      "type": "menu_order",
+      "summary": "'Primera disponible' (no-preference) option presented as a trailing aside instead of leading option 0."
+    },
+    {
+      "turn": "n/a (harness)",
+      "type": "harness_state_staleness",
+      "summary": "qa_turn_helper.py state command reported customer_consents_count=0 and policy_accepted_at=null immediately after booking, but a direct DB query confirmed both were correctly populated (customers.policy_accepted_at=2026-07-05 11:49:27, 1 row in customer_consents). Likely a caching/staleness artifact in the harness state helper, not a bot/API defect."
+    }
+  ],
+  "milestones_reached": [
+    "greeting_service_asked",
+    "service_family_resolved_audience_required",
+    "audience_resolved_extras_asked",
+    "closed_day_and_advance_window_explained_both_facts",
+    "afternoon_slots_offered_correct_madrid_offset",
+    "stylist_slot_selected_policy_gate_shown",
+    "policy_accepted_name_requested",
+    "name_collected_notes_asked",
+    "final_confirmation_question_after_policy_name_notes",
+    "appointment_booked"
+  ],
+  "db_delta": {
+    "customer_count_delta": 1,
+    "appt_count_delta": 1
+  },
+  "snapshot_before": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "snapshot_after": {
+    "customer_count": 1,
+    "appt_count": 1
+  },
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "20fe4d2a-7db0-414f-9712-7e6f6a7e45e2",
+    "customer_phone": "+34999000004",
+    "customer_id": "02081f0c-1d6a-4340-8310-b455d336705a",
+    "customer_name": "Elena García",
+    "messages_count": 42,
+    "latest_tool_call_name": "book",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": true,
+    "note": "customer_consents_count/policy_accepted_at appear stale here; direct psql query confirmed correct values (see bugs[].harness_state_staleness)."
+  },
+  "appointment_verification": {
+    "appointment_id": "5e15198f-262a-483a-a973-0c916c7fe5b4",
+    "status": "pending",
+    "start_time_utc": "2026-07-08 13:20:00+00",
+    "start_time_madrid": "2026-07-08T15:20:00+02:00",
+    "gcal_sync_status": "not_applicable"
+  },
+  "langfuse_trace_path": null,
+  "langfuse_pull_error": "UnauthorizedError 401 — Invalid Langfuse credentials/host on server env",
+  "expect": {
+    "outcome": "booked",
+    "db_appointment": {"status": "pending"},
+    "tool_calls_required": ["check_availability"],
+    "tool_calls_forbidden": []
+  },
+  "passed": true
+}

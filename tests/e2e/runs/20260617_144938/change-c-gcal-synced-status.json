@@ -1,0 +1,73 @@
+{
+  "scenario_id": "change-c-gcal-synced-status",
+  "conversation_id": "bffe05c0-e439-442f-9fda-0eba16cec659",
+  "phone": "+34999000010",
+  "persona_name": "Ana Torres",
+  "expected_outcome": "booked",
+  "outcome": "booked",
+  "max_turns": 8,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Quiero reservar una manicura para el miercoles a las 11.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Qué tipo de manicura quieres? Tengo Manicura, Manicura Permanente o Manicura Permanente con Tratamiento.",
+      "response_latency_ms": 14840,
+      "timed_out": false,
+      "tool_evidence": []
+    },
+    {
+      "turn": 2,
+      "user_message": "Manicura normal, por favor.",
+      "agent_response": "Perdona, esa fecha no llega a la antelación mínima de 3 días. La primera fecha disponible es el sábado 20 de junio.\n\nSi quieres, te miro huecos para ese día.",
+      "response_latency_ms": 15155,
+      "timed_out": false,
+      "tool_evidence": []
+    },
+    {
+      "turn": 3,
+      "user_message": "Si, por favor, busca huecos para el sabado 20 de junio.",
+      "agent_response": "Para el sábado 20 de junio con Rosa tengo estos huecos:\n\n1. Sábado 20 de junio a las 09:00\n2. Sábado 20 de junio a las 09:30\n3. Sábado 20 de junio a las 10:00\n4. Sábado 20 de junio a las 10:30\n5. Sábado 20 de junio a las 11:00\n6. Sábado 20 de junio a las 11:30\n7. Sábado 20 de junio a las 12:00\n8. Sábado 20 de junio a las 12:30\n9. Sábado 20 de junio a las 13:00\n10. Sábado 20 de junio a las 13:00\n\n¿Cuál te viene mejor?",
+      "response_latency_ms": 24342,
+      "timed_out": false,
+      "tool_evidence": []
+    },
+    {
+      "turn": 4,
+      "user_message": "El de las 11:00 me va perfecto.",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos\navisar con al menos 24h si necesitas cambiar o cancelar — fuera de\nese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "response_latency_ms": 14752,
+      "timed_out": false,
+      "tool_evidence": []
+    },
+    {
+      "turn": 5,
+      "user_message": "Si, la acepto.",
+      "agent_response": "Perfecto. ¿Me das tu nombre y primer apellido?",
+      "response_latency_ms": 13962,
+      "timed_out": false,
+      "tool_evidence": []
+    },
+    {
+      "turn": 6,
+      "user_message": "Soy Ana Torres.",
+      "agent_response": "¿Quieres dejar alguna nota para Rosa?",
+      "response_latency_ms": 13584,
+      "timed_out": false,
+      "tool_evidence": []
+    },
+    {
+      "turn": 7,
+      "user_message": "No, sin notas. Podemos confirmar la cita.",
+      "agent_response": "¡Listo, Ana! Te queda confirmada la manicura con Rosa el sábado 20 de junio a las 11:00.  \n\nSi quieres, también te paso el enlace de calendario.",
+      "response_latency_ms": 25310,
+      "timed_out": false,
+      "tool_evidence": []
+    }
+  ],
+  "tool_calls_observed": [],
+  "final_state": {
+    "has_checkpoint": false
+  },
+  "coherence_notes": "Bot resolved the intent correctly: identified the service type (Manicura), detected the 3-day minimum lead time constraint and proactively redirected to the next available date (Saturday 20 June), presented availability slots with Rosa (valid aesthetics stylist), collected policy acceptance, customer name, and confirmed the booking in 7 turns. Flow followed the expected booking steps without skipping any stage. No voseo detected, no hallucinated stylist (Rosa is valid). The original Wednesday 11h request was gracefully redirected rather than rejected outright.",
+  "claim_vs_backend": "Confirmed Manicura with Rosa on Saturday 20 June at 11:00."
+}

@@ -1,0 +1,69 @@
+{
+  "scenario_id": "change-b-cache-warm-second-turn",
+  "conversation_id": "f1d38e42-2d6a-46f9-a6f2-a0a8b8602eb6",
+  "outcome": "info_provided",
+  "turns_taken": 2,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "¿Tenéis disponibilidad para manicura esta semana?",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nSí, para esta semana tengo estas opciones de manicura con Rosa:\n\n1. Jueves 9 de julio a las 16:00  \n2. Jueves 9 de julio a las 10:00  \n3. Jueves 9 de julio a las 10:30  \n\nSi quieres, también te miro la primera con disponibilidad más próxima en otra estilista.",
+      "latency_ms": 15819,
+      "timed_out": false,
+      "tool_calls_observed": ["get_next_available_options"],
+      "bugs": [],
+      "milestone": "availability_answered_turn1"
+    },
+    {
+      "turn": 2,
+      "user_message": "¿Y el viernes tenéis también hueco para manicura?",
+      "agent_response": "Sí, el viernes 10 de julio también tienes huecos para manicura con Rosa 😊\n\nTe dejo los primeros disponibles:\n- 14:00\n- 14:30\n- 15:00\n\nSi quieres, te saco más opciones de ese día.",
+      "latency_ms": 21263,
+      "timed_out": false,
+      "tool_calls_observed": ["get_next_available_options", "check_availability"],
+      "bugs": [],
+      "milestone": "availability_answered_turn2"
+    }
+  ],
+  "bugs": [],
+  "milestones_reached": ["availability_answered_turn1", "availability_answered_turn2"],
+  "db_delta": {"customer_count_delta": 0, "appt_count_delta": 0},
+  "snapshot_before": {"customer_count": 0, "appt_count": 0},
+  "snapshot_after": {"customer_count": 0, "appt_count": 0},
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "f1d38e42-2d6a-46f9-a6f2-a0a8b8602eb6",
+    "customer_phone": "+34999000007",
+    "customer_id": null,
+    "customer_name": null,
+    "messages_count": 8,
+    "latest_tool_call_name": "check_availability",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": false
+  },
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "booked",
+    "db_appointment": null,
+    "tool_calls_required": ["check_availability"],
+    "tool_calls_forbidden": [],
+    "tags": ["change-b", "cache", "latency"]
+  },
+  "passed": false,
+  "notes": "expect.outcome='booked' is internally inconsistent with expect.db_appointment=null and the scenario description ('two-turn conversation... checks latency, not booking'). No book tool call occurred and no customer/appointment row was created, so 'booked' cannot be the correct outcome for this scenario as authored — treated as a probable scenario-data authoring bug, not a runner/bot failure. tool_calls_required (check_availability) WAS satisfied (fired on turn 2 alongside get_next_available_options).",
+  "quality_observations": {
+    "extras_question_own_turn": "N/A — not a booking flow, bot never asked 'algo más?' as its own separate turn.",
+    "confirmation_last": "N/A — no policy/name/confirmation flow triggered (no booking attempt).",
+    "rejection_both_facts": "N/A — no rejection scenario.",
+    "stylist_menu_option0": "N/A — no stylist menu appeared (bot auto-selected Rosa as the only/best stylist for manicura both times).",
+    "tone": "Warm/cercano — verdict: warm. Quote: '¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸' and closing offers ('Si quieres, te saco más opciones de ese día.') read as friendly and proactive, not flat.",
+    "unbacked_slots": "None observed — both turns show concrete slot times backed by tool evidence (turn 1: get_next_available_options payload with matching Jueves 9 julio slots; turn 2: get_next_available_options + check_availability payload with matching Viernes 10 julio 14:00/14:30/15:00 slots)."
+  },
+  "cache_latency_observation": {
+    "turn1_latency_ms": 15819,
+    "turn2_latency_ms": 21263,
+    "delta_ms": 5444,
+    "verdict": "FAIL — turn 2 was SLOWER than turn 1 (21263ms vs 15819ms), the opposite of the expected cache-warm speedup. However this is confounded: turn 2 fired TWO tool calls (get_next_available_options AND check_availability) vs turn 1's ONE tool call, so the comparison is not apples-to-apples for a pure cache-hit latency test. Recommend re-running with a scenario that forces an identical tool-call shape on both turns to isolate cache effects from added-tool-call overhead."
+  }
+}

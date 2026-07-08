@@ -1,0 +1,129 @@
+{
+  "scenario_id": "reply-to-notification-continuity",
+  "task": "TASK-23 — release-gate validation of the 2026-07-05 17:39 re-greeting incident fix, against deploy master f4fc1a9 (confirmed live on pepe@server at run start)",
+  "run_at": "2026-07-05T19:43:00Z to 2026-07-05T19:52:00Z (UTC, Europe/Madrid CEST server local ~21:43-21:52)",
+  "conversation_id_used": "900051",
+  "conversation_id_chain": {
+    "established_conversation_id": "900051",
+    "notification_resolved_conversation_id": "900051 (int, matched — but Chatwoot REJECTED the send because 900051 is not a real Chatwoot conversation, so deliver_template's fallback path fired for real and created Chatwoot conversation 126)",
+    "reply_turn_conversation_id": "900051 (same LangGraph thread — used successfully, no re-greeting)"
+  },
+  "outcome": "info_provided",
+  "verdict": "PASS (core regression) / BLOCKED (notification-threading sub-assertion, harness bug) — see notes",
+  "passed": true,
+  "expect": {
+    "outcome": "info_provided",
+    "db_appointment": {"status": "pending"},
+    "conversation_continuity": {
+      "same_conversation_id_end_to_end": true,
+      "disclosure_is_first_turn": false,
+      "new_conversation_created": false
+    }
+  },
+  "seed": {
+    "method": "Manual SQL seed on server (customers, conversation_history, appointments) — SKILL.md Step 2.5 pattern, adapted because a bare qa_turn_helper turn does NOT synchronously create a Postgres ConversationHistory/Customer row (that only happens via the archiver worker or the webhook, both bypassed by qa_turn_helper's direct Redis publish).",
+    "customer": {"id": "ecc4c9f4-f84d-448c-8299-724008ee9519", "phone": "+34999000051", "first_name": "Rocío", "last_name": "Delgado"},
+    "conversation_history": {"id": "a2ed43e2-a189-4772-902b-e344e4e90b87", "conversation_id": "900051", "started_at": "now-2h at seed time", "message_count": 1},
+    "appointment": {"id": "d10e34c0-d9da-4a55-bafc-ca1997c42c70", "days_ahead": 1, "start_time": "2026-07-06T19:47:39Z (2026-07-06 21:47 CEST)", "status": "pending", "gcal_sync_status": "not_applicable", "stylist": "Marta", "service": "Óleo Pigmento"},
+    "note_on_conversation_id_choice": "Deviated from the generic SKILL.md UUID4 rule deliberately: deliver_template() (agent/workers/notification_handlers/_delivery.py) does `int(history.conversation_id)` to thread into Chatwoot — a UUID string would always fail int() and always take the fallback branch, making the 'same conversation_id' assertion untestable. Used a numeric string ('900051') instead, matching the format fire_notifications.py's own docstring example uses (conversation_id: 125)."
+  },
+  "steps": [
+    {
+      "step": 1,
+      "name": "health_check",
+      "result": "ok",
+      "detail": "{\"ok\": true, \"redis\": \"connected\", \"stream\": \"exists\"}; server HEAD confirmed at f4fc1a9125d1171d51a095d21af5ab58cd733fca"
+    },
+    {
+      "step": 2,
+      "name": "sandbox_hygiene",
+      "result": "CRITICAL_HARNESS_BUG_FOUND",
+      "detail": "SKILL.md documents `python tests/e2e/harness/state_reset.py reset --conversation-id <id> --phone <phone>` for Steps 2 and 8. tests/e2e/harness/state_reset.py has NO argparse/`__main__` block at all — it is a pure library module (StateResetHarness/AsyncDatabaseCleaner classes only). Running it as a script with `reset ...` args is a SILENT NO-OP: exit 0, no output, nothing deleted (neither Redis nor Postgres). The real full-reset entrypoint (Redis checkpoints + Postgres customer/appointments/conversation_history via StateResetHarness.reset_conversation_state()) is wired up ONLY through `qa_turn_helper.py reset --conversation-id <id> --phone <phone>`. All 'sandbox hygiene' and 'cleanup' steps in this run that called state_reset.py directly were no-ops; re-ran them via qa_turn_helper.py reset once discovered, which worked correctly (verified 0 rows in customers/conversation_history/appointments afterward)."
+    },
+    {
+      "step": 3,
+      "name": "establish_conversation_turn_1",
+      "user_message": "Hola, quería confirmar si tengo cita para mañana",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nSí, tienes una cita mañana lunes 6 de julio a las 21:47 con Marta para Óleo Pigmento.",
+      "note": "Disclosure correctly fires here — genuinely the first turn on this LangGraph thread. tool_evidence: manage_appointments(action=list) correctly found the seeded appointment."
+    },
+    {
+      "step": 4,
+      "name": "fire_notification_reminder_24h_capturing",
+      "result": "BLOCKED — pre-empted by the LIVE production notifications_worker, then confirmed harness bug on isolated retest",
+      "detail": [
+        "The seeded appointment fell inside the live reminder_24h window (23-25h) and was picked up for REAL by the always-running `atrevete-notifications` container within ~30s of seeding — BEFORE the capturing fire_notifications.py could be invoked. This is a genuine production-safety gap: any QA scenario that seeds a PENDING/CONFIRMED appointment inside a notification window on this shared DB races the live worker, which does NOT use the capturing client.",
+        "docker logs atrevete-notifications (19:48:09-19:48:11 UTC) show a REAL send attempt: resolved ConversationHistory.conversation_id='900051', attempted send into Chatwoot conversation 900051 (does not exist), got rejected, then created_conversation_with_template FOR REAL — creating a real Chatwoot contact (contact_id=42639) and a real Chatwoot conversation (conversation_id=126) for the sandbox phone +34999000051. appointments.reminder_sent_at was stamped 2026-07-05T19:48:11Z, well before my own fire_notifications.py invocation at 19:48:30Z.",
+        "Running fire_notifications.py --handlers reminder_24h afterward correctly found 0 eligible rows (reminder_sent_at already set) — send_attempts: 0.",
+        "Isolated unit-level retest (constructing fire_notifications.py's _make_capturing_handler + a fake Appointment/ConversationHistory, no live DB/Chatwoot touched) reproduces a hard failure: `AttributeError: '_CapturingClient' object has no attribute 'send_template_to_conversation_checked'`. tests/e2e/harness/fire_notifications.py's _CapturingClient mocks the OLD ChatwootClient API (`send_template_message` / `create_conversation_with_template` returning bool), but agent/workers/notification_handlers/_delivery.py.deliver_template() (the current context-coherence D1-D6 code) calls `chatwoot.send_template_to_conversation_checked(...)` returning a `ConversationSendOutcome` enum for the RESOLVED-conversation branch. The capturing harness was never updated for this refactor, so it will ALWAYS crash on exactly the scenario it's meant to validate (an appointment whose customer has a resolvable canonical ConversationHistory row) — the only branch that doesn't crash is the resolver-miss/fallback branch (which only exercises create_conversation_with_template, still mocked correctly).",
+        "Net effect: the notification-threading assertion (send_attempts[0].conversation_id == '900051' && fallback_conversation_created absent) could NOT be safely/correctly captured via the documented procedure. It is BLOCKED by a stale test harness, independent of whether the application's disclosure fix is correct."
+      ]
+    },
+    {
+      "step": 5,
+      "name": "acknowledgment_reply_turn",
+      "user_message": "Estupendo gracias",
+      "agent_response": "¡Genial! Te esperamos mañana lunes 6 de julio a las 21:47 con Marta para Óleo Pigmento 😊",
+      "assertions": {
+        "no_regreeting": "PASS — no 'Soy Maite' / disclosure text present",
+        "day_relative_ack": "PASS — 'mañana lunes 6 de julio a las 21:47 con Marta para Óleo Pigmento' quoted verbatim in the reply; day-relative + exact time + service, no hour-countdown phrasing",
+        "not_generic_open_question": "PASS — closes warmly, does not ask '¿En qué puedo ayudarte?'"
+      }
+    },
+    {
+      "step": 6,
+      "name": "log_based_verification",
+      "disclosure_log_line": "{\"timestamp\": \"2026-07-05T19:51:13.836489+00:00\", \"level\": \"INFO\", \"logger\": \"agent.middleware.disclosure\", \"message\": \"disclosure.turn_evaluated\", \"type\": \"disclosure.turn_evaluated\", \"conversation_id\": \"900051\", \"is_first_turn\": false, \"prior_message_count\": 5}",
+      "assertions": {
+        "is_first_turn_false": "PASS (is_first_turn=false, prior_message_count=5 > 0)",
+        "no_new_conversation_created_warning": "PASS — grepped agent container logs for the reply-turn window (19:50:30-19:52:00 UTC); no 'new_conversation_created' line present"
+      },
+      "incidental_finding": "The agent's own outgoing-message path (shared/chatwoot_client.py send_message) ALSO attempts a real Chatwoot API call for every QA turn and got a 404 (conversation 900051 doesn't exist in Chatwoot) on both turns. This is expected/pre-existing QA-harness behavior (any fabricated conversation_id, UUID or numeric, 404s the same way on the agent's direct outbound path) — that path has no fallback-create logic, unlike deliver_template's proactive-notification path, so it did not create additional Chatwoot artifacts."
+      },
+    {
+      "step": 7,
+      "name": "cleanup",
+      "result": "ok (after correcting the reset command)",
+      "detail": "qa_turn_helper.py reset --conversation-id 900051 --phone +34999000051 → {\"checkpoints_deleted\": 34, \"customer_redis_deleted\": 1, \"artifacts_deleted\": 0, \"appointments_deleted\": 1, \"customer_deleted\": true, \"clean\": false}. Verified 0 rows in customers/conversation_history/appointments post-cleanup. Also cleaned the discarded UUID-based conversation_id from the initial (superseded) attempt."
+    }
+  ],
+  "production_side_effect_flagged": {
+    "chatwoot_contact_id": 42639,
+    "chatwoot_conversation_id": 126,
+    "phone": "+34999000051",
+    "cause": "Live atrevete-notifications worker processed the seeded sandbox appointment for real (see step 4). No Chatwoot-side cleanup was performed by this run — deleting Chatwoot contacts/conversations is outside this harness's tooling/scope. Flagging for the team/Pilar to decide whether cleanup on the Chatwoot side (chats.zanovix.com account 4) is warranted."
+  },
+  "bugs_found": [
+    {
+      "id": "harness-bug-state-reset-cli-missing",
+      "severity": "high",
+      "summary": "tests/e2e/harness/state_reset.py has no CLI entrypoint; SKILL.md Steps 2/8 document running it directly as a script, which silently no-ops. The real reset logic (Redis + DB) is only reachable via `qa_turn_helper.py reset`.",
+      "impact": "Every QA run that followed SKILL.md literally for Steps 2/8 has been skipping sandbox hygiene and cleanup entirely, with no error surfaced. This likely affects prior batches, not just this run.",
+      "fix_suggestion": "Either add a __main__/argparse block to state_reset.py, or correct SKILL.md Steps 2 and 8 to reference `qa_turn_helper.py reset` instead."
+    },
+    {
+      "id": "harness-bug-fire-notifications-stale-capturing-client",
+      "severity": "high",
+      "summary": "tests/e2e/harness/fire_notifications.py's _CapturingClient mocks the pre-context-coherence ChatwootClient API (send_template_message/create_conversation_with_template -> bool) but agent/workers/notification_handlers/_delivery.py.deliver_template() now calls chatwoot.send_template_to_conversation_checked(...) -> ConversationSendOutcome for the resolved-conversation branch.",
+      "impact": "The capturing harness crashes with AttributeError on exactly the scenario this test (and D1/D2 of context-coherence) is meant to validate — a customer with an existing resolvable ConversationHistory row. It only survives the resolver-miss/fallback branch. This scenario's step-4 assertion cannot currently be exercised safely.",
+      "fix_suggestion": "Add `send_template_to_conversation_checked` to fire_notifications.py's _CapturingClient, returning ConversationSendOutcome.SENT (recording conversation_id) analogous to the existing send_template_message mock."
+    },
+    {
+      "id": "process-gap-live-worker-races-qa-seeds",
+      "severity": "medium",
+      "summary": "The always-on production atrevete-notifications worker polls the shared DB continuously and will process any QA-seeded PENDING/CONFIRMED appointment that falls inside a real notification window (23-25h for reminder_24h, etc.) before a QA harness capturing run can intercept it, sending real WhatsApp/Chatwoot API calls for fabricated sandbox customers.",
+      "impact": "This run caused a real Chatwoot contact + conversation to be created for a fake +34999 number in production.",
+      "fix_suggestion": "For scenarios needing an appointment inside a live notification window, either seed with reminder_sent_at/confirmation_sent_at already stamped (to make the row ineligible for the live worker) and unset it in the same transaction as the harness call, or pause the notifications worker during this specific scenario, or (preferred, more robust) fix bug harness-bug-fire-notifications-stale-capturing-client and additionally gate the live worker's query by a phone-prefix exclusion in non-prod-safe test windows."
+    }
+  ],
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "900051",
+    "customer_phone": "+34999000051",
+    "customer_id": "ecc4c9f4-f84d-448c-8299-724008ee9519",
+    "customer_name": "Rocío Delgado",
+    "messages_count": 6,
+    "latest_tool_call_name": "manage_appointments"
+  },
+  "langfuse_trace_path": null
+}

@@ -1,0 +1,183 @@
+{
+  "scenario_id": "flow1-neutral-happy",
+  "conversation_id": "7d30d9ba-50de-4d86-82f7-7e01f15078f7",
+  "persona": {
+    "name": "Marta Lopez",
+    "phone": "+34999000130",
+    "gender": "female",
+    "note": "Does NOT state gender upfront; reveals it only when asked"
+  },
+  "expected": {
+    "outcome": "booked",
+    "coherent_behavior": "(a) Turn 1 the bot MUST NOT assume gender / MUST NOT offer concrete slots before resolving audience — it should ask who it's for; (b) after she says 'mujer', it proceeds coherently (date → slots → name → policy → book) WITHOUT re-asking things already answered; (c) carries facts forward (name, service, date); (d) ends in a confirmed booking."
+  },
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, quiero cortarme el pelo",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Es para señora, caballero, niña, niño o bebé?",
+      "tool_calls_observed": [
+        {
+          "tool": "update_booking",
+          "key_args": {"services": ["corte"], "audience": null},
+          "result_next_step": "audience_required"
+        }
+      ],
+      "coherence_note": "PASS — Bot correctly detected ambiguity in 'corte' (multi-gender candidates), did NOT assume female, and asked for audience before doing anything else. Matches expected behavior (a).",
+      "bugs": []
+    },
+    {
+      "turn": 2,
+      "user_message": "es para mí, soy mujer",
+      "agent_response": "Perfecto. ¿Quieres un corte de mujer normal o buscas un flequillo?",
+      "tool_calls_observed": [
+        {
+          "tool": "update_booking",
+          "key_args": {"services": ["corte"], "audience": null},
+          "result_next_step": "audience_required",
+          "note": "redundant replay call at turn start"
+        },
+        {
+          "tool": "update_booking",
+          "key_args": {"services": ["corte"], "audience": "adult_female"},
+          "result_next_step": "audience_required",
+          "note": "still ambiguous between Corte de Mujer vs Corte de Flequillo — correct disambiguation step"
+        }
+      ],
+      "coherence_note": "PASS — Bot understood 'soy mujer', scoped to adult_female candidates, and issued a focused disambiguation between the two female-applicable cut types (Corte de Mujer / Corte de Flequillo). Did NOT jump to slots. Coherent.",
+      "bugs": []
+    },
+    {
+      "turn": 3,
+      "user_message": "corte de mujer normal",
+      "agent_response": "¿Con qué estilista te apetece hacerlo?  \n0) La primera con disponibilidad (mín. 3 días de antelación)\n1) Harolyn\n2) Marta\n3) Pilar\n4) Victor",
+      "tool_calls_observed": [
+        {
+          "tool": "update_booking",
+          "key_args": {"services": ["corte de mujer"], "audience": "adult_female"},
+          "result_next_step": "stylist_required",
+          "service_id_resolved": "cb7ae91c-97ff-e1d1-3b0b-696b11467add"
+        }
+      ],
+      "coherence_note": "PASS — Service 'Corte de Mujer' resolved to UUID cb7ae91c. Bot moved to stylist selection, presenting all 4 stylists plus 'primera disponible' option. Carries service forward correctly.",
+      "bugs": []
+    },
+    {
+      "turn": 4,
+      "user_message": "la primera con disponibilidad, el martes",
+      "agent_response": "Perfecto. ¿Me das tu nombre y apellido?",
+      "tool_calls_observed": [
+        {
+          "tool": "update_booking",
+          "key_args": {
+            "services": ["corte de mujer"],
+            "no_preference_stylist": true,
+            "date_iso": "2026-06-30",
+            "pre_resolved_service_ids": ["cb7ae91c-97ff-e1d1-3b0b-696b11467add"]
+          },
+          "result_next_step": "name_required"
+        }
+      ],
+      "coherence_note": "PASS — Bot captured both 'primera disponible' (no_preference_stylist=true) and the date 'el martes' (resolved to 2026-06-30) in one turn. Moved directly to name collection without re-asking previously answered questions. Carries context forward.",
+      "bugs": []
+    },
+    {
+      "turn": 5,
+      "user_message": "Marta Lopez",
+      "agent_response": "¿Quieres añadir alguna nota para la cita?",
+      "tool_calls_observed": [
+        {
+          "tool": "update_booking",
+          "key_args": {
+            "customer_full_name": "Marta Lopez",
+            "no_preference_stylist": true,
+            "date_iso": "2026-06-30"
+          },
+          "result_next_step": "notes_optional"
+        }
+      ],
+      "coherence_note": "PASS — Name captured and carried forward. Bot proceeded to optional notes step without re-asking stylist, date, or service. All prior facts intact.",
+      "bugs": []
+    },
+    {
+      "turn": 6,
+      "user_message": "no, sin notas",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política\nde privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos\navisar con al menos 24h si necesitas cambiar o cancelar — fuera de\nese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "tool_calls_observed": [
+        {
+          "tool": "update_booking",
+          "key_args": {
+            "notes_asked": true,
+            "slot_iso": "2026-06-30T10:00:00+02:00"
+          },
+          "result_next_step": "policy_acceptance_required",
+          "note": "Bot internally resolved a slot (10:00 on Tuesday via 'primera disponible') before presenting policy — not shown to user at this step, will be confirmed after policy acceptance"
+        }
+      ],
+      "coherence_note": "PASS — Bot skipped notes (user said 'sin notas'), internally selected the first available slot on the requested Tuesday (10:00), and presented the privacy policy gate. Flow is coherent. Slot was pre-selected silently, which is correct behavior for 'primera disponible'.",
+      "bugs": []
+    },
+    {
+      "turn": 7,
+      "user_message": "sí, acepto",
+      "agent_response": "¡Listo! Te ha quedado reservada la cita para el martes 30 de junio a las 10:00 con Marta para corte de mujer.  \nTe dejo el enlace del calendario por si te viene bien: https://calendar.google.com/calendar/render?action=TEMPLATE&text=Corte%20de%20Mujer%20en%20Atr%C3%A9vete&dates=20260630T080000Z/20260630T084000Z&details=Turno%20con%20Marta&location=Atr%C3%A9vete%20Sal%C3%B3n%20de%20Belleza",
+      "tool_calls_observed": [
+        {
+          "tool": "update_booking",
+          "key_args": {"policy_accepted": true, "slot_iso": "2026-06-30T10:00:00+02:00"},
+          "result_next_step": "reoffer_slots",
+          "note": "intermediate step required check_availability before book"
+        },
+        {
+          "tool": "check_availability",
+          "key_args": {
+            "service_ids": ["cb7ae91c-97ff-e1d1-3b0b-696b11467add"],
+            "date_iso": "2026-06-30",
+            "no_preference": true,
+            "slot_time": "10:00"
+          },
+          "result": "ok — slot confirmed: 2026-06-30T10:00+02:00 with stylist Marta (5f1745ba-d2b1-4d87-8d47-79821a99ae93)"
+        },
+        {
+          "tool": "book",
+          "key_args": {
+            "service_ids": ["cb7ae91c-97ff-e1d1-3b0b-696b11467add"],
+            "stylist_id": "5f1745ba-d2b1-4d87-8d47-79821a99ae93",
+            "start_iso": "2026-06-30T10:00:00+02:00",
+            "customer_full_name": "Marta Lopez",
+            "confirmed": true,
+            "policy_accepted": true
+          },
+          "result": "appointment_id: 8152621e-0de8-45c4-9aa8-4367bdfaab63"
+        }
+      ],
+      "coherence_note": "PASS — Policy acceptance triggered the full booking sequence: check_availability confirmed the slot, then book created the appointment. Confirmation message is accurate: correct date (martes 30 de junio), correct time (10:00), correct stylist (Marta), correct service (corte de mujer). Calendar link included.",
+      "bugs": []
+    }
+  ],
+  "outcome": "booked",
+  "appointment_id": "8152621e-0de8-45c4-9aa8-4367bdfaab63",
+  "appointment_details": {
+    "service": "Corte de Mujer",
+    "service_id": "cb7ae91c-97ff-e1d1-3b0b-696b11467add",
+    "stylist": "Marta",
+    "stylist_id": "5f1745ba-d2b1-4d87-8d47-79821a99ae93",
+    "date": "2026-06-30",
+    "slot_iso": "2026-06-30T10:00:00+02:00",
+    "customer": "Marta Lopez",
+    "phone": "+34999000130",
+    "gcal_skip": true
+  },
+  "coherent_with_expectation": {
+    "verdict": true,
+    "reasons": "All four sub-expectations met: (a) Turn 1 bot asked for audience before any slot/service resolution — confirmed by update_booking returning next_step=audience_required with no slot offered; (b) after 'soy mujer' the bot narrowed to female options and never re-asked audience, service, name, date, or stylist after they were provided; (c) all facts were carried forward across all 7 turns — service_id, no_preference_stylist, date_iso, customer_full_name all present in the final book call; (d) booking confirmed with appointment_id 8152621e."
+  },
+  "bugs_summary": [],
+  "notes": {
+    "redundant_tool_calls": "Each turn replays update_booking from scratch (1–3 redundant calls before the state-advancing call), rebuilding the booking context chain. This is an architectural behavior in the middleware/LLM re-resolution loop — it does NOT affect user experience or correctness, but increases latency and token cost per turn.",
+    "slot_pre_selection": "In Turn 6, the bot internally selected slot 10:00 on 2026-06-30 without presenting it to the user before the policy gate. This is acceptable for 'primera disponible' — the slot is surfaced in the final confirmation message (Turn 7) and matches the user's stated preference.",
+    "stylist_name_coincidence": "The assigned stylist is named 'Marta', same as the customer persona. No confusion in the flow.",
+    "total_turns": 7,
+    "avg_latency_ms": 13870
+  }
+}

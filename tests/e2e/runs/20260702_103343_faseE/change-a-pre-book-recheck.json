@@ -1,0 +1,138 @@
+{
+  "scenario_id": "change-a-pre-book-recheck",
+  "conversation_id": "2f7f39a5-aa17-4578-9580-676c81345775",
+  "phone": "+34999000003",
+  "persona_name": "Sofia Martinez",
+  "max_turns": 10,
+  "expected": {
+    "outcome": "booked",
+    "db_appointment": {"status": "pending"},
+    "tool_calls_required": ["check_availability", "book"],
+    "tool_calls_forbidden": [],
+    "service": {"name_contains": "corte", "service_type": "principal", "audience": "adult_female", "forbidden_audience": "adult_male"}
+  },
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, quiero reservar un corte de dama para el martes, con cualquier estilista.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nPerfecto, ¿me das tu nombre y primer apellido?",
+      "timed_out": false,
+      "response_latency_ms": 12199,
+      "tool_evidence": [
+        {
+          "tool_name": "update_booking",
+          "arguments": {"services": ["corte de mujer"], "stylist_name": null, "no_preference_stylist": true, "date_iso": "2026-07-07", "audience": "adult_female", "customer_full_name": null, "no_more_services": true, "extras_asked": true, "notes_asked": false, "customer_known": false, "slot_iso": null, "policy_accepted": false, "policy_rejection_count": 0},
+          "result": {"result_summary": "{\"status\":\"partial\",\"collected\":{\"services\":[\"corte de mujer\"],\"service_ids\":[\"a0f48408-6479-32c4-96ac-aa7187b99be0\"],\"extras_asked\":true,\"no_more_services\":true,\"no_preference_stylist\":true,\"date_iso\":\"2026-07-07\"},\"missing\":[\"customer_full_name\"],\"next_step\":\"name_required\",\"payload\":{},\"errors\":[]}", "status": "success"},
+          "source": "checkpoint",
+          "timestamp": "2026-07-02T08:38:42.143605+00:00"
+        }
+      ]
+    },
+    {
+      "turn": 2,
+      "user_message": "Sofia Martinez",
+      "agent_response": "¿Alguna nota para la cita?",
+      "timed_out": false,
+      "response_latency_ms": 14632,
+      "tool_evidence": [
+        {
+          "tool_name": "update_booking",
+          "arguments": {"services": ["corte de mujer"], "customer_full_name": null, "notes_asked": false, "policy_accepted": false},
+          "result": {"result_summary": "{\"status\":\"partial\",\"missing\":[\"customer_full_name\"],\"next_step\":\"name_required\"}", "status": "success"},
+          "source": "checkpoint",
+          "timestamp": "2026-07-02T08:39:01.880725+00:00"
+        },
+        {
+          "tool_name": "update_booking",
+          "arguments": {"services": ["corte de mujer"], "customer_full_name": "Sofia Martinez", "notes_asked": false, "policy_accepted": false},
+          "result": {"result_summary": "{\"status\":\"partial\",\"collected\":{\"customer_full_name\":\"Sofia Martinez\",\"notes_asked\":true},\"missing\":[],\"next_step\":\"notes_optional\"}", "status": "success"},
+          "source": "checkpoint",
+          "timestamp": "2026-07-02T08:39:01.880725+00:00"
+        }
+      ]
+    },
+    {
+      "turn": 3,
+      "user_message": "No, sin notas.",
+      "agent_response": "Antes de confirmártela, necesito cerrar un hueco exacto. ¿A qué hora del martes te viene mejor?",
+      "timed_out": false,
+      "response_latency_ms": 12047,
+      "tool_evidence": [
+        {
+          "tool_name": "update_booking",
+          "arguments": {"customer_full_name": "Sofia Martinez", "notes_asked": true, "policy_accepted": false, "slot_iso": null},
+          "result": {"result_summary": "{\"status\":\"partial\",\"next_step\":\"pre_book_validation_required\",\"payload\":{\"hint\":\"Llama a check_availability con slot_time exacto antes de book(). No se ha proporcionado slot_iso.\"}}", "status": "success"},
+          "source": "checkpoint",
+          "timestamp": "2026-07-02T08:39:18.954725+00:00"
+        }
+      ]
+    },
+    {
+      "turn": 4,
+      "user_message": "A las 10 de la manana",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos\navisar con al menos 24h si necesitas cambiar o cancelar — fuera de\nese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "timed_out": false,
+      "response_latency_ms": 16276,
+      "tool_evidence": [
+        {
+          "tool_name": "check_availability",
+          "arguments": {"service_ids": ["a0f48408-6479-32c4-96ac-aa7187b99be0"], "stylist_id": null, "date_iso": "2026-07-07", "audience": "adult_female", "no_preference": true, "slot_time": "10:00"},
+          "result": {"result_summary": "{\"status\":\"ok\",\"payload\":{\"slots\":[{\"start_iso\":\"2026-07-07T10:00:00+02:00\",\"end_iso\":\"2026-07-07T10:40:00+02:00\",\"stylist_id\":\"39e1c607-b319-41ba-97db-fa5dcfe24cf1\",\"stylist_name\":\"Marta\",\"label\":\"martes 7 de julio\"}],\"exact_match\":true,\"total_duration_minutes\":40}}", "status": "success"},
+          "source": "checkpoint",
+          "timestamp": "2026-07-02T08:39:43.036455+00:00"
+        },
+        {
+          "tool_name": "update_booking",
+          "arguments": {"customer_full_name": "Sofia Martinez", "slot_iso": "2026-07-07T10:00:00+02:00", "policy_accepted": false},
+          "result": {"result_summary": "{\"status\":\"partial\",\"next_step\":\"policy_acceptance_required\",\"payload\":{\"policy_url\":\"https://atrevetepeluqueria.com/politica-privacidad/\",\"policy_version\":\"1.0\",\"policy_rejection_count\":0}}", "status": "success"},
+          "source": "checkpoint",
+          "timestamp": "2026-07-02T08:39:43.036455+00:00"
+        }
+      ]
+    },
+    {
+      "turn": 5,
+      "user_message": "Si, acepto",
+      "agent_response": "Te la he agendado para el martes 7 de julio a las 10:00 con Marta para corte de mujer. Te enviaré una confirmación 48h antes; respóndela con un \"sí\" y queda lista ✅\n\nSi quieres, también te paso el enlace de calendario.",
+      "timed_out": false,
+      "response_latency_ms": 16111,
+      "tool_evidence": [
+        {
+          "tool_name": "check_availability",
+          "arguments": {"service_ids": ["a0f48408-6479-32c4-96ac-aa7187b99be0"], "stylist_id": null, "date_iso": "2026-07-07", "audience": "adult_female", "no_preference": true, "slot_time": "10:00"},
+          "result": {"result_summary": "{\"status\":\"ok\",\"payload\":{\"slots\":[{\"start_iso\":\"2026-07-07T10:00:00+02:00\",\"stylist_name\":\"Marta\",\"exact_match\":true}]}}", "status": "success"},
+          "source": "checkpoint",
+          "timestamp": "2026-07-02T08:40:05.209130+00:00"
+        },
+        {
+          "tool_name": "update_booking",
+          "arguments": {"customer_full_name": "Sofia Martinez", "slot_iso": "2026-07-07T10:00:00+02:00", "policy_accepted": true},
+          "result": {"result_summary": "{\"status\":\"ok\",\"collected\":{\"policy_accepted\":true,\"policy_version_accepted\":\"1.0\",\"pre_book_validated\":true,\"slot_iso\":\"2026-07-07T10:00:00+02:00\"},\"missing\":[],\"next_step\":\"booking_ready\"}", "status": "success"},
+          "source": "checkpoint",
+          "timestamp": "2026-07-02T08:40:05.209130+00:00"
+        },
+        {
+          "tool_name": "book",
+          "arguments": {"service_ids": ["a0f48408-6479-32c4-96ac-aa7187b99be0"], "stylist_id": "39e1c607-b319-41ba-97db-fa5dcfe24cf1", "start_iso": "2026-07-07T10:00:00+02:00", "customer_full_name": "Sofia Martinez", "confirmed": true, "pre_book_validated": true, "notes": null, "policy_accepted": true},
+          "result": {"result_summary": "{\"status\":\"ok\",\"payload\":{\"appointment_id\":\"d6cf9aa9-c017-4dcb-bdc5-ab01b84dd11b\",\"customer_id\":\"e8277f6b-986f-421c-bb32-ec5d3aa047f9\",\"start_iso\":\"2026-07-07T10:00:00+02:00\",\"end_iso\":\"2026-07-07T10:40:00+02:00\",\"stylist_id\":\"39e1c607-b319-41ba-97db-fa5dcfe24cf1\"}}", "status": "success"},
+          "source": "checkpoint",
+          "timestamp": "2026-07-02T08:40:05.209130+00:00"
+        }
+      ]
+    }
+  ],
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "2f7f39a5-aa17-4578-9580-676c81345775",
+    "customer_phone": "+34999000003",
+    "customer_id": "e8277f6b-986f-421c-bb32-ec5d3aa047f9",
+    "customer_name": "Sofia Martinez",
+    "messages_count": 24,
+    "latest_tool_call_name": "book",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": true
+  },
+  "outcome_observed": "booked",
+  "runner_notes": "Booking completed in 5 turns: service resolved as corte de mujer (adult_female), slot confirmed at 2026-07-07T10:00 with Marta, check_availability called before book (pre-book recheck validated), policy accepted in turn 5. ANOMALY: final_state shows customer_consents_count=0 and policy_accepted_at=null despite book tool receiving policy_accepted=true — consent record was not persisted to DB."
+}

@@ -1,0 +1,240 @@
+{
+  "scenario_id": "change-c-policy-acceptance-stored",
+  "conversation_id": "a351fa14-51aa-4255-9be0-c1333c9dd750",
+  "phone": "+34999000014",
+  "persona_name": "Beatriz Jimenez",
+  "max_turns": 10,
+  "expected": {
+    "outcome": "policy_accepted",
+    "db_appointment": null,
+    "tool_calls_required": [],
+    "tool_calls_forbidden": []
+  },
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, me gustaria reservar una cita. Es la primera vez que os contacto.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Para qué servicio te gustaría la cita?\n\n¿Para qué servicio te gustaría la cita?",
+      "timed_out": false,
+      "response_latency_ms": 8279,
+      "tool_evidence": []
+    },
+    {
+      "turn": 2,
+      "user_message": "Quisiera un corte de pelo",
+      "agent_response": "¿Es para ti o para otra persona?",
+      "timed_out": false,
+      "response_latency_ms": 12832,
+      "tool_evidence": [
+        {
+          "tool_name": "update_booking",
+          "arguments": {
+            "services": ["corte de mujer"],
+            "audience": null,
+            "policy_accepted": false
+          },
+          "result_summary": "{\"status\":\"rejected\",\"next_step\":\"audience_required\"}"
+        }
+      ]
+    },
+    {
+      "turn": 3,
+      "user_message": "Para mi",
+      "agent_response": "¿Es para señora, caballero, niña, niño o bebé?",
+      "timed_out": false,
+      "response_latency_ms": 8441,
+      "tool_evidence": [
+        {
+          "tool_name": "update_booking",
+          "arguments": {
+            "services": ["corte de mujer"],
+            "audience": null,
+            "policy_accepted": false
+          },
+          "result_summary": "{\"status\":\"rejected\",\"next_step\":\"audience_required\"}"
+        }
+      ]
+    },
+    {
+      "turn": 4,
+      "user_message": "Senora",
+      "agent_response": "¿Quieres añadir algún otro servicio o solo el corte?",
+      "timed_out": false,
+      "response_latency_ms": 12127,
+      "tool_evidence": [
+        {
+          "tool_name": "update_booking",
+          "arguments": {
+            "services": ["corte de mujer"],
+            "audience": null,
+            "policy_accepted": false
+          },
+          "result_summary": "{\"status\":\"rejected\",\"next_step\":\"audience_required\"}"
+        },
+        {
+          "tool_name": "update_booking",
+          "arguments": {
+            "services": ["corte de mujer"],
+            "audience": "adult_female",
+            "policy_accepted": false
+          },
+          "result_summary": "{\"status\":\"partial\",\"next_step\":\"extras_loop_required\",\"collected\":{\"service_ids\":[\"a0f48408-6479-32c4-96ac-aa7187b99be0\"]}}"
+        }
+      ]
+    },
+    {
+      "turn": 5,
+      "user_message": "Solo el corte",
+      "agent_response": "0) La primera con disponibilidad (mín. 3 días de antelación)\n1) Harolyn\n2) Marta\n3) Pilar\n4) Victor\n\n¿Cuál prefieres?",
+      "timed_out": false,
+      "response_latency_ms": 14694,
+      "tool_evidence": [
+        {
+          "tool_name": "update_booking",
+          "arguments": {
+            "no_more_services": true,
+            "extras_asked": true,
+            "pre_resolved_service_ids": ["a0f48408-6479-32c4-96ac-aa7187b99be0"],
+            "policy_accepted": false
+          },
+          "result_summary": "{\"status\":\"partial\",\"next_step\":\"stylist_required\"}"
+        }
+      ]
+    },
+    {
+      "turn": 6,
+      "user_message": "La primera con disponibilidad",
+      "agent_response": "Estas son las próximas citas disponibles para tu corte de mujer:\n\n1. Martes 7 de julio a las 10:40 con Marta\n2. Martes 7 de julio a las 10:00 con Victor\n3. Martes 7 de julio a las 11:20 con Marta\n\n¿Cuál te viene mejor?",
+      "timed_out": false,
+      "response_latency_ms": 18435,
+      "tool_evidence": [
+        {
+          "tool_name": "update_booking",
+          "arguments": {
+            "no_preference_stylist": true,
+            "pre_resolved_service_ids": ["a0f48408-6479-32c4-96ac-aa7187b99be0"],
+            "policy_accepted": false
+          },
+          "result_summary": "{\"status\":\"partial\",\"next_step\":\"offer_slots\"}"
+        },
+        {
+          "tool_name": "get_next_available_options",
+          "arguments": {
+            "service_ids": ["a0f48408-6479-32c4-96ac-aa7187b99be0"],
+            "strategy": "any_stylist",
+            "max_options": 3
+          },
+          "result_summary": "{\"status\":\"ok\",\"options\":[{\"start_iso\":\"2026-07-07T10:40:00+02:00\",\"stylist_name\":\"Marta\"},{\"start_iso\":\"2026-07-07T10:00:00+02:00\",\"stylist_name\":\"Victor\"},{\"start_iso\":\"2026-07-07T11:20:00+02:00\",\"stylist_name\":\"Marta\"}]}"
+        }
+      ]
+    },
+    {
+      "turn": 7,
+      "user_message": "La primera, el martes 7 a las 10:40",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política\nde privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos\navisar con al menos 24h si necesitas cambiar o cancelar — fuera de\nese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "timed_out": false,
+      "response_latency_ms": 14634,
+      "tool_evidence": [
+        {
+          "tool_name": "update_booking",
+          "arguments": {
+            "slot_iso": "2026-07-07T10:40:00+02:00",
+            "date_iso": "2026-07-07",
+            "policy_accepted": false
+          },
+          "result_summary": "{\"status\":\"partial\",\"next_step\":\"policy_acceptance_required\",\"payload\":{\"policy_url\":\"https://atrevetepeluqueria.com/politica-privacidad/\",\"policy_version\":\"1.0\"}}"
+        }
+      ]
+    },
+    {
+      "turn": 8,
+      "user_message": "Si, acepto",
+      "agent_response": "Me falta tu nombre y primer apellido para dejarla registrada.",
+      "timed_out": false,
+      "response_latency_ms": 12747,
+      "tool_evidence": [
+        {
+          "tool_name": "update_booking",
+          "arguments": {
+            "slot_iso": "2026-07-07T10:40:00+02:00",
+            "policy_accepted": true,
+            "policy_rejection_count": 0
+          },
+          "result_summary": "{\"status\":\"partial\",\"next_step\":\"name_required\",\"collected\":{\"policy_accepted\":true,\"policy_version_accepted\":\"1.0\"}}"
+        }
+      ]
+    },
+    {
+      "turn": 9,
+      "user_message": "Beatriz Jimenez",
+      "agent_response": "¿Quieres dejarme alguna nota para la cita?",
+      "timed_out": false,
+      "response_latency_ms": 13730,
+      "tool_evidence": [
+        {
+          "tool_name": "update_booking",
+          "arguments": {
+            "customer_full_name": "Beatriz Jimenez",
+            "policy_accepted": true
+          },
+          "result_summary": "{\"status\":\"partial\",\"next_step\":\"notes_optional\",\"collected\":{\"policy_accepted\":true,\"policy_version_accepted\":\"1.0\",\"customer_full_name\":\"Beatriz Jimenez\"}}"
+        }
+      ]
+    },
+    {
+      "turn": 10,
+      "user_message": "No, sin notas",
+      "agent_response": "Te he agendado la cita para el martes 7 de julio a las 10:40 con Marta para corte de mujer. Te enviaré una confirmación 48h antes; respóndela con un \"sí\" y queda lista ✅\n\nSi quieres, te paso también el enlace del calendario.",
+      "timed_out": false,
+      "response_latency_ms": 21890,
+      "tool_evidence": [
+        {
+          "tool_name": "update_booking",
+          "arguments": {
+            "customer_full_name": "Beatriz Jimenez",
+            "notes_asked": true,
+            "policy_accepted": true
+          },
+          "result_summary": "{\"status\":\"partial\",\"next_step\":\"pre_book_validation_required\"}"
+        },
+        {
+          "tool_name": "check_availability",
+          "arguments": {
+            "service_ids": ["a0f48408-6479-32c4-96ac-aa7187b99be0"],
+            "date_iso": "2026-07-07",
+            "slot_time": "10:40",
+            "no_preference": true
+          },
+          "result_summary": "{\"status\":\"ok\",\"exact_match\":true,\"slots\":[{\"start_iso\":\"2026-07-07T10:40:00+02:00\",\"stylist_name\":\"Marta\"}]}"
+        },
+        {
+          "tool_name": "book",
+          "arguments": {
+            "service_ids": ["a0f48408-6479-32c4-96ac-aa7187b99be0"],
+            "stylist_id": "39e1c607-b319-41ba-97db-fa5dcfe24cf1",
+            "start_iso": "2026-07-07T10:40:00+02:00",
+            "customer_full_name": "Beatriz Jimenez",
+            "confirmed": true,
+            "pre_book_validated": true,
+            "policy_accepted": true
+          },
+          "result_summary": "{\"status\":\"ok\",\"payload\":{\"appointment_id\":\"8622ed37-f0e1-4054-a1e8-21e30265d6f1\",\"customer_id\":\"ec87f18b-c05f-4457-b7ff-fbe3a6a61189\",\"start_iso\":\"2026-07-07T10:40:00+02:00\",\"stylist_id\":\"39e1c607-b319-41ba-97db-fa5dcfe24cf1\"}}"
+        }
+      ]
+    }
+  ],
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "a351fa14-51aa-4255-9be0-c1333c9dd750",
+    "customer_phone": "+34999000014",
+    "customer_id": "ec87f18b-c05f-4457-b7ff-fbe3a6a61189",
+    "customer_name": "Beatriz Jimenez",
+    "messages_count": 42,
+    "latest_tool_call_name": "book",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": true
+  },
+  "outcome_observed": "booked",
+  "runner_notes": "CONSENT-PERSISTENCE BUG CONFIRMED. Booking completed successfully (appointment 8622ed37, Marta, Corte de Mujer, 2026-07-07T10:40) and book() was called with policy_accepted=true, but final_state shows policy_accepted_at=null and customer_consents_count=0 — the consent was never written to customers.policy_accepted_at nor to customer_consents table. The book() consent-write path is silently failing or not executing."
+}

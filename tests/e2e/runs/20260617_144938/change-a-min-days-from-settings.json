@@ -1,0 +1,39 @@
+{
+  "scenario_id": "change-a-min-days-from-settings",
+  "conversation_id": "0b08d8dc-a7a3-4768-a759-e0e6856842fa",
+  "phone": "+34999000005",
+  "persona_name": "Isabel Lopez",
+  "expected_outcome": "rejected",
+  "outcome": "rejected",
+  "max_turns": 6,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, podeis darme cita para hoy? Necesito urgente un tinte.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Es para ti o para otra persona?",
+      "response_latency_ms": 13969,
+      "timed_out": false,
+      "tool_evidence": []
+    },
+    {
+      "turn": 2,
+      "user_message": "Para mi misma. Necesito el tinte hoy si es posible, es urgente.",
+      "agent_response": "Lo siento, hoy no puedo darte cita porque el salón trabaja con una antelación mínima de 3 días.\n\nLa primera fecha disponible es el sábado 20 de junio. Si quieres, te busco huecos para ese día.",
+      "response_latency_ms": 16610,
+      "timed_out": false,
+      "tool_evidence": []
+    },
+    {
+      "turn": 3,
+      "user_message": "Por favor, es que de verdad lo necesito para hoy. No puedo esperar 3 dias.",
+      "agent_response": "Te paso con alguien del equipo para que te ayuden con tu caso.",
+      "response_latency_ms": 12751,
+      "timed_out": false,
+      "tool_evidence": []
+    }
+  ],
+  "tool_calls_observed": [],
+  "final_state": {"has_checkpoint": false},
+  "coherence_notes": "The bot correctly identified the minimum advance-booking constraint and rejected the same-day request on turn 2, citing the 3-day minimum and offering the next available date (Saturday 20 June). This is exactly the expected behavior for this scenario. On turn 3, when the customer insisted, the bot escalated to a human agent rather than repeating the rejection — a reasonable fallback behavior. The flow was coherent: greet/disclose → identity question → reject with policy explanation → escalate on insistence. No voseo, no hallucinated stylists, no booking attempted.",
+  "claim_vs_backend": "Bot stated: 'Lo siento, hoy no puedo darte cita porque el salón trabaja con una antelación mínima de 3 días.' No appointment was created."
+}

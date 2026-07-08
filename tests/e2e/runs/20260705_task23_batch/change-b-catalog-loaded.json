@@ -1,0 +1,85 @@
+{
+  "scenario_id": "change-b-catalog-loaded",
+  "conversation_id": "dc535fa1-0445-481a-9410-058780cd3f66",
+  "outcome": "info_provided",
+  "turns_taken": 3,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, ¿qué servicios ofrecéis?",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nTrabajamos peluquería y estética. Si quieres, te ayudo a concretar qué te apetece reservar.",
+      "latency_ms": 14146,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "greeting_generic_categories"
+    },
+    {
+      "turn": 2,
+      "user_message": "¿Me podrías decir un poco más en concreto? Por ejemplo, ¿qué tipos de cortes, tintes o tratamientos faciales tenéis?",
+      "agent_response": "Claro. En cortes tenemos:\n- corte de mujer\n- corte de caballero\n- corte de niña\n- corte de niño\n- corte de bebé\n- corte de flequillo\n\nEn color tenemos:\n- tinte\n- tinte para hombre\n- mechas\n- barro\n- barro gold extra\n\nY en faciales:\n- tratamiento facial\n- tratamiento facial + radiofrecuencia\n- tratamiento facial + radiofrecuencia de 30 min\n\nSi quieres, te digo cuál encaja mejor según lo que buscas o te ayudo a reservar.",
+      "latency_ms": 10989,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "catalog_listed"
+    },
+    {
+      "turn": 3,
+      "user_message": "Perfecto, muchas gracias por la info. Me lo voy a pensar y os escribo cuando decida, ¡un saludo!",
+      "agent_response": "¡De nada! Cuando quieras, te ayudo a reservarlo. Un saludo 😊",
+      "latency_ms": 13268,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "conversation_terminated_naturally_no_booking"
+    }
+  ],
+  "bugs": [],
+  "milestones_reached": [
+    "greeting_generic_categories",
+    "catalog_listed",
+    "conversation_terminated_naturally_no_booking"
+  ],
+  "db_delta": {
+    "customer_count_delta": 0,
+    "appt_count_delta": 0
+  },
+  "snapshot_before": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "snapshot_after": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "dc535fa1-0445-481a-9410-058780cd3f66",
+    "customer_phone": "+34999000008",
+    "customer_id": null,
+    "customer_name": null,
+    "messages_count": 6,
+    "latest_tool_call_name": null,
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": false
+  },
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "info_provided",
+    "db_appointment": null,
+    "tool_calls_required": [],
+    "tool_calls_forbidden": [],
+    "tags": ["change-b", "catalog", "cache"]
+  },
+  "passed": true,
+  "quality_observations": {
+    "extras_question_own_turn": "N/A — not a booking flow, no stylist/date step was reached",
+    "confirmation_last": "N/A — no booking attempted",
+    "rejection_both_facts": "N/A — no rejection scenario",
+    "stylist_menu_option0": "N/A — no stylist menu appeared",
+    "tone": "Warm/cercano — turn 1: \"¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\"; closes turn 3 with \"¡De nada! Cuando quieras, te ayudo a reservarlo. Un saludo 😊\"",
+    "unbacked_slots": "None observed — no concrete slot times were presented in any turn (this scenario never reached availability/booking), so there is no unbacked-slot risk to flag"
+  }
+}

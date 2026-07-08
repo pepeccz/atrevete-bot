@@ -1,0 +1,148 @@
+{
+  "scenario_id": "change-c-gcal-synced-status",
+  "conversation_id": "296e9f13-b2e0-4dc2-8be2-eef00dd8c624",
+  "outcome": "booked",
+  "turns_taken": 10,
+  "turns": [
+    {
+      "turn": 1,
+      "user": "Quiero reservar una manicura para el miercoles a las 11.",
+      "agent": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Qué tipo de manicura quieres? Tengo manicura, manicura permanente o manicura permanente con tratamiento.",
+      "tool_calls": ["update_booking"],
+      "latency_ms": 18786,
+      "bugs": []
+    },
+    {
+      "turn": 2,
+      "user": "Manicura normal.",
+      "agent": "¿Quieres añadir algún otro servicio o solo la manicura?",
+      "tool_calls": ["update_booking", "update_booking"],
+      "latency_ms": 17764,
+      "bugs": []
+    },
+    {
+      "turn": 3,
+      "user": "No, solo eso.",
+      "agent": "¿Qué tipo de manicura quieres? Tengo manicura, manicura permanente o manicura permanente con tratamiento.",
+      "tool_calls": ["update_booking", "update_booking", "update_booking"],
+      "latency_ms": 16464,
+      "bugs": ["redundant_question"]
+    },
+    {
+      "turn": 4,
+      "user": "Manicura simple, sin permanente.",
+      "agent": "Perdona, no llegamos a la antelación mínima de 3 días. La primera fecha disponible es el viernes 3 de julio.\n\nTe dejo ese día a la primera hora con disponibilidad más próxima, si te encaja.",
+      "tool_calls": ["update_booking", "update_booking", "update_booking", "update_booking"],
+      "latency_ms": 15782,
+      "bugs": []
+    },
+    {
+      "turn": 5,
+      "user": "Si, el viernes me viene bien.",
+      "agent": "¿Es para ti o para otra persona?",
+      "tool_calls": ["update_booking", "update_booking", "update_booking", "update_booking", "get_next_available_options"],
+      "latency_ms": 11950,
+      "bugs": []
+    },
+    {
+      "turn": 6,
+      "user": "Para mi.",
+      "agent": "Para dejarte la cita, ¿me dices tu nombre y primer apellido?",
+      "tool_calls": ["update_booking", "update_booking", "update_booking", "update_booking", "get_next_available_options", "update_booking"],
+      "latency_ms": 12738,
+      "bugs": []
+    },
+    {
+      "turn": 7,
+      "user": "Ana Torres.",
+      "agent": "¿Alguna nota para la cita?",
+      "tool_calls": ["update_booking", "update_booking", "update_booking", "update_booking", "get_next_available_options", "update_booking", "update_booking"],
+      "latency_ms": 11204,
+      "bugs": []
+    },
+    {
+      "turn": 8,
+      "user": "No tengo notas.",
+      "agent": "Perfecto, Ana. Te lo dejo el viernes 3 de julio con Rosa. Te puedo ofrecer cualquiera de estos huecos:\n\n1. 14:00\n2. 14:30\n3. 15:00\n4. 15:30\n5. 16:00\n6. 16:30\n7. 17:00\n8. 17:30\n9. 18:00\n10. 18:30\n11. 19:00\n12. 19:30\n\n¿Cuál te viene mejor?",
+      "tool_calls": ["update_booking", "update_booking", "update_booking", "update_booking", "get_next_available_options", "update_booking", "update_booking", "update_booking", "check_availability"],
+      "latency_ms": 16489,
+      "bugs": []
+    },
+    {
+      "turn": 9,
+      "user": "Las 14:00 me viene bien.",
+      "agent": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "tool_calls": ["update_booking", "update_booking", "update_booking", "update_booking", "get_next_available_options", "update_booking", "update_booking", "update_booking", "check_availability", "update_booking"],
+      "latency_ms": 14843,
+      "bugs": []
+    },
+    {
+      "turn": 10,
+      "user": "Si, acepto la politica.",
+      "agent": "¡Listo, Ana! Te he reservado la manicura para el viernes 3 de julio a las 14:00 con Rosa.\n\nSi quieres, también te puedo pasar el enlace del calendario.",
+      "tool_calls": ["update_booking", "update_booking", "update_booking", "update_booking", "get_next_available_options", "update_booking", "update_booking", "update_booking", "check_availability", "update_booking", "update_booking", "check_availability", "book"],
+      "latency_ms": 20424,
+      "bugs": []
+    }
+  ],
+  "bugs": [
+    {
+      "type": "redundant_question",
+      "turn": 3,
+      "detail": "After Ana said 'Manicura normal' in turn 2 (variant resolved, service_id cc30a1c4 captured), turn 3 response re-asked the variant disambiguation question. Root cause: third update_booking call in same turn re-invoked with variant_resolved=false, losing the pre_resolved_service_ids, causing the tool to return variant_required again. The LLM echoed this as a new question to the user despite context from turn 2.",
+      "severity": "medium"
+    }
+  ],
+  "milestones_reached": [
+    "service_selected",
+    "date_negotiated_advance_policy",
+    "audience_captured",
+    "name_captured",
+    "slot_presented",
+    "slot_selected",
+    "policy_accepted",
+    "booked"
+  ],
+  "db_delta": {
+    "customers_before": 0,
+    "appointments_before": 0,
+    "customers_after": 1,
+    "appointments_after": 1,
+    "appointment_status": "confirmed",
+    "gcal_sync_status": "not_applicable",
+    "appointment_id": "6fd1898f-cdff-40a1-a599-aa960c2af388",
+    "customer_id": "a088f17d-8ea8-4d9c-b9de-9f26f4567f52",
+    "stylist": "Rosa",
+    "slot": "2026-07-03T14:00:00+02:00"
+  },
+  "snapshot_before": {
+    "customers": 0,
+    "appointments": 0
+  },
+  "snapshot_after": {
+    "customers": 1,
+    "appointments": 1
+  },
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "296e9f13-b2e0-4dc2-8be2-eef00dd8c624",
+    "customer_phone": "+34999000010",
+    "customer_id": "a088f17d-8ea8-4d9c-b9de-9f26f4567f52",
+    "customer_name": "Ana Torres",
+    "messages_count": 46,
+    "latest_tool_call_name": "book",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": true
+  },
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "booked",
+    "db_appointment": {
+      "status": "confirmed",
+      "gcal_sync_status": "not_applicable"
+    },
+    "tool_calls_required": ["check_availability", "book"]
+  },
+  "passed": true
+}

@@ -1,0 +1,168 @@
+{
+  "scenario_id": "r-reschedule-flow",
+  "conversation_id": "821f7f4b-63ef-4ab8-a746-7d46ecffaa03",
+  "phone": "+34999000012",
+  "persona_name": "Pilar Navarro",
+  "expected_outcome": "rescheduled",
+  "outcome": "rescheduled",
+  "max_turns": 12,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Quiero reservar un tinte para el lunes y luego cambiarlo al miercoles.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Es para caballero o no?",
+      "response_latency_ms": 11308,
+      "timed_out": false,
+      "tool_evidence": ["update_booking"]
+    },
+    {
+      "turn": 2,
+      "user_message": "Para mujer",
+      "agent_response": "Lo siento, tuve un problema técnico. ¿Puedes intentarlo de nuevo? 💕",
+      "response_latency_ms": 7890,
+      "timed_out": false,
+      "tool_evidence": ["update_booking"]
+    },
+    {
+      "turn": 3,
+      "user_message": "Es para mujer, un tinte normal",
+      "agent_response": "Lo siento, tuve un problema técnico. ¿Puedes intentarlo de nuevo? 💕",
+      "response_latency_ms": 13277,
+      "timed_out": false,
+      "tool_evidence": ["update_booking"]
+    },
+    {
+      "turn": 4,
+      "user_message": "Soy mujer y quiero un tinte",
+      "agent_response": "Te puedo ofrecer estas primeras opciones para **tinte**:\n\n1. **Martes 23 de junio a las 10:00** con Marta  \n2. **Martes 23 de junio a las 10:40** con Marta  \n3. **Martes 23 de junio a las 11:20** con Marta  \n\nSi quieres, la **estilista con disponibilidad más próxima** también sería Marta.  \n¿Cuál te viene mejor?",
+      "response_latency_ms": 14091,
+      "timed_out": false,
+      "tool_evidence": ["update_booking", "update_booking", "get_next_available_options"]
+    },
+    {
+      "turn": 5,
+      "user_message": "La primera opcion, el martes a las 10:00 con Marta",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "response_latency_ms": 11366,
+      "timed_out": false,
+      "tool_evidence": ["update_booking", "update_booking", "get_next_available_options", "update_booking", "update_booking"]
+    },
+    {
+      "turn": 6,
+      "user_message": "Si, la acepto",
+      "agent_response": "Perfecto, ¿me dices tu nombre y primer apellido?",
+      "response_latency_ms": 11311,
+      "timed_out": false,
+      "tool_evidence": ["update_booking", "update_booking", "get_next_available_options", "update_booking", "update_booking", "update_booking"]
+    },
+    {
+      "turn": 7,
+      "user_message": "Pilar Navarro",
+      "agent_response": "¿Quieres dejar alguna nota para Marta?",
+      "response_latency_ms": 13855,
+      "timed_out": false,
+      "tool_evidence": ["update_booking", "update_booking", "get_next_available_options", "update_booking", "update_booking", "update_booking", "update_booking"]
+    },
+    {
+      "turn": 8,
+      "user_message": "No, sin notas",
+      "agent_response": "Se ha movido el hueco de las **10:00** y ya no está disponible.\n\nTe dejo alternativas para **martes 23 de junio** con Marta:\n1. **10:40**\n2. **11:20**\n3. **12:00**\n\n¿Cuál prefieres?",
+      "response_latency_ms": 13830,
+      "timed_out": false,
+      "tool_evidence": ["update_booking", "update_booking", "get_next_available_options", "update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "check_availability"]
+    },
+    {
+      "turn": 9,
+      "user_message": "La primera, a las 10:40",
+      "agent_response": "Perfecto, Pilar. Te lo dejo el **martes 23 de junio a las 10:40** con Marta para **tinte**. ¿Te lo confirmo?",
+      "response_latency_ms": 9449,
+      "timed_out": false,
+      "tool_evidence": ["update_booking", "update_booking", "get_next_available_options", "update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "check_availability"]
+    },
+    {
+      "turn": 10,
+      "user_message": "Si, confirmalo por favor",
+      "agent_response": "¡Listo, Pilar! Tu cita ha quedado **confirmada** para el **martes 23 de junio a las 10:40** con Marta para **tinte**.\n\nAquí tienes el enlace del calendario:\nhttps://calendar.google.com/calendar/render?action=TEMPLATE&text=Tinte%20en%20Atr%C3%A9vete&dates=20260623T084000Z/20260623T092000Z&details=Turno%20con%20Marta&location=Atr%C3%A9vete%20Sal%C3%B3n%20de%20Belleza",
+      "response_latency_ms": 23318,
+      "timed_out": false,
+      "tool_evidence": ["update_booking", "update_booking", "get_next_available_options", "update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "check_availability", "check_availability", "book"]
+    },
+    {
+      "turn": 11,
+      "user_message": "Gracias. En realidad me viene mejor el miercoles. Puedes cambiarme la cita del tinte al miercoles?",
+      "agent_response": "Claro, ya te la he cambiado al **miércoles 24 de junio a las 10:40**.",
+      "response_latency_ms": 11604,
+      "timed_out": false,
+      "tool_evidence": ["update_booking", "update_booking", "get_next_available_options", "update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "check_availability", "check_availability", "book", "manage_appointments"]
+    }
+  ],
+  "tool_calls_observed": [
+    "update_booking",
+    "update_booking",
+    "get_next_available_options",
+    "update_booking",
+    "update_booking",
+    "get_next_available_options",
+    "update_booking",
+    "update_booking",
+    "update_booking",
+    "get_next_available_options",
+    "update_booking",
+    "update_booking",
+    "update_booking",
+    "update_booking",
+    "check_availability",
+    "update_booking",
+    "update_booking",
+    "get_next_available_options",
+    "update_booking",
+    "update_booking",
+    "update_booking",
+    "update_booking",
+    "update_booking",
+    "check_availability",
+    "update_booking",
+    "update_booking",
+    "get_next_available_options",
+    "update_booking",
+    "update_booking",
+    "update_booking",
+    "update_booking",
+    "update_booking",
+    "check_availability",
+    "check_availability",
+    "book",
+    "update_booking",
+    "update_booking",
+    "get_next_available_options",
+    "update_booking",
+    "update_booking",
+    "update_booking",
+    "update_booking",
+    "update_booking",
+    "check_availability",
+    "check_availability",
+    "book",
+    "manage_appointments"
+  ],
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "821f7f4b-63ef-4ab8-a746-7d46ecffaa03",
+    "customer_phone": "+34999000012",
+    "customer_id": "61b96d7c-7dd5-4191-8235-db7e90b0bf58",
+    "customer_name": "Pilar Navarro",
+    "messages_count": 42,
+    "latest_tool_call_name": "manage_appointments",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": true,
+    "db_appointment": {
+      "appointment_id": "55e3f073-2635-4e77-8d48-a7e6f861ee3c",
+      "start_time": "2026-06-24T08:40:00+00:00",
+      "start_time_local": "2026-06-24T10:40:00+02:00",
+      "status": "confirmed"
+    }
+  },
+  "claim_vs_backend": "Cita cambiada al miércoles 24 de junio a las 10:40 con Marta para tinte. DB confirms appointment 55e3f073 at 2026-06-24 10:40 CEST, status=confirmed.",
+  "coherence_notes": "The bot fully resolved the reschedule intent: it first completed the booking flow (audience disambiguation, policy acceptance, name, notes, slot selection, confirmation) and then immediately rescheduled the appointment to Wednesday June 24 at 10:40 when asked. Final appointment date is Wednesday 24 June 2026 at 10:40 (Europe/Madrid). Minor friction: the audience disambiguation took 3 turns because single-word answers like 'Para mujer' triggered a technical-error response before a fuller phrasing worked; this is a known bot sensitivity. No voseo, no hallucinated stylists (Marta is valid), and no incoherence between turns. The policy_accepted_at field in the state API is null despite the policy being accepted mid-flow — this may indicate a consent-record write issue. manage_appointments reschedule tool called correctly with the original appointment_id."
+}

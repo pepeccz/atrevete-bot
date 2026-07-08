@@ -1,0 +1,47 @@
+{
+  "scenario_id": "change-b-cache-warm-second-turn",
+  "conversation_id": "4e205116-318b-442b-94b2-e14f39ac52ee",
+  "phone": "+34999000007",
+  "persona_name": "Marta Gonzalez",
+  "expected_outcome": "booked",
+  "outcome": "stuck",
+  "max_turns": 4,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "¿Teneis disponibilidad para manicura esta semana?",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nPara **manicura** tengo opciones a partir del **martes 23 de junio** con la estilista con disponibilidad más próxima, **Rosa**:\n\n1. **martes 23 de junio** a las **10:00**\n2. **martes 23 de junio** a las **10:30**\n3. **martes 23 de junio** a las **11:00**\n\nSi quieres, te busco también con otra estilista o me dices cuál te encaja.",
+      "response_latency_ms": 11990,
+      "timed_out": false,
+      "tool_evidence": []
+    },
+    {
+      "turn": 2,
+      "user_message": "Perfecto, me viene bien el martes 23 a las 10:00 con Rosa",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "response_latency_ms": 11475,
+      "timed_out": false,
+      "tool_evidence": []
+    },
+    {
+      "turn": 3,
+      "user_message": "Si, la acepto",
+      "agent_response": "Perfecto. ¿Me das tu nombre y primer apellido?",
+      "response_latency_ms": 14454,
+      "timed_out": false,
+      "tool_evidence": []
+    },
+    {
+      "turn": 4,
+      "user_message": "Marta Gonzalez",
+      "agent_response": "Perfecto, Marta. ¿Quieres dejar alguna nota para Rosa?",
+      "response_latency_ms": 14295,
+      "timed_out": false,
+      "tool_evidence": []
+    }
+  ],
+  "tool_calls_observed": [],
+  "final_state": {"has_checkpoint": false},
+  "coherence_notes": "Turn latencies: 11990ms, 11475ms, 14454ms, 14295ms — no measurable cache warm-up speedup on later turns; latency stayed in the 11-14s range across all turns. The bot correctly handled the flow: greeted and disclosed on T1, presented availability slots without being asked (good), requested policy acceptance on T2 (new customer gate), then asked for name on T3 after policy was accepted, and asked for optional notes on T4. The flow was coherent and contextually correct at every step — it remembered the chosen slot (Tue 23 June 10:00 with Rosa) throughout. However, the booking was NOT completed within 4 turns because the identity collection (name + optional notes) consumed turns 3 and 4; the actual book tool call never fired. No voseo detected. Stylist Rosa is valid (aesthetics specialist). The slot presented (Tue 23 June, starting from martes 23) is plausible given today is 2026-06-17.",
+  "claim_vs_backend": "Bot did NOT claim booking completion. At turn 4 it was still collecting optional notes before booking. No appointment confirmation message was emitted."
+}

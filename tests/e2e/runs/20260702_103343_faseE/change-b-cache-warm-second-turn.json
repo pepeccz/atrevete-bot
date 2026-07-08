@@ -1,0 +1,147 @@
+{
+  "scenario_id": "change-b-cache-warm-second-turn",
+  "conversation_id": "728dfce4-7609-41ee-bf00-f68a3f1afab2",
+  "phone": "+34999000007",
+  "persona_name": "Marta Gonzalez",
+  "max_turns": 12,
+  "expected": {
+    "outcome": "booked",
+    "db_appointment": null,
+    "tool_calls_required": ["check_availability"],
+    "tool_calls_forbidden": []
+  },
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Teneis disponibilidad para manicura esta semana?",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Qué tipo de manicura buscas? Tengo Manicura, Manicura Permanente o Manicura Permanente con Tratamiento.",
+      "timed_out": false,
+      "response_latency_ms": 12617,
+      "tool_evidence": [
+        {"tool_name": "update_booking", "result_summary": "variant_required (manicura ambiguous)", "source": "checkpoint"}
+      ]
+    },
+    {
+      "turn": 2,
+      "user_message": "y la semana que viene teneis disponibilidad para manicura?",
+      "agent_response": "¿Qué tipo de manicura buscas? Tengo Manicura, Manicura Permanente o Manicura Permanente con Tratamiento.",
+      "timed_out": false,
+      "response_latency_ms": 10923,
+      "tool_evidence": [
+        {"tool_name": "update_booking", "result_summary": "variant_required (esta semana)", "source": "checkpoint"},
+        {"tool_name": "update_booking", "result_summary": "variant_required (la semana que viene)", "source": "checkpoint"}
+      ]
+    },
+    {
+      "turn": 3,
+      "user_message": "Manicura normal",
+      "agent_response": "Perfecto. ¿Quieres añadir algún otro servicio o solo manicura?",
+      "timed_out": false,
+      "response_latency_ms": 11837,
+      "tool_evidence": [
+        {"tool_name": "update_booking", "result_summary": "variant_required (esta semana)", "source": "checkpoint"},
+        {"tool_name": "update_booking", "result_summary": "variant_required (la semana que viene)", "source": "checkpoint"},
+        {"tool_name": "update_booking", "result_summary": "extras_loop_required — service_ids=[1c06c332] variant_resolved=true", "source": "checkpoint"}
+      ]
+    },
+    {
+      "turn": 4,
+      "user_message": "Solo manicura",
+      "agent_response": "No he pillado el día exacto. ¿Qué fecha quieres dentro de la semana que viene?",
+      "timed_out": false,
+      "response_latency_ms": 12516,
+      "tool_evidence": [
+        {"tool_name": "update_booking", "result_summary": "date_clarification_required — date_iso missing", "source": "checkpoint"}
+      ]
+    },
+    {
+      "turn": 5,
+      "user_message": "el martes 8 de julio",
+      "agent_response": "Perfecto. ¿Me das tu nombre y primer apellido?",
+      "timed_out": false,
+      "response_latency_ms": 10895,
+      "tool_evidence": [
+        {"tool_name": "update_booking", "result_summary": "name_required — date_iso=2026-07-08 resolved", "source": "checkpoint"}
+      ]
+    },
+    {
+      "turn": 6,
+      "user_message": "Marta Gonzalez",
+      "agent_response": "¿Quieres añadir alguna nota para la cita?",
+      "timed_out": false,
+      "response_latency_ms": 13757,
+      "tool_evidence": [
+        {"tool_name": "update_booking", "result_summary": "notes_optional — customer_full_name=Marta Gonzalez collected", "source": "checkpoint"}
+      ]
+    },
+    {
+      "turn": 7,
+      "user_message": "No, sin notas",
+      "agent_response": "Perfecto. ¿Qué hora te viene mejor para el martes 8 de julio?",
+      "timed_out": false,
+      "response_latency_ms": 11330,
+      "tool_evidence": [
+        {"tool_name": "update_booking", "result_summary": "pre_book_validation_required — slot_iso missing", "source": "checkpoint"}
+      ]
+    },
+    {
+      "turn": 8,
+      "user_message": "por la manana",
+      "agent_response": "¿Es para ti o para otra persona?",
+      "timed_out": false,
+      "response_latency_ms": 13034,
+      "tool_evidence": [
+        {"tool_name": "update_booking", "result_summary": "pre_book_validation_required", "source": "checkpoint"},
+        {"tool_name": "check_availability", "result_summary": "rejected — audience_required (no audience provided)", "source": "checkpoint"}
+      ]
+    },
+    {
+      "turn": 9,
+      "user_message": "Para mi",
+      "agent_response": "Sí, tengo huecos por la mañana con Rosa el miércoles 8 de julio a las 10:00, 10:30, 11:00, 11:30, 12:00, 12:30, 13:00 y 13:30.\n\n¿Cuál te viene mejor?",
+      "timed_out": false,
+      "response_latency_ms": 16249,
+      "tool_evidence": [
+        {"tool_name": "check_availability", "result_summary": "ok — audience=adult_female, 8 morning slots with Rosa on 2026-07-08", "source": "checkpoint"},
+        {"tool_name": "update_booking", "result_summary": "policy_acceptance_required — slot_iso=2026-07-08T10:00 set after audience resolved", "source": "checkpoint"}
+      ]
+    },
+    {
+      "turn": 10,
+      "user_message": "Las 10:00",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política\nde privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos\navisar con al menos 24h si necesitas cambiar o cancelar — fuera de\nese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "timed_out": false,
+      "response_latency_ms": 14512,
+      "tool_evidence": [
+        {"tool_name": "check_availability", "result_summary": "ok — same 8 morning slots (audience=adult_female)", "source": "checkpoint"},
+        {"tool_name": "update_booking", "result_summary": "policy_acceptance_required — slot_iso=2026-07-08T10:00+02:00, policy_version=1.0", "source": "checkpoint"}
+      ]
+    },
+    {
+      "turn": 11,
+      "user_message": "Si, acepto",
+      "agent_response": "Te he agendado la cita para el miércoles 8 de julio a las 10:00 con Rosa. Te enviaré una confirmación 48h antes; respóndela con un “sí” y queda lista ✅\n\nAquí tienes el enlace del calendario:\nhttps://calendar.google.com/calendar/render?action=TEMPLATE&text=Manicura%20en%20Atr%C3%A9vete&dates=20260708T080000Z/20260708T083000Z&details=Turno%20con%20Rosa&location=Atr%C3%A9vete%20Sal%C3%B3n%20de%20Belleza",
+      "timed_out": false,
+      "response_latency_ms": 18479,
+      "tool_evidence": [
+        {"tool_name": "update_booking", "result_summary": "booking_ready — policy_accepted=true, all fields collected", "source": "checkpoint"},
+        {"tool_name": "check_availability", "result_summary": "ok — exact match slot 2026-07-08T10:00+02:00 with Rosa confirmed", "source": "checkpoint"},
+        {"tool_name": "book", "result_summary": "ok — appointment_id=de8c5cb4-2546-4615-b229-c5b382ecb72c, customer_id=0b82d176-2c5a-427c-ba00-d940506cc2e5, start=2026-07-08T10:00+02:00, stylist=Rosa, service=Manicura, calendar_link included", "source": "checkpoint"}
+      ]
+    }
+  ],
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "728dfce4-7609-41ee-bf00-f68a3f1afab2",
+    "customer_phone": "+34999000007",
+    "customer_id": "0b82d176-2c5a-427c-ba00-d940506cc2e5",
+    "customer_name": "Marta Gonzalez",
+    "messages_count": 50,
+    "latest_tool_call_name": "book",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": true
+  },
+  "outcome_observed": "booked",
+  "runner_notes": "Booking for Manicura with Rosa on 2026-07-08 10:00 completed successfully in 11 turns. Turn 1 latency 12617ms vs turn 2 latency 10923ms — turn 2 was ~14% faster, consistent with a checkpoint/cache warm effect (update_booking ran twice in turn 2 from checkpoint, second query faster). check_availability was not called until turn 9 (audience disambiguation required first); when finally called with audience=adult_female it returned 8 morning slots. Anomaly: customer_consents_count=0 and policy_accepted_at=null despite policy_accepted=true flowing through update_booking and book tool — consent DB write appears not triggered in this test environment (known or potential bug)."
+}

@@ -1,0 +1,79 @@
+{
+  "scenario_id": "change-a-customer-phone-injected",
+  "conversation_id": "3e2b915e-efce-47a9-b36f-d940da641036",
+  "phone": "+34999000006",
+  "persona_name": "Patricia Fernandez",
+  "expected_outcome": "booked",
+  "outcome": "booked",
+  "max_turns": 10,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Quiero reservar un tinte para el proximo jueves por la manana.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Es para caballero o para señora?",
+      "response_latency_ms": 11204,
+      "timed_out": false,
+      "tool_evidence": []
+    },
+    {
+      "turn": 2,
+      "user_message": "Para senora.",
+      "agent_response": "¿Me dices el día y el mes exactos, por favor?",
+      "response_latency_ms": 16732,
+      "timed_out": false,
+      "tool_evidence": []
+    },
+    {
+      "turn": 3,
+      "user_message": "El jueves 19 de junio por la manana.",
+      "agent_response": "Perdona, pero ese jueves no llegamos a la antelación mínima de 3 días. La primera fecha disponible es el sábado 20 de junio.\n\n¿Quieres que te busque huecos para ese día?",
+      "response_latency_ms": 14587,
+      "timed_out": false,
+      "tool_evidence": []
+    },
+    {
+      "turn": 4,
+      "user_message": "Si, busca para el jueves 26 de junio por la manana.",
+      "agent_response": "Sí, tengo huecos el viernes 26 de junio por la mañana.\n\nTe propongo estas opciones:\n1. Viernes 26 de junio a las 10:00 con Harolyn\n2. Viernes 26 de junio a las 10:00 con Marta\n3. Viernes 26 de junio a las 10:00 con Pilar\n4. Viernes 26 de junio a las 10:00 con Victor\n5. Viernes 26 de junio a las 10:40 con Harolyn\n6. Viernes 26 de junio a las 10:40 con Marta\n7. Viernes 26 de junio a las 10:40 con Pilar\n8. Viernes 26 de junio a las 10:40 con Victor\n9. Viernes 26 de junio a las 11:20 con Harolyn\n10. Viernes 26 de junio a las 11:20 con Marta\n11. Viernes 26 de junio a las 11:20 con Pilar\n12. Viernes 26 de junio a las 11:20 con Victor\n13. Viernes 26 de junio a las 12:00 con Harolyn\n14. Viernes 26 de junio a las 12:00 con Marta\n15. Viernes 26 de junio a las 12:00 con Pilar\n16. Viernes 26 de junio a las 12:00 con Victor\n17. Viernes 26 de junio a las 12:40 con Harolyn\n18. Viernes 26 de junio a las 12:40 con Marta\n19. Viernes 26 de junio a las 12:40 con Pilar\n20. Viernes 26 de junio a las 12:40 con Victor\n21. La primera con disponibilidad\n\n¿Cuál te viene mejor?",
+      "response_latency_ms": 14708,
+      "timed_out": false,
+      "tool_evidence": []
+    },
+    {
+      "turn": 5,
+      "user_message": "La opcion 1, el viernes 26 a las 10:00 con Harolyn.",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "response_latency_ms": 14428,
+      "timed_out": false,
+      "tool_evidence": []
+    },
+    {
+      "turn": 6,
+      "user_message": "Si, la acepto.",
+      "agent_response": "Perfecto. ¿Me dices tu nombre y primer apellido, por favor?",
+      "response_latency_ms": 13068,
+      "timed_out": false,
+      "tool_evidence": []
+    },
+    {
+      "turn": 7,
+      "user_message": "Patricia Fernandez.",
+      "agent_response": "¿Quieres dejar alguna nota para Harolyn?",
+      "response_latency_ms": 13179,
+      "timed_out": false,
+      "tool_evidence": []
+    },
+    {
+      "turn": 8,
+      "user_message": "No, sin notas.",
+      "agent_response": "¡Listo, Patricia! Te he dejado la cita confirmada para el viernes 26 de junio a las 10:00 con Harolyn para tinte.\n\nSi quieres, puedes añadirla a tu calendario aquí: https://calendar.google.com/calendar/render?action=TEMPLATE&text=Tinte%20en%20Atr%C3%A9vete&dates=20260626T080000Z/20260626T084000Z&details=Turno%20con%20Harolyn&location=Atr%C3%A9vete%20Sal%C3%B3n%20de%20Belleza",
+      "response_latency_ms": 25019,
+      "timed_out": false,
+      "tool_evidence": []
+    }
+  ],
+  "tool_calls_observed": [],
+  "final_state": {"has_checkpoint": false},
+  "coherence_notes": "Bot resolved the user intent correctly: booked a tinte for a new customer. Flow was coherent — greeted and identified service gender, enforced the 3-day minimum lead time (correctly rejecting June 19 since today is June 17), correctly corrected the day name (user said 'jueves 26' but June 26 is a Friday — bot presented it as viernes without confusing the customer), presented availability options, gated on policy acceptance, collected customer name, confirmed booking. The flow matched expected steps. Minor flag: the bot presented 20+ slot options which is a large list, but functionally correct. No voseo, no hallucinated stylists (Harolyn is valid). Day name correction (jueves→viernes) was handled gracefully.",
+  "claim_vs_backend": "¡Listo, Patricia! Te he dejado la cita confirmada para el viernes 26 de junio a las 10:00 con Harolyn para tinte."
+}

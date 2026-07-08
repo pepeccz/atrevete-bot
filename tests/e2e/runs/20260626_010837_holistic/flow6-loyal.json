@@ -1,0 +1,190 @@
+{
+  "scenario_id": "flow6-loyal",
+  "conversation_id": "c8b7e7ed-049d-453a-ad53-9ed729be66bb",
+  "persona": {
+    "name": "Lucia Fernandez",
+    "phone": "+34999000138",
+    "type": "returning_loyal",
+    "description": "Returning woman customer whose usual service is Corte de Mujer with Marta"
+  },
+  "seeded": {
+    "customer_id": "60733ac2-70b3-479c-ae9e-986721be7df5",
+    "past_appointment_id": "10bc16fa-ac28-4603-a631-6120bf500b2d",
+    "past_appointment": {
+      "service_name": "Corte de Mujer",
+      "stylist_name": "Marta",
+      "days_ago": 30,
+      "status": "completed"
+    },
+    "memories_written_keys": ["visit_count", "preferred_stylist_name", "typical_services", "agent_notes"],
+    "memories": {
+      "visit_count": 5,
+      "preferred_stylist_name": "Marta",
+      "typical_services": ["Corte de Mujer"],
+      "agent_notes": "Cliente habitual, siempre corte de mujer con Marta."
+    },
+    "store_note": "Memories written to DB (metadata_ fallback path). Redis store unavailable during seed container run; agent running container has full access to DB fallback."
+  },
+  "expected": {
+    "outcome": "booked",
+    "coherent_behavior": "Bot recognizes 'lo de siempre' = Corte de Mujer with Marta from customer memory/history and proceeds WITHOUT re-asking the audience ('¿para quién?', '¿mujer u hombre?'). Customer name also pre-populated (no name re-ask). Flow feels personalized and smooth, ending in a confirmed booking."
+  },
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, quiero pedir cita para lo de siempre",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nTe dejo estas opciones con Marta para corte de mujer:\n\n1. Martes 30 de junio a las 11:20\n2. Martes 30 de junio a las 12:00\n3. Martes 30 de junio a las 12:40\n\n¿Cuál te viene mejor?",
+      "response_latency_ms": 13568,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "get_next_available_options"],
+      "tool_evidence_summary": {
+        "update_booking": {
+          "services": ["corte de mujer"],
+          "audience": "adult_female",
+          "stylist_name": "Marta",
+          "customer_known": true,
+          "customer_full_name": "Lucia Fernandez",
+          "policy_accepted": false,
+          "next_step": "offer_slots"
+        },
+        "get_next_available_options": {
+          "strategy": "same_stylist_then_any",
+          "stylist_id_used": "5f1745ba-d2b1-4d87-8d47-79821a99ae93",
+          "audience": "adult_female",
+          "options_returned": 3
+        }
+      },
+      "coherence_note": "PASS — bot recognized 'lo de siempre' = Corte de Mujer with Marta immediately. audience=adult_female set automatically. customer_known=true from turn 1. customer_full_name='Lucia Fernandez' pre-populated from memory. NO audience re-ask ('¿para quién?'), NO gender prompt. Offered 3 slots with Marta directly.",
+      "bugs": []
+    },
+    {
+      "turn": 2,
+      "user_message": "La primera, el martes 30 a las 11:20",
+      "agent_response": "Perfecto, Lucía, te lo dejo el martes 30 de junio a las 11:20 con Marta para corte de mujer.\n\nAntes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "response_latency_ms": 14410,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "get_next_available_options", "update_booking"],
+      "tool_evidence_summary": {
+        "slot_locked": "2026-06-30T11:20:00+02:00",
+        "stylist": "Marta",
+        "next_step_final": "policy_acceptance_required",
+        "customer_known": true,
+        "audience_throughout": "adult_female"
+      },
+      "coherence_note": "PASS — slot selected and confirmed verbally. Policy gate fired as expected (even for returning customers, policy acceptance is required per booking flow). Bot addressed customer by name 'Lucía'. No audience re-ask. No gender prompt.",
+      "bugs": []
+    },
+    {
+      "turn": 3,
+      "user_message": "Si, la acepto",
+      "agent_response": "Perfecto, Lucía. ¿Quieres dejarme alguna nota para Marta?",
+      "response_latency_ms": 13819,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "get_next_available_options", "update_booking", "update_booking"],
+      "tool_evidence_summary": {
+        "policy_accepted": true,
+        "policy_version_accepted": "1.0",
+        "next_step_final": "notes_optional",
+        "notes_asked": true,
+        "customer_known": true,
+        "customer_full_name_maintained": "Lucia Fernandez"
+      },
+      "coherence_note": "PASS — policy accepted, bot moved directly to optional notes step. No name re-ask (customer_full_name was already known from memory). No audience re-ask. Personalized reply with 'Lucía'.",
+      "bugs": []
+    },
+    {
+      "turn": 4,
+      "user_message": "No, sin notas",
+      "agent_response": "Perfecto. Te lo dejo preparado para el martes 30 de junio a las 11:20 con Marta para corte de mujer.\n\n¿Te lo confirmo?",
+      "response_latency_ms": 8610,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "get_next_available_options", "update_booking", "update_booking"],
+      "tool_evidence_summary": {
+        "notes": null,
+        "state_complete_except_final_confirm": true,
+        "customer_known": true,
+        "audience_throughout": "adult_female"
+      },
+      "coherence_note": "PASS — bot acknowledged no notes and showed complete booking summary before final confirm. Adds one extra confirmation micro-step ('¿Te lo confirmo?') which slightly extends the flow but is not a regression. No audience re-ask. No name re-ask.",
+      "bugs": []
+    },
+    {
+      "turn": 5,
+      "user_message": "Si, perfecto",
+      "agent_response": "¡Listo, Lucía! Te queda confirmada la cita para el martes 30 de junio a las 11:20 con Marta para corte de mujer.\n\nSi quieres, también te paso el enlace del calendario:\nhttps://calendar.google.com/calendar/render?action=TEMPLATE&text=Corte%20de%20Mujer%20en%20Atr%C3%A9vete&dates=20260630T092000Z/20260630T100000Z&details=Turno%20con%20Marta&location=Atr%C3%A9vete%20Sal%C3%B3n%20de%20Belleza",
+      "response_latency_ms": 22025,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "get_next_available_options", "update_booking", "update_booking", "check_availability", "book"],
+      "tool_evidence_summary": {
+        "check_availability": {
+          "slot": "2026-06-30T11:20:00+02:00",
+          "exact_match": true,
+          "stylist": "Marta"
+        },
+        "book": {
+          "appointment_id": "8d1d0f04-feba-43f7-a99d-2f2c876208de",
+          "customer_id": "60733ac2-70b3-479c-ae9e-986721be7df5",
+          "start_iso": "2026-06-30T11:20:00+02:00",
+          "end_iso": "2026-06-30T12:00:00+02:00",
+          "policy_accepted": true,
+          "confirmed": true
+        }
+      },
+      "coherence_note": "PASS — booking confirmed. check_availability ran clean (exact_match=true). book tool succeeded with appointment_id. Calendar link provided. Bot signed off with 'Lucía'. Flow complete in 5 turns.",
+      "bugs": []
+    }
+  ],
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "c8b7e7ed-049d-453a-ad53-9ed729be66bb",
+    "customer_phone": "+34999000138",
+    "customer_id": "60733ac2-70b3-479c-ae9e-986721be7df5",
+    "customer_name": "Lucia Fernandez",
+    "messages_count": 22,
+    "latest_tool_call_name": "book",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": true
+  },
+  "outcome": "booked",
+  "booked_appointment": {
+    "appointment_id": "8d1d0f04-feba-43f7-a99d-2f2c876208de",
+    "service": "Corte de Mujer",
+    "stylist": "Marta",
+    "date": "2026-06-30",
+    "slot": "11:20",
+    "slot_iso": "2026-06-30T11:20:00+02:00"
+  },
+  "coherent_with_expectation": {
+    "verdict": "PASS",
+    "reasons": [
+      "Bot recognized 'lo de siempre' = Corte de Mujer with Marta on turn 1 without any clarification prompt.",
+      "audience=adult_female was set automatically from customer memory (DB fallback path); no '¿para quién?' or gender re-ask at any point in 5 turns.",
+      "customer_known=true was active from turn 1; customer_full_name='Lucia Fernandez' was pre-populated — bot never asked for the name again.",
+      "Flow completed in 5 turns: slots offered → slot picked → policy accepted → notes skipped → booking confirmed.",
+      "No voseo detected in any turn. Stylist 'Marta' is valid (in the known-good list: Harolyn, Marta, Pilar, Rosa, Victor).",
+      "The extra '¿Te lo confirmo?' step on T4 adds a courtesy confirmation beat but does not constitute a regression."
+    ]
+  },
+  "bugs_summary": [
+    {
+      "id": "B1",
+      "severity": "WARNING",
+      "type": "consent_persistence_gap",
+      "description": "customer_consents_count=0 and policy_accepted_at=null in final state despite policy being accepted on T3. The agent recorded policy_accepted=true internally and book tool received policy_accepted=true, but the customer_consents audit table row and policy_accepted_at column were not populated. This is a pre-existing known issue documented in earlier holistic runs."
+    }
+  ],
+  "cleanup": {
+    "performed": true,
+    "method": "qa_turn_helper.py reset --conversation-id ... --phone +34999000138",
+    "result": {
+      "checkpoints_deleted": 115,
+      "customer_redis_deleted": 1,
+      "artifacts_deleted": 0,
+      "appointments_deleted": 2,
+      "customer_deleted": true
+    },
+    "note": "2 appointments deleted: the seeded past appointment (30 days ago) and the newly booked one."
+  },
+  "notes": "Seed store note: Redis Store (LangGraph InMemoryStore / async store client) was unavailable during the ephemeral seed container run (--no-deps mode). Memories were written to Customer.metadata_['memories'] in PostgreSQL (DB fallback path). The running agent container reads memories from this fallback path when the store is empty, which is why the bot correctly resolved the customer profile on T1. Memory resolution worked correctly despite not going through the Redis store primary path."
+}

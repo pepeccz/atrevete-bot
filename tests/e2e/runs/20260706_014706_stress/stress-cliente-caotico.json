@@ -1,0 +1,205 @@
+{
+  "scenario_id": "stress-cliente-caotico",
+  "conversation_id": "3c12f517-74dd-4766-8b45-e076cdb4e519",
+  "outcome": "booked",
+  "turns_taken": 11,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola! Quiero pedir cita para un corte",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nPerfecto, para **corte** necesito saber para quién es: ¿para ti o para otra persona?",
+      "latency_ms": 13310,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "service_requested_corte"
+    },
+    {
+      "turn": 2,
+      "user_message": "Para mí. Mmm espera... mejor no quiero corte, mejor un tinte",
+      "agent_response": "Perfecto, cambiamos a **tinte** 😊\n\nComo puede ser para caballero o la opción general, ¿es para ti o para otra persona?",
+      "latency_ms": 10663,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking"],
+      "bugs": [
+        {
+          "type": "redundant_question",
+          "detail": "User explicitly answered 'Para mí' in this same message before pivoting corte->tinte, but the bot re-asked '¿es para ti o para otra persona?' after the service switch. Minor — audience-per-service resolution appears to reset on service change instead of carrying over the already-stated answer."
+        }
+      ],
+      "milestone": "service_pivot_corte_to_tinte (draft mutated in place, not appended)"
+    },
+    {
+      "turn": 3,
+      "user_message": "Es para mí. Y sabes qué, mejor corte Y tinte juntos, los dos",
+      "agent_response": "Perfecto, te anoto **corte y tinte**.\n\n¿Quieres añadir algún otro servicio o lo dejamos así?",
+      "latency_ms": 12951,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking", "update_booking"],
+      "bugs": [],
+      "milestone": "services_settled_corte_plus_tinte (audience=adult_female, both service_ids resolved)"
+    },
+    {
+      "turn": 4,
+      "user_message": "No nada más. Lo quiero para el viernes",
+      "agent_response": "Genial, para **el viernes** 😊\n\n¿Tienes alguna preferencia de estilista o te vale la **primera con disponibilidad**?",
+      "latency_ms": 13913,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking", "update_booking", "update_booking"],
+      "bugs": [],
+      "milestone": "date_set_friday_2026-07-10"
+    },
+    {
+      "turn": 5,
+      "user_message": "Mmm espera, el viernes no, mejor el sábado",
+      "agent_response": "Perfecto, lo paso al **sábado**.\n\nTe dejo estas opciones de estilista:\n0. La primera con disponibilidad (mín. 3 días de antelación)\n1. Harolyn\n2. Marta\n3. Pilar\n4. Victor\n\n¿Cuál prefieres?",
+      "latency_ms": 11515,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking", "update_booking", "update_booking", "update_booking"],
+      "bugs": [],
+      "milestone": "date_switch_1_friday_to_saturday_2026-07-11 (draft date_iso mutated in place, single value replaced not duplicated)"
+    },
+    {
+      "turn": 6,
+      "user_message": "buff no sé, lo que sea",
+      "agent_response": "Perfecto, te lo gestiono con **la primera con disponibilidad**.\n\nPara dejarte la cita hecha, dime tu **nombre y primer apellido**.",
+      "latency_ms": 12190,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "update_booking"],
+      "bugs": [],
+      "milestone": "ambiguous_message_resolved_to_no_preference_stylist=true (bot proposed a concrete resolution instead of stalling)"
+    },
+    {
+      "turn": 7,
+      "user_message": "Andrea Vidal. Ah espera, no no, al final mejor el viernes por la tarde",
+      "agent_response": "Perfecto, Andrea, entonces te lo dejo para **el viernes por la tarde**.\n\n¿Quieres añadir alguna nota para la cita?",
+      "latency_ms": 12279,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "update_booking"],
+      "bugs": [],
+      "milestone": "date_switch_2_saturday_back_to_friday_2026-07-10 + name_captured=Andrea Vidal (draft date_iso mutated back in place)"
+    },
+    {
+      "turn": 8,
+      "user_message": "No, ninguna nota. Y sí, por la tarde si hay hueco",
+      "agent_response": "Perfecto, Andrea 😊\n\nPara poder cerrarlo necesito elegir un **hueco concreto** de la tarde del viernes y revalidarlo antes de reservar. ¿Te va mejor una hora aproximada, por ejemplo sobre las 14:00, 15:20 o 16:40?",
+      "latency_ms": 14847,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "update_booking"],
+      "bugs": [],
+      "milestone": "afternoon_preference_resolved_to_concrete_slot_options"
+    },
+    {
+      "turn": 9,
+      "user_message": "Vale, las 15:20 me viene bien",
+      "agent_response": "Perfecto, Andrea, te lo dejo para **el viernes 10 de julio a las 15:20** con **Marta** para **corte y tinte**.\n\nAntes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "latency_ms": 20035,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "check_availability", "update_booking"],
+      "bugs": [],
+      "milestone": "slot_resolved_2026-07-10T15:20+02:00_with_Marta (check_availability exact_match=true), policy_gate_shown"
+    },
+    {
+      "turn": 10,
+      "user_message": "Sí, la acepto",
+      "agent_response": "Perfecto, Andrea. Te lo dejo para **el viernes 10 de julio a las 15:20** con **Marta** para **corte y tinte**.\n\n¿Te lo confirmo?",
+      "latency_ms": 13392,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "check_availability", "update_booking", "update_booking"],
+      "bugs": [],
+      "milestone": "policy_accepted=true (policy_version 1.0), pre_book_validated=true, final confirmation requested"
+    },
+    {
+      "turn": 11,
+      "user_message": "Sí, confírmalo",
+      "agent_response": "¡Listo! Te he agendado la cita para **el viernes 10 de julio a las 15:20** con **Marta** para **corte y tinte**.\n\nTe llegará una confirmación 48h antes; respóndela con un **sí** y quedará lista ✅\n\nSi quieres, también te paso el enlace del calendario.",
+      "latency_ms": 17552,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "check_availability", "update_booking", "update_booking", "book"],
+      "bugs": [],
+      "milestone": "booking_created appointment_id=1fce4177-7b86-4a79-a0a6-2fbd1fcae2d0"
+    }
+  ],
+  "bugs": [
+    {
+      "turn": 2,
+      "type": "redundant_question",
+      "severity": "minor",
+      "detail": "User answered 'Para mí' in the same message as the corte->tinte pivot, but the bot re-asked the audience/for-whom question after processing the service switch. Non-blocking — resolved one turn later when the user repeated 'Es para mí'."
+    }
+  ],
+  "milestones_reached": [
+    "service_requested_corte",
+    "service_pivot_corte_to_tinte",
+    "services_settled_corte_plus_tinte",
+    "date_set_friday_2026-07-10",
+    "date_switch_1_friday_to_saturday_2026-07-11",
+    "ambiguous_message_resolved_to_no_preference_stylist",
+    "date_switch_2_saturday_back_to_friday_2026-07-10",
+    "afternoon_preference_resolved_to_concrete_slot_options",
+    "slot_resolved_2026-07-10T15:20+02:00_with_Marta",
+    "policy_accepted",
+    "booking_created"
+  ],
+  "db_delta": {
+    "customer_count_delta": 1,
+    "appt_count_delta": 1
+  },
+  "snapshot_before": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "snapshot_after": {
+    "customer_count": 1,
+    "appt_count": 1
+  },
+  "appointment_detail": {
+    "id": "1fce4177-7b86-4a79-a0a6-2fbd1fcae2d0",
+    "customer_id": "b9edb9e4-4cea-4186-99bf-2f38f7644a98",
+    "status": "pending",
+    "start_time": "2026-07-10T13:20:00+00:00",
+    "start_time_local": "2026-07-10T15:20:00+02:00",
+    "duration_minutes": 80,
+    "first_name": "Andrea",
+    "last_name": "Vidal",
+    "stylist_name": "Marta",
+    "gcal_sync_status": "not_applicable",
+    "notes": null,
+    "cancellation_reason": null,
+    "service_names": ["Tinte", "Corte de Mujer"]
+  },
+  "customer_detail": {
+    "id": "b9edb9e4-4cea-4186-99bf-2f38f7644a98",
+    "first_name": "Andrea",
+    "last_name": "Vidal",
+    "phone": "+34999000024",
+    "policy_accepted_at": "2026-07-05T23:53:49.596328+00:00",
+    "policy_version": "1.0"
+  },
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "3c12f517-74dd-4766-8b45-e076cdb4e519",
+    "customer_phone": "+34999000024",
+    "customer_id": "b9edb9e4-4cea-4186-99bf-2f38f7644a98",
+    "customer_name": "Andrea Vidal",
+    "messages_count": 46,
+    "latest_tool_call_name": "book",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": true,
+    "note": "policy_accepted_at/customer_consents_count show as null/0 in the qa_turn_helper state snapshot despite the customers table row showing policy_accepted_at set — this is a known state-command-vs-DB reconciliation artifact documented in prior QA runs (Fase E), not a new bug introduced by this scenario."
+  },
+  "langfuse_trace_path": null,
+  "langfuse_pull_error": "401 Unauthorized — Invalid Langfuse credentials (known issue, credential regeneration pending per project runbook)",
+  "expect": {
+    "outcome": "booking_created_matching_final_intent"
+  },
+  "passed": true,
+  "observations": {
+    "hook_1_escalation_during_indecision": "NOT TRIGGERED. Across all 11 turns (3 service pivots, 3 date changes, 1 explicitly ambiguous message), the bot never called the escalate/send_to_human tool and never handed off to a human. The previously-fixed 'escalate after 2 consecutive date rejections' bug did NOT reproduce, even though this scenario intentionally rejected the date twice in a row (viernes->sábado in turn 5, then sábado->viernes in turn 7).",
+    "hook_2_final_intent_match": "MATCH. The booked appointment (id 1fce4177-7b86-4a79-a0a6-2fbd1fcae2d0) is corte + tinte (service_names: Tinte, Corte de Mujer), Friday 2026-07-10 15:20-16:40 (afternoon), stylist Marta (resolved from no_preference_stylist=true / 'any stylist'). This exactly matches the LAST stated intent, not the discarded corte-only, tinte-only, or Saturday intents.",
+    "hook_3_ambiguous_message_handling": "GOOD. On 'buff no sé, lo que sea' (turn 6, in response to a stylist-preference question), the bot did not stall or ask a vague follow-up — it resolved the ambiguity into a concrete decision (no_preference_stylist=true, 'la primera con disponibilidad') and moved the flow forward to the next required field (customer name). Same pattern later for the vague 'por la tarde' preference: the bot proposed 3 concrete time options (14:00, 15:20, 16:40) rather than guessing or looping.",
+    "hook_4_draft_mutation_evidence": "CORRECT. Every pivot (corte->tinte in turn 2, corte->corte+tinte in turn 3, viernes->sábado in turn 5, sábado->viernes in turn 7) is reflected as an update_booking tool call that overwrites the relevant single field in place (services, date_iso) rather than appending or creating a second draft/appointment. Only one book() call occurred at the very end (turn 11), producing exactly one appointment row (appt_count_delta: 1). No duplicate or orphan appointments were created.",
+    "hook_5_turn_count": "11 user turns to completion — within the ~14-turn budget, no flag needed."
+  }
+}

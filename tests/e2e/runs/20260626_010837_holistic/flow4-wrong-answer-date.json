@@ -1,0 +1,293 @@
+{
+  "scenario_id": "flow4-wrong-answer-date",
+  "conversation_id": "57ff3650-1c5d-4306-96a5-f9553b2e7c8b",
+  "persona": {
+    "name": "Carlos Vega",
+    "phone": "+34999000133",
+    "gender": "male",
+    "description": "Man who skips the audience question and jumps straight to giving a date"
+  },
+  "expected": {
+    "outcome": "booked",
+    "service": "Corte de Hombre (corte de caballero)",
+    "coherent_behavior": "When user gives a date instead of answering the audience question, the bot may acknowledge the date but MUST re-ask who the service is for before offering any slots or booking. It must NOT assume gender from a date input. Only after audience is resolved should it proceed."
+  },
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, quiero cortarme el pelo",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Para quién es: señora, caballero, niña, niño o bebé?",
+      "tool_calls_observed": [
+        {
+          "tool": "update_booking",
+          "key_args": {"services": ["corte"], "audience": null},
+          "result_summary": "ambiguous — next_step: audience_required"
+        }
+      ],
+      "coherence_note": "Correctly identified 'corte' as ambiguous and asked for audience. Expected.",
+      "bugs": []
+    },
+    {
+      "turn": 2,
+      "user_message": "el martes a las cinco",
+      "agent_response": "¿Es para señora, caballero, niña, niño o bebé?",
+      "tool_calls_observed": [
+        {
+          "tool": "update_booking",
+          "key_args": {"services": ["corte"], "audience": null, "date_iso": null},
+          "result_summary": "ambiguous — next_step: audience_required"
+        },
+        {
+          "tool": "update_booking",
+          "key_args": {"services": ["corte"], "audience": null, "date_iso": "2026-06-30"},
+          "result_summary": "ambiguous — next_step: audience_required (date stored but audience still missing)"
+        }
+      ],
+      "coherence_note": "CRITICAL CHECK PASSED: The bot correctly ignored the date as an answer to the audience question. It stored the date (2026-06-30, next Tuesday) in the booking context but re-asked the audience question. Did NOT assume gender. Did NOT offer premature slots. Fully coherent with expected behavior.",
+      "bugs": []
+    },
+    {
+      "turn": 3,
+      "user_message": "para mí, hombre",
+      "agent_response": "¿Te refieres a corte de hombre?",
+      "tool_calls_observed": [
+        {
+          "tool": "update_booking",
+          "key_args": {"services": ["corte"], "audience": null},
+          "result_summary": "ambiguous — audience_required"
+        },
+        {
+          "tool": "update_booking",
+          "key_args": {"services": ["corte"], "audience": "adult_male", "date_iso": "2026-06-30"},
+          "result_summary": "ambiguous — still audience_required even with audience=adult_male set"
+        }
+      ],
+      "coherence_note": "Bot correctly recognized adult_male audience but the update_booking tool keeps returning audience_required even when audience=adult_male is passed with services=['corte']. The bot compensates by asking a confirmation question. Functionally correct but reveals a tool limitation: generic 'corte' + audience=adult_male does not auto-resolve to 'Corte de Hombre'.",
+      "bugs": [
+        {
+          "type": "tool_ambiguity_not_resolved_by_audience",
+          "severity": "medium",
+          "description": "update_booking with services=['corte'] + audience='adult_male' still returns next_step='audience_required'. The tool should resolve 'corte' + adult_male to 'Corte de Hombre' directly, avoiding extra confirmation turns.",
+          "evidence": "Turn 3 third update_booking call: services=['corte'], audience='adult_male' → next_step: audience_required"
+        }
+      ]
+    },
+    {
+      "turn": 4,
+      "user_message": "sí, corte de hombre",
+      "agent_response": "¿Quieres corte de hombre, o prefieres otro tipo de corte?",
+      "tool_calls_observed": [
+        {
+          "tool": "update_booking",
+          "key_args": {"services": ["corte"], "audience": "adult_male", "date_iso": "2026-06-30"},
+          "result_summary": "ambiguous — still audience_required (4 attempts with generic 'corte')"
+        },
+        {
+          "tool": "update_booking",
+          "key_args": {"services": ["corte de hombre"], "audience": "adult_male"},
+          "result_summary": "partial — service_ids resolved, next_step: extras_loop_required"
+        }
+      ],
+      "coherence_note": "Redundant turn: user already confirmed 'sí, corte de hombre' but the bot asks again 'o prefieres otro tipo de corte'. The LLM resolved the service internally (last tool call succeeded) but still asked an unnecessary confirmation. Minor friction.",
+      "bugs": [
+        {
+          "type": "redundant_confirmation_turn",
+          "severity": "low",
+          "description": "After explicit 'sí, corte de hombre', bot still asked for confirmation instead of advancing. The tool chain required the fully qualified service name, but the phrasing of the bot response was unnecessarily unsure.",
+          "evidence": "Response: '¿Quieres corte de hombre, o prefieres otro tipo de corte?' after user said 'sí, corte de hombre'"
+        }
+      ]
+    },
+    {
+      "turn": 5,
+      "user_message": "corte de hombre",
+      "agent_response": "¿Quieres añadir algún otro servicio o solo el corte de hombre?",
+      "tool_calls_observed": [
+        {
+          "tool": "update_booking",
+          "key_args": {"services": ["corte de hombre"], "audience": "adult_male"},
+          "result_summary": "partial — service resolved, extras_loop_required"
+        },
+        {
+          "tool": "update_booking",
+          "key_args": {"services": ["corte de hombre"], "no_more_services": true, "extras_asked": true},
+          "result_summary": "partial — missing: stylist, next_step: stylist_required"
+        }
+      ],
+      "coherence_note": "Service finally locked in as 'Corte de Hombre' (UUID 39251edd-8ac0-efb3-9836-fa744baa08cc). Bot correctly advanced to extras loop. Coherent.",
+      "bugs": [
+        {
+          "type": "excessive_tool_calls_per_turn",
+          "severity": "low",
+          "description": "Each turn the LLM re-calls update_booking 4-6+ times, starting from bare state and progressively rebuilding. The audience+service resolution is not persisted efficiently across turns — the LLM must re-resolve 'corte' + audience=adult_male → failure → 'corte de hombre' → success on every single turn.",
+          "evidence": "Turns 3-11 all show 4-6+ update_booking calls starting from services=['corte'] with no audience"
+        }
+      ]
+    },
+    {
+      "turn": 6,
+      "user_message": "solo el corte",
+      "agent_response": "1. La primera con disponibilidad (mín. 3 días de antelación)\n2. Harolyn\n3. Marta\n4. Pilar\n5. Victor\n\n¿Cuál prefieres?",
+      "tool_calls_observed": [
+        {
+          "tool": "update_booking",
+          "key_args": {"no_more_services": true, "extras_asked": true},
+          "result_summary": "partial — missing: stylist, next_step: stylist_required"
+        }
+      ],
+      "coherence_note": "Correctly moved to stylist selection after confirming no extras. Coherent.",
+      "bugs": []
+    },
+    {
+      "turn": 7,
+      "user_message": "Victor",
+      "agent_response": "Con Víctor, las próximas opciones que tengo son:\n\n1. Martes 30 de junio a las 10:00\n2. Martes 30 de junio a las 10:40\n3. Martes 30 de junio a las 11:20\n\n¿Cuál te viene mejor?",
+      "tool_calls_observed": [
+        {
+          "tool": "update_booking",
+          "key_args": {"stylist_name": "Victor"},
+          "result_summary": "partial — stylist resolved, missing: date_iso, next_step: offer_slots"
+        },
+        {
+          "tool": "get_next_available_options",
+          "key_args": {
+            "service_ids": ["39251edd-8ac0-efb3-9836-fa744baa08cc"],
+            "stylist_id": "dd309c98-0253-485d-a255-f6729ce72c6b",
+            "audience": "adult_male",
+            "requested_date_iso": "2026-06-26"
+          },
+          "result_summary": "ok — 3 slots on 2026-06-30, service_label: 'corte de caballero'"
+        }
+      ],
+      "coherence_note": "Bot correctly offered slots on martes 30 de junio (the date the user requested in Turn 2). The 5pm slot was not available so morning slots shown — bot did not note the discrepancy. Minor UX gap but not a coherence failure. Service label 'corte de caballero' confirms correct gendered service.",
+      "bugs": [
+        {
+          "type": "requested_time_not_acknowledged",
+          "severity": "low",
+          "description": "User originally said 'el martes a las cinco' (5pm) but Victor has no 5pm availability. The bot offered morning slots without noting that 5pm wasn't available. Transparency gap.",
+          "evidence": "Slots offered: 10:00, 10:40, 11:20 — user had requested 17:00"
+        }
+      ]
+    },
+    {
+      "turn": 8,
+      "user_message": "la primera",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "tool_calls_observed": [
+        {
+          "tool": "update_booking",
+          "key_args": {"slot_iso": "2026-06-30T10:00:00+02:00", "date_iso": "2026-06-30"},
+          "result_summary": "partial — next_step: policy_acceptance_required"
+        }
+      ],
+      "coherence_note": "Slot 2026-06-30T10:00:00 selected and policy gate triggered. Correct flow.",
+      "bugs": []
+    },
+    {
+      "turn": 9,
+      "user_message": "sí, acepto",
+      "agent_response": "Perfecto. ¿Me das tu nombre y primer apellido?",
+      "tool_calls_observed": [
+        {
+          "tool": "update_booking",
+          "key_args": {"policy_accepted": true},
+          "result_summary": "partial — policy accepted, missing: customer_full_name, next_step: name_required"
+        }
+      ],
+      "coherence_note": "Policy accepted, correctly asked for name. Coherent.",
+      "bugs": []
+    },
+    {
+      "turn": 10,
+      "user_message": "Carlos Vega",
+      "agent_response": "¿Quieres añadir alguna nota para Víctor?",
+      "tool_calls_observed": [
+        {
+          "tool": "update_booking",
+          "key_args": {"customer_full_name": "Carlos Vega"},
+          "result_summary": "partial — name set, next_step: notes_optional"
+        }
+      ],
+      "coherence_note": "Name collected, notes question asked. Correct.",
+      "bugs": []
+    },
+    {
+      "turn": 11,
+      "user_message": "no, sin notas",
+      "agent_response": "¡Listo, Carlos! Te he dejado el martes 30 de junio a las 10:00 con Víctor para corte de hombre.\n\nSi quieres, también te paso el enlace del calendario: https://calendar.google.com/calendar/render?action=TEMPLATE&text=Corte%20de%20Hombre%20en%20Atr%C3%A9vete&dates=20260630T080000Z/20260630T084000Z&details=Turno%20con%20Victor&location=Atr%C3%A9vete%20Sal%C3%B3n%20de%20Belleza",
+      "tool_calls_observed": [
+        {
+          "tool": "update_booking",
+          "key_args": {"notes_asked": true},
+          "result_summary": "partial — next_step: pre_book_validation_required"
+        },
+        {
+          "tool": "check_availability",
+          "key_args": {
+            "service_ids": ["39251edd-8ac0-efb3-9836-fa744baa08cc"],
+            "stylist_id": "dd309c98-0253-485d-a255-f6729ce72c6b",
+            "date_iso": "2026-06-30",
+            "slot_time": "10:00"
+          },
+          "result_summary": "ok — exact_match: true, slot confirmed available"
+        },
+        {
+          "tool": "book",
+          "key_args": {
+            "service_ids": ["39251edd-8ac0-efb3-9836-fa744baa08cc"],
+            "stylist_id": "dd309c98-0253-485d-a255-f6729ce72c6b",
+            "start_iso": "2026-06-30T10:00:00+02:00",
+            "customer_full_name": "Carlos Vega",
+            "confirmed": true,
+            "policy_accepted": true
+          },
+          "result_summary": "ok — appointment_id: 87f4c444-c60c-4e2c-aaa4-70d21e99b3a6, calendar_link provided"
+        }
+      ],
+      "coherence_note": "Booking confirmed for Corte de Hombre with Victor on 2026-06-30 10:00. Service is correctly gendered (corte de hombre / corte de caballero). Full flow completed successfully.",
+      "bugs": []
+    }
+  ],
+  "outcome": "booked",
+  "booked_service": "Corte de Hombre",
+  "booked_slot": "2026-06-30T10:00:00+02:00",
+  "booked_stylist": "Victor",
+  "appointment_id": "87f4c444-c60c-4e2c-aaa4-70d21e99b3a6",
+  "coherent_with_expectation": {
+    "verdict": "PASS",
+    "reasons": [
+      "CRITICAL: When user gave a date ('el martes a las cinco') instead of answering the audience question, the bot did NOT skip the audience gate. It stored the date but immediately re-asked '¿Es para señora, caballero, niña, niño o bebé?' — exactly as expected.",
+      "CRITICAL: The bot did NOT assume any gender from the date input. It kept candidates open (señora, caballero, niña, niño, bebé) until explicit confirmation.",
+      "CRITICAL: No premature availability was offered before audience was resolved.",
+      "The final booking used the correct male-gendered service: 'Corte de Hombre' (service_label: 'corte de caballero') — not a female or generic service.",
+      "All required slots were collected in correct order: audience → service disambiguation → extras → stylist → slot → policy → name → notes → book."
+    ]
+  },
+  "bugs_summary": [
+    {
+      "type": "tool_ambiguity_not_resolved_by_audience",
+      "severity": "medium",
+      "description": "update_booking with services=['corte'] + audience='adult_male' still returns next_step='audience_required'. The tool does not collapse the ambiguity when both params are present. The LLM must use the fully qualified service name 'corte de hombre' each time to get a resolved result.",
+      "impact": "Causes 1-2 extra redundant confirmation turns and excessive tool call overhead on every turn."
+    },
+    {
+      "type": "excessive_tool_calls_per_turn",
+      "severity": "low",
+      "description": "On every turn (3-11), the LLM re-calls update_booking 4-6 times starting from bare state (services=['corte'], no audience), failing 4 times, then succeeding with the fully qualified service name. The resolved booking state is not efficiently carried forward as pre_resolved_service_ids in the LLM's reasoning.",
+      "impact": "Cost and latency overhead (~4 extra tool calls per turn × 9 turns = ~36 redundant calls). No correctness impact."
+    },
+    {
+      "type": "redundant_confirmation_turn",
+      "severity": "low",
+      "description": "After user said 'sí, corte de hombre' (Turn 4), the bot still asked '¿Quieres corte de hombre, o prefieres otro tipo de corte?' requiring one extra user turn to say 'corte de hombre' again.",
+      "impact": "Minor UX friction — one extra round-trip turn to complete disambiguation."
+    },
+    {
+      "type": "requested_time_not_acknowledged",
+      "severity": "low",
+      "description": "User originally requested 'las cinco' (5pm) but no 5pm slots were available with Victor. The bot offered morning slots without acknowledging the original time preference or the unavailability at 5pm.",
+      "impact": "Minor transparency gap. User selected an available slot without complaint."
+    }
+  ],
+  "notes": "The audience gate is robust against date injection. The bot's tool-calling pattern has a known inefficiency: it cannot resolve 'corte' + audience='adult_male' to a specific service without the LLM using the fully-qualified service name. This causes excessive re-resolution on every turn but does not affect correctness. The primary scenario check (date does not skip audience gate, no gender assumption from date) PASSED with flying colors."
+}

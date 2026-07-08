@@ -1,0 +1,96 @@
+{
+  "scenario_id": "change-a-min-days-from-settings",
+  "conversation_id": "3aa113df-c7d4-49a0-aed0-c4f7c1d08981",
+  "phone": "+34999000005",
+  "persona_name": "Isabel Lopez",
+  "max_turns": 6,
+  "expected": {"outcome": "rejected", "db_appointment": null, "tool_calls_required": [], "tool_calls_forbidden": ["book"]},
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, podeis darme cita para hoy? Necesito urgente un tinte.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Es para ti o para otra persona?",
+      "timed_out": false,
+      "response_latency_ms": 15852,
+      "tool_evidence": [
+        {"tool_name": "update_booking", "result_status": "success", "next_step": "audience_required"},
+        {"tool_name": "get_next_available_options", "result_status": "success", "next_step": "audience_required"}
+      ]
+    },
+    {
+      "turn": 2,
+      "user_message": "Para mi",
+      "agent_response": "¿Es para mujer o para hombre?",
+      "timed_out": false,
+      "response_latency_ms": 12004,
+      "tool_evidence": [
+        {"tool_name": "update_booking", "result_status": "success", "next_step": "audience_required"},
+        {"tool_name": "get_next_available_options", "result_status": "success", "next_step": "audience_required"}
+      ]
+    },
+    {
+      "turn": 3,
+      "user_message": "Para mujer",
+      "agent_response": "Entonces te anoto tinte, ¿quieres añadir algún otro servicio o solo ese?",
+      "timed_out": false,
+      "response_latency_ms": 12464,
+      "tool_evidence": [
+        {"tool_name": "update_booking", "result_status": "success", "next_step": "audience_required"},
+        {"tool_name": "update_booking", "result_status": "success", "next_step": "extras_loop_required"}
+      ]
+    },
+    {
+      "turn": 4,
+      "user_message": "Solo ese, para hoy si puede ser",
+      "agent_response": "Lo siento, para ese servicio no llegamos con la antelación mínima de 3 días. La primera fecha válida es el domingo 5 de julio.\n\nSi quieres, te miro huecos para ese día.",
+      "timed_out": false,
+      "response_latency_ms": 12161,
+      "tool_evidence": [
+        {"tool_name": "update_booking", "result_status": "success", "next_step": "audience_required"},
+        {"tool_name": "get_next_available_options", "result_status": "success", "next_step": "audience_required"},
+        {"tool_name": "update_booking", "result_status": "success", "next_step": "extras_loop_required"},
+        {"tool_name": "update_booking", "result_status": "success", "next_step": "advance_policy_violated", "payload": {"rejected_date": "2026-07-02", "first_valid_date": "2026-07-05", "policy_min_days": 3}}
+      ]
+    },
+    {
+      "turn": 5,
+      "user_message": "Es que lo necesito hoy, no podeis hacer una excepcion?",
+      "agent_response": "No puedo hacer excepciones por aquí. Si te parece, puedo pedir que te atienda una persona del equipo para revisar el caso contigo.",
+      "timed_out": false,
+      "response_latency_ms": 12518,
+      "tool_evidence": [
+        {"tool_name": "update_booking", "result_status": "success", "next_step": "audience_required"},
+        {"tool_name": "get_next_available_options", "result_status": "success", "next_step": "audience_required"},
+        {"tool_name": "update_booking", "result_status": "success", "next_step": "extras_loop_required"},
+        {"tool_name": "update_booking", "result_status": "success", "next_step": "advance_policy_violated", "payload": {"rejected_date": "2026-07-02", "first_valid_date": "2026-07-05", "policy_min_days": 3}}
+      ]
+    },
+    {
+      "turn": 6,
+      "user_message": "Entendido, gracias",
+      "agent_response": "De nada. Si quieres, cuando te venga bien te ayudo a ver otra fecha.",
+      "timed_out": false,
+      "response_latency_ms": 8714,
+      "tool_evidence": [
+        {"tool_name": "update_booking", "result_status": "success", "next_step": "audience_required"},
+        {"tool_name": "get_next_available_options", "result_status": "success", "next_step": "audience_required"},
+        {"tool_name": "update_booking", "result_status": "success", "next_step": "extras_loop_required"},
+        {"tool_name": "update_booking", "result_status": "success", "next_step": "advance_policy_violated", "payload": {"rejected_date": "2026-07-02", "first_valid_date": "2026-07-05", "policy_min_days": 3}}
+      ]
+    }
+  ],
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "3aa113df-c7d4-49a0-aed0-c4f7c1d08981",
+    "customer_phone": "+34999000005",
+    "customer_id": null,
+    "customer_name": null,
+    "messages_count": 21,
+    "latest_tool_call_name": "update_booking",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": false
+  },
+  "outcome_observed": "rejected",
+  "runner_notes": "Bot correctly rejected same-day booking citing policy_min_days=3, offering first_valid_date=2026-07-05. On first insistence bot held the line and offered human escalation. `book` was never called; latest_tool_call_name=update_booking confirms no booking attempted. Goal fully reached."
+}

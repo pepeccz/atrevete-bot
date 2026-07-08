@@ -1,0 +1,47 @@
+{
+  "scenario_id": "change-b-rules-pruned",
+  "conversation_id": "8784aa98-0f2c-45f1-a764-31a080eaf2d4",
+  "phone": "+34999000009",
+  "persona_name": "Julia Moreno",
+  "expected_outcome": "escalated",
+  "outcome": "escalated",
+  "max_turns": 4,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "¿Como funciona el sistema de reservas? ¿Puedo cambiar mi cita despues?",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nSí, puedes cambiar tu cita después, siempre que haya hueco disponible.\n\nFunciona así, muy rápido:\n1. Me dices el servicio que quieres.\n2. Si hace falta, te pregunto una aclaración.\n3. Te enseño huecos disponibles.\n4. Eliges uno.\n5. Me das tu nombre y apellido.\n6. Confirmas la cita y la dejo reservada.\n\nPara cambiar una cita ya hecha, también puedo gestionarlo por aquí. Si quieres, te miro tus citas próximas.",
+      "response_latency_ms": 9328,
+      "timed_out": false,
+      "tool_evidence": []
+    },
+    {
+      "turn": 2,
+      "user_message": "Y si quiero cancelar una cita, ¿como lo hago? ¿Hay algun plazo que deba respetar?",
+      "agent_response": "Puedo ayudarte a cancelar una cita por aquí. Si quieres, también puedo revisar tus próximas citas y lo gestionamos en un momento.\n\nSobre el plazo: en Atrévete pedimos avisar con al menos 24 horas de antelación para cambiar o cancelar; fuera de ese plazo se aplica un cargo del 50% del servicio en la próxima visita.\n\nSi quieres, te miro tus citas ahora.",
+      "response_latency_ms": 13710,
+      "timed_out": false,
+      "tool_evidence": []
+    },
+    {
+      "turn": 3,
+      "user_message": "No entiendo muy bien, ¿hay alguna regla especial sobre el numero de veces que puedo cambiar mis citas? Me siento un poco perdida con todo esto.",
+      "agent_response": "No hay una regla especial de \"número de cambios\" que te tenga que preocupar aquí. Lo importante es:\n- que haya hueco disponible,\n- que respetes las 24 horas de antelación para cambiar o cancelar,\n- y que, si necesitas ayuda, yo te lo gestiono por aquí.\n\nSi quieres, puedo revisar tus citas próximas y te digo cuál se puede cambiar o cancelar.",
+      "response_latency_ms": 11643,
+      "timed_out": false,
+      "tool_evidence": []
+    },
+    {
+      "turn": 4,
+      "user_message": "Muchas gracias. Una ultima duda: ¿puedo hablar con alguien del salon directamente si tengo mas preguntas?",
+      "agent_response": "Con mucho gusto te paso con alguien del equipo del salón. Te atenderán en el próximo horario disponible. 🙏",
+      "response_latency_ms": 15669,
+      "timed_out": false,
+      "tool_evidence": []
+    }
+  ],
+  "tool_calls_observed": [],
+  "final_state": {"has_checkpoint": false},
+  "coherence_notes": "The bot answered both info questions clearly and correctly: booking flow explained in numbered steps, cancellation policy (24h notice, 50% charge) stated accurately, and no 'number of changes' limit invented. No rule codes (R2, R3, R9, R15, R33 or any other internal codes) were leaked at any point in the conversation — all four replies used natural customer-facing language only. The bot consistently invited the user to check her upcoming appointments but did not push into an unwanted booking flow. On turn 4, when the user explicitly asked to speak with a human, the bot escalated cleanly and promptly without friction, matching the expected outcome. Coherence across turns was solid and contextually appropriate; no voseo, no hallucinated stylists, no repetition issues.",
+  "claim_vs_backend": "On turn 4 the bot stated: 'Con mucho gusto te paso con alguien del equipo del salón. Te atenderán en el próximo horario disponible.' — this is an escalation handoff claim; no booking, cancellation, or rescheduling was performed."
+}

@@ -1,0 +1,478 @@
+{
+  "scenario_id": "verify-uuid-reroute",
+  "conversation_id": "22223333-4444-5555-6666-000000000057",
+  "phone": "+34999000057",
+  "persona_name": "Sofia Ruiz",
+  "expected_outcome": "booked",
+  "outcome": "booked",
+  "max_turns": 12,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, quiero pedir cita para un corte de mujer para el martes que viene",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nPara seguir con la reserva, ¿me dices tu nombre y primer apellido?",
+      "response_latency_ms": 14323,
+      "timed_out": false,
+      "tool_evidence": [
+        {
+          "tool_name": "update_booking",
+          "arguments": {
+            "services": ["corte de mujer"],
+            "stylist_name": null,
+            "no_preference_stylist": true,
+            "date_iso": null,
+            "date_text": "el martes que viene",
+            "audience": "adult_female",
+            "customer_full_name": null,
+            "notes": null,
+            "no_more_services": true,
+            "extras_asked": true,
+            "notes_asked": false,
+            "customer_known": false,
+            "slot_iso": null,
+            "variant_resolved": false,
+            "pre_resolved_service_ids": null,
+            "policy_accepted": false,
+            "policy_rejection_count": 0
+          },
+          "result": {
+            "result_summary": "{\"status\":\"partial\",\"collected\":{\"services\":[\"corte de mujer\"],\"service_ids\":[\"cb7ae91c-97ff-e1d1-3b0b-696b11467add\"],\"extras_asked\":true,\"no_more_services\":true,\"no_preference_stylist\":true,\"date_iso\":\"2026-06-30\"},\"missing\":[\"customer_full_name\"],\"next_step\":\"name_required\",\"payload\":{},\"errors\":[]}",
+            "status": "success"
+          },
+          "source": "checkpoint",
+          "timestamp": "2026-06-18T09:35:45.445215+00:00"
+        }
+      ]
+    },
+    {
+      "turn": 2,
+      "user_message": "Soy Sofia Ruiz",
+      "agent_response": "Perfecto, Sofía. ¿Alguna nota para tu cita?",
+      "response_latency_ms": 13305,
+      "timed_out": false,
+      "tool_evidence": [
+        {
+          "tool_name": "update_booking",
+          "arguments": {
+            "services": ["corte de mujer"],
+            "stylist_name": null,
+            "no_preference_stylist": true,
+            "date_iso": null,
+            "date_text": "el martes que viene",
+            "audience": "adult_female",
+            "customer_full_name": null,
+            "notes": null,
+            "no_more_services": true,
+            "extras_asked": true,
+            "notes_asked": false,
+            "customer_known": false,
+            "slot_iso": null,
+            "variant_resolved": false,
+            "pre_resolved_service_ids": null,
+            "policy_accepted": false,
+            "policy_rejection_count": 0
+          },
+          "result": {
+            "result_summary": "{\"status\":\"partial\",\"collected\":{\"services\":[\"corte de mujer\"],\"service_ids\":[\"cb7ae91c-97ff-e1d1-3b0b-696b11467add\"],\"extras_asked\":true,\"no_more_services\":true,\"no_preference_stylist\":true,\"date_iso\":\"2026-06-30\"},\"missing\":[\"customer_full_name\"],\"next_step\":\"name_required\",\"payload\":{},\"errors\":[]}",
+            "status": "success"
+          },
+          "source": "checkpoint",
+          "timestamp": "2026-06-18T09:36:05.515330+00:00"
+        },
+        {
+          "tool_name": "update_booking",
+          "arguments": {
+            "services": ["corte de mujer"],
+            "stylist_name": null,
+            "no_preference_stylist": true,
+            "date_iso": "2026-06-30",
+            "date_text": null,
+            "audience": "adult_female",
+            "customer_full_name": "Sofia Ruiz",
+            "notes": null,
+            "no_more_services": true,
+            "extras_asked": true,
+            "notes_asked": false,
+            "customer_known": false,
+            "slot_iso": null,
+            "variant_resolved": false,
+            "pre_resolved_service_ids": ["cb7ae91c-97ff-e1d1-3b0b-696b11467add"],
+            "policy_accepted": false,
+            "policy_rejection_count": 0
+          },
+          "result": {
+            "result_summary": "{\"status\":\"partial\",\"collected\":{\"services\":[\"corte de mujer\"],\"service_ids\":[\"cb7ae91c-97ff-e1d1-3b0b-696b11467add\"],\"extras_asked\":true,\"no_more_services\":true,\"no_preference_stylist\":true,\"date_iso\":\"2026-06-30\",\"customer_full_name\":\"Sofia Ruiz\",\"notes_asked\":true},\"missing\":[],\"next_step\":\"notes_optional\",\"payload\":{},\"errors\":[]}",
+            "status": "success"
+          },
+          "source": "checkpoint",
+          "timestamp": "2026-06-18T09:36:05.515330+00:00"
+        }
+      ]
+    },
+    {
+      "turn": 3,
+      "user_message": "No, ninguna nota",
+      "agent_response": "Me falta cerrar el hueco exacto antes de confirmártelo.\n\n¿A qué hora te viene mejor el martes que viene?",
+      "response_latency_ms": 12041,
+      "timed_out": false,
+      "tool_evidence": [
+        {
+          "tool_name": "update_booking",
+          "arguments": {
+            "services": ["corte de mujer"],
+            "stylist_name": null,
+            "no_preference_stylist": true,
+            "date_iso": null,
+            "date_text": "el martes que viene",
+            "audience": "adult_female",
+            "customer_full_name": null,
+            "notes": null,
+            "no_more_services": true,
+            "extras_asked": true,
+            "notes_asked": false,
+            "customer_known": false,
+            "slot_iso": null,
+            "variant_resolved": false,
+            "pre_resolved_service_ids": null,
+            "policy_accepted": false,
+            "policy_rejection_count": 0
+          },
+          "result": {
+            "result_summary": "{\"status\":\"partial\",\"collected\":{\"services\":[\"corte de mujer\"],\"service_ids\":[\"cb7ae91c-97ff-e1d1-3b0b-696b11467add\"],\"extras_asked\":true,\"no_more_services\":true,\"no_preference_stylist\":true,\"date_iso\":\"2026-06-30\"},\"missing\":[\"customer_full_name\"],\"next_step\":\"name_required\",\"payload\":{},\"errors\":[]}",
+            "status": "success"
+          },
+          "source": "checkpoint",
+          "timestamp": "2026-06-18T09:36:23.387330+00:00"
+        },
+        {
+          "tool_name": "update_booking",
+          "arguments": {
+            "services": ["corte de mujer"],
+            "stylist_name": null,
+            "no_preference_stylist": true,
+            "date_iso": "2026-06-30",
+            "date_text": null,
+            "audience": "adult_female",
+            "customer_full_name": "Sofia Ruiz",
+            "notes": null,
+            "no_more_services": true,
+            "extras_asked": true,
+            "notes_asked": false,
+            "customer_known": false,
+            "slot_iso": null,
+            "variant_resolved": false,
+            "pre_resolved_service_ids": ["cb7ae91c-97ff-e1d1-3b0b-696b11467add"],
+            "policy_accepted": false,
+            "policy_rejection_count": 0
+          },
+          "result": {
+            "result_summary": "{\"status\":\"partial\",\"collected\":{\"services\":[\"corte de mujer\"],\"service_ids\":[\"cb7ae91c-97ff-e1d1-3b0b-696b11467add\"],\"extras_asked\":true,\"no_more_services\":true,\"no_preference_stylist\":true,\"date_iso\":\"2026-06-30\",\"customer_full_name\":\"Sofia Ruiz\",\"notes_asked\":true},\"missing\":[],\"next_step\":\"notes_optional\",\"payload\":{},\"errors\":[]}",
+            "status": "success"
+          },
+          "source": "checkpoint",
+          "timestamp": "2026-06-18T09:36:23.387330+00:00"
+        },
+        {
+          "tool_name": "update_booking",
+          "arguments": {
+            "services": ["corte de mujer"],
+            "stylist_name": null,
+            "no_preference_stylist": true,
+            "date_iso": "2026-06-30",
+            "date_text": null,
+            "audience": "adult_female",
+            "customer_full_name": "Sofia Ruiz",
+            "notes": null,
+            "no_more_services": true,
+            "extras_asked": true,
+            "notes_asked": true,
+            "customer_known": false,
+            "slot_iso": null,
+            "variant_resolved": false,
+            "pre_resolved_service_ids": ["cb7ae91c-97ff-e1d1-3b0b-696b11467add"],
+            "policy_accepted": false,
+            "policy_rejection_count": 0
+          },
+          "result": {
+            "result_summary": "{\"status\":\"partial\",\"collected\":{\"services\":[\"corte de mujer\"],\"service_ids\":[\"cb7ae91c-97ff-e1d1-3b0b-696b11467add\"],\"extras_asked\":true,\"no_more_services\":true,\"no_preference_stylist\":true,\"date_iso\":\"2026-06-30\",\"customer_full_name\":\"Sofia Ruiz\",\"notes_asked\":true},\"missing\":[],\"next_step\":\"pre_book_validation_required\",\"payload\":{\"hint\":\"Llama a check_availability con slot_time exacto antes de book(). No se ha proporcionado slot_iso.\"},\"errors\":[]}",
+            "status": "success"
+          },
+          "source": "checkpoint",
+          "timestamp": "2026-06-18T09:36:23.387330+00:00"
+        }
+      ]
+    },
+    {
+      "turn": 4,
+      "user_message": "A las 11 de la mañana si puede ser",
+      "agent_response": "A las 11:00 ya no está libre.\n\nTe dejo tres alternativas para el martes 30 de junio:\n1. 10:00 con Marta\n2. 10:00 con Victor\n3. 10:00 con Harolyn\n\n¿Cuál prefieres?",
+      "response_latency_ms": 11646,
+      "timed_out": false,
+      "tool_evidence": [
+        {
+          "tool_name": "update_booking",
+          "arguments": {
+            "services": ["corte de mujer"],
+            "stylist_name": null,
+            "no_preference_stylist": true,
+            "date_iso": null,
+            "date_text": "el martes que viene",
+            "audience": "adult_female",
+            "customer_full_name": null,
+            "notes": null,
+            "no_more_services": true,
+            "extras_asked": true,
+            "notes_asked": false,
+            "customer_known": false,
+            "slot_iso": null,
+            "variant_resolved": false,
+            "pre_resolved_service_ids": null,
+            "policy_accepted": false,
+            "policy_rejection_count": 0
+          },
+          "result": {
+            "result_summary": "{\"status\":\"partial\",\"collected\":{\"services\":[\"corte de mujer\"],\"service_ids\":[\"cb7ae91c-97ff-e1d1-3b0b-696b11467add\"],\"extras_asked\":true,\"no_more_services\":true,\"no_preference_stylist\":true,\"date_iso\":\"2026-06-30\"},\"missing\":[\"customer_full_name\"],\"next_step\":\"name_required\",\"payload\":{},\"errors\":[]}",
+            "status": "success"
+          },
+          "source": "checkpoint",
+          "timestamp": "2026-06-18T09:36:40.092343+00:00"
+        },
+        {
+          "tool_name": "update_booking",
+          "arguments": {
+            "services": ["corte de mujer"],
+            "stylist_name": null,
+            "no_preference_stylist": true,
+            "date_iso": "2026-06-30",
+            "date_text": null,
+            "audience": "adult_female",
+            "customer_full_name": "Sofia Ruiz",
+            "notes": null,
+            "no_more_services": true,
+            "extras_asked": true,
+            "notes_asked": false,
+            "customer_known": false,
+            "slot_iso": null,
+            "variant_resolved": false,
+            "pre_resolved_service_ids": ["cb7ae91c-97ff-e1d1-3b0b-696b11467add"],
+            "policy_accepted": false,
+            "policy_rejection_count": 0
+          },
+          "result": {
+            "result_summary": "{\"status\":\"partial\",\"collected\":{\"services\":[\"corte de mujer\"],\"service_ids\":[\"cb7ae91c-97ff-e1d1-3b0b-696b11467add\"],\"extras_asked\":true,\"no_more_services\":true,\"no_preference_stylist\":true,\"date_iso\":\"2026-06-30\",\"customer_full_name\":\"Sofia Ruiz\",\"notes_asked\":true},\"missing\":[],\"next_step\":\"notes_optional\",\"payload\":{},\"errors\":[]}",
+            "status": "success"
+          },
+          "source": "checkpoint",
+          "timestamp": "2026-06-18T09:36:40.092343+00:00"
+        },
+        {
+          "tool_name": "update_booking",
+          "arguments": {
+            "services": ["corte de mujer"],
+            "stylist_name": null,
+            "no_preference_stylist": true,
+            "date_iso": "2026-06-30",
+            "date_text": null,
+            "audience": "adult_female",
+            "customer_full_name": "Sofia Ruiz",
+            "notes": null,
+            "no_more_services": true,
+            "extras_asked": true,
+            "notes_asked": true,
+            "customer_known": false,
+            "slot_iso": null,
+            "variant_resolved": false,
+            "pre_resolved_service_ids": ["cb7ae91c-97ff-e1d1-3b0b-696b11467add"],
+            "policy_accepted": false,
+            "policy_rejection_count": 0
+          },
+          "result": {
+            "result_summary": "{\"status\":\"partial\",\"collected\":{\"services\":[\"corte de mujer\"],\"service_ids\":[\"cb7ae91c-97ff-e1d1-3b0b-696b11467add\"],\"extras_asked\":true,\"no_more_services\":true,\"no_preference_stylist\":true,\"date_iso\":\"2026-06-30\",\"customer_full_name\":\"Sofia Ruiz\",\"notes_asked\":true},\"missing\":[],\"next_step\":\"pre_book_validation_required\",\"payload\":{\"hint\":\"Llama a check_availability con slot_time exacto antes de book(). No se ha proporcionado slot_iso.\"},\"errors\":[]}",
+            "status": "success"
+          },
+          "source": "checkpoint",
+          "timestamp": "2026-06-18T09:36:40.092343+00:00"
+        },
+        {
+          "tool_name": "check_availability",
+          "arguments": {
+            "service_ids": ["cb7ae91c-97ff-e1d1-3b0b-696b11467add"],
+            "stylist_id": null,
+            "date_iso": "2026-06-30",
+            "audience": "adult_female",
+            "no_preference": true,
+            "slot_time": "11:00",
+            "preferred_window": null
+          },
+          "result": {
+            "result_summary": "{\"status\":\"rejected\",\"collected\":{},\"missing\":[],\"next_step\":\"slot_no_longer_available\",\"payload\":{\"requested_slot_time\":\"11:00\",\"alternatives\":[{\"start_iso\":\"2026-06-30T10:00:00+02:00\",\"stylist_name\":\"Marta\"},{\"start_iso\":\"2026-06-30T10:00:00+02:00\",\"stylist_name\":\"Victor\"},{\"start_iso\":\"2026-06-30T10:00:00+02:00\",\"stylist_name\":\"Harolyn\"}]}}",
+            "status": "success"
+          },
+          "source": "checkpoint",
+          "timestamp": "2026-06-18T09:36:40.092343+00:00"
+        }
+      ]
+    },
+    {
+      "turn": 5,
+      "user_message": "La primera, con Marta a las 10",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "response_latency_ms": 24720,
+      "timed_out": false,
+      "tool_evidence": [
+        {
+          "tool_name": "update_booking",
+          "arguments": {
+            "services": ["corte de mujer"],
+            "stylist_name": "Marta",
+            "no_preference_stylist": false,
+            "date_iso": "2026-06-30",
+            "date_text": null,
+            "audience": "adult_female",
+            "customer_full_name": "Sofia Ruiz",
+            "notes": null,
+            "no_more_services": true,
+            "extras_asked": true,
+            "notes_asked": true,
+            "customer_known": false,
+            "slot_iso": "2026-06-30T10:00:00+02:00",
+            "variant_resolved": false,
+            "pre_resolved_service_ids": ["cb7ae91c-97ff-e1d1-3b0b-696b11467add"],
+            "policy_accepted": false,
+            "policy_rejection_count": 0
+          },
+          "result": {
+            "result_summary": "{\"status\":\"partial\",\"next_step\":\"policy_acceptance_required\",\"payload\":{\"policy_url\":\"https://atrevetepeluqueria.com/politica-privacidad/\",\"policy_version\":\"1.0\",\"policy_rejection_count\":0}}",
+            "status": "success"
+          },
+          "source": "checkpoint",
+          "timestamp": "2026-06-18T09:37:09.812873+00:00"
+        },
+        {
+          "tool_name": "check_availability",
+          "arguments": {
+            "service_ids": ["cb7ae91c-97ff-e1d1-3b0b-696b11467add"],
+            "stylist_id": null,
+            "date_iso": "2026-06-30",
+            "audience": "adult_female",
+            "no_preference": true,
+            "slot_time": "11:00",
+            "preferred_window": null
+          },
+          "result": {
+            "result_summary": "{\"status\":\"rejected\"}",
+            "status": "success"
+          },
+          "source": "checkpoint",
+          "timestamp": "2026-06-18T09:37:09.812873+00:00"
+        }
+      ]
+    },
+    {
+      "turn": 6,
+      "user_message": "si, la acepto",
+      "agent_response": "¡Listo, Sofía! Tu cita ha quedado confirmada para el martes 30 de junio a las 10:00 con Marta para corte de mujer.\n\nPuedes añadirla al calendario aquí:\nhttps://calendar.google.com/calendar/render?action=TEMPLATE&text=Corte%20de%20Mujer%20en%20Atr%C3%A9vete&dates=20260630T080000Z/20260630T084000Z&details=Turno%20con%20Marta&location=Atr%C3%A9vete%20Sal%C3%B3n%20de%20Belleza",
+      "response_latency_ms": 23243,
+      "timed_out": false,
+      "tool_evidence": [
+        {
+          "tool_name": "update_booking",
+          "arguments": {
+            "services": ["corte de mujer"],
+            "stylist_name": "Marta",
+            "no_preference_stylist": false,
+            "date_iso": "2026-06-30",
+            "customer_full_name": "Sofia Ruiz",
+            "notes": null,
+            "no_more_services": true,
+            "extras_asked": true,
+            "notes_asked": true,
+            "customer_known": false,
+            "slot_iso": "2026-06-30T10:00:00+02:00",
+            "variant_resolved": false,
+            "pre_resolved_service_ids": ["cb7ae91c-97ff-e1d1-3b0b-696b11467add"],
+            "policy_accepted": true,
+            "policy_rejection_count": 0
+          },
+          "result": {
+            "result_summary": "{\"status\":\"partial\",\"next_step\":\"reoffer_slots\",\"errors\":[\"No hay huecos ofrecidos actualmente. Llama a check_availability o...\"]}",
+            "status": "success"
+          },
+          "source": "checkpoint",
+          "timestamp": "2026-06-18T09:37:39.545328+00:00"
+        },
+        {
+          "tool_name": "check_availability",
+          "arguments": {
+            "service_ids": ["cb7ae91c-97ff-e1d1-3b0b-696b11467add"],
+            "stylist_id": "5f1745ba-d2b1-4d87-8d47-79821a99ae93",
+            "date_iso": "2026-06-30",
+            "audience": "adult_female",
+            "no_preference": false,
+            "slot_time": "10:00",
+            "preferred_window": null
+          },
+          "result": {
+            "result_summary": "{\"status\":\"ok\",\"payload\":{\"slots\":[{\"start_iso\":\"2026-06-30T10:00:00+02:00\",\"stylist_name\":\"Marta\"}],\"exact_match\":true}}",
+            "status": "success"
+          },
+          "source": "checkpoint",
+          "timestamp": "2026-06-18T09:37:39.545328+00:00"
+        },
+        {
+          "tool_name": "book",
+          "arguments": {
+            "service_ids": ["cb7ae91c-97ff-e1d1-3b0b-696b11467add"],
+            "stylist_id": "5f1745ba-d2b1-4d87-8d47-79821a99ae93",
+            "start_iso": "2026-06-30T10:00:00+02:00",
+            "customer_full_name": "Sofia Ruiz",
+            "confirmed": true,
+            "pre_book_validated": true,
+            "notes": null,
+            "policy_accepted": true
+          },
+          "result": {
+            "result_summary": "{\"status\":\"ok\",\"payload\":{\"appointment_id\":\"55dbdefc-a571-4a7f-88d9-d7aa9f1c0b36\",\"customer_id\":\"ca128cd8-0573-4c9a-9ccc-7e8784982526\",\"start_iso\":\"2026-06-30T10:00:00+02:00\",\"end_iso\":\"2026-06-30T10:40:00+02:00\",\"stylist_id\":\"5f1745ba-d2b1-4d87-8d47-79821a99ae93\",\"calendar_link\":\"https://calendar.google.com/calendar/render?action=TEMPLATE&text=Corte%20de%20Mujer%20en%20Atr%C3%A9vete&dates=20260630T080000Z/20260630T084000Z&details=Turno%20con%20Marta&location=Atr%C3%A9vete%20Sal%C3%B3n%20de%20Belleza\"}}",
+            "status": "success"
+          },
+          "source": "checkpoint",
+          "timestamp": "2026-06-18T09:37:39.545328+00:00"
+        }
+      ]
+    }
+  ],
+  "tool_calls_observed": [
+    "update_booking",
+    "update_booking",
+    "update_booking",
+    "update_booking",
+    "update_booking",
+    "update_booking",
+    "update_booking",
+    "update_booking",
+    "update_booking",
+    "update_booking",
+    "update_booking",
+    "check_availability",
+    "check_availability",
+    "check_availability",
+    "update_booking",
+    "update_booking",
+    "check_availability",
+    "book"
+  ],
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "22223333-4444-5555-6666-000000000057",
+    "customer_phone": "+34999000057",
+    "customer_id": "ca128cd8-0573-4c9a-9ccc-7e8784982526",
+    "customer_name": "Sofia Ruiz",
+    "messages_count": 28,
+    "latest_tool_call_name": "book",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": true
+  },
+  "claim_vs_backend": "Tu cita ha quedado confirmada para el martes 30 de junio a las 10:00 con Marta para corte de mujer.",
+  "coherence_notes": "The bot resolved the user's intent fully: new customer flow completed with policy gate, slot selection, and booking confirmed in 6 turns. The service UUID (cb7ae91c) was resolved on turn 1 and correctly passed via pre_resolved_service_ids through all subsequent update_booking calls — the bug under test (UUID rejection after policy acceptance) did NOT occur. The bot correctly re-ran check_availability after policy acceptance to rehydrate the slot, then called book() successfully. One minor observation: customer_consents_count=0 and policy_accepted_at=null in the final DB state despite the booking going through, which may indicate the policy consent record was not persisted to the customer_consents table. No voseo, no hallucinated stylists (Marta, Victor, Harolyn are all valid). Turn-to-turn coherence was good."
+}

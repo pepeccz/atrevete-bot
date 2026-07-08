@@ -1,0 +1,156 @@
+{
+  "scenario_id": "change-c-reschedule-flow",
+  "conversation_id": "0f0d31de-0031-4968-8f98-53ef523da2b6",
+  "outcome": "rescheduled",
+  "turns_taken": 10,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, quiero reservar un tinte para el lunes que viene",
+      "agent_response": "Hola! Soy Maite, asistenta virtual con IA de Atrevete. Es para ti o para otra persona?",
+      "latency_ms": 14150,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "intro_sent"
+    },
+    {
+      "turn": 2,
+      "user_message": "Es para mi, soy mujer",
+      "agent_response": "Lo siento, el salon cierra el lunes 13 de julio. Te re-presento huecos cercanos: te viene mejor el viernes 3 de julio, el sabado 4 de julio o el martes 7 de julio?",
+      "latency_ms": 11923,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "closed_day_handled_alternatives_offered"
+    },
+    {
+      "turn": 3,
+      "user_message": "Me viene bien el viernes 3 de julio",
+      "agent_response": "Perfecto, el viernes 3 de julio si tengo hueco para tu tinte. Si quieres, te preparo la reserva con la estilista con disponibilidad mas proxima o con una concreta.",
+      "latency_ms": 10893,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "check_availability"],
+      "bugs": [],
+      "milestone": "date_accepted"
+    },
+    {
+      "turn": 4,
+      "user_message": "Cualquier estilista disponible me va bien",
+      "agent_response": "La opcion mas proxima que tengo es el sabado 4 de julio a las 9:00 con Marta. Tambien te dejo otras dos opciones: 1. Sabado 4 de julio a las 9:40 con Marta. 2. Sabado 4 de julio a las 10:20 con Marta. Cual te viene mejor?",
+      "latency_ms": 14154,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "check_availability", "get_next_available_options"],
+      "bugs": [],
+      "milestone": "slots_offered"
+    },
+    {
+      "turn": 5,
+      "user_message": "Me quedo con el sabado 4 a las 9:00 con Marta",
+      "agent_response": "Antes de confirmarte la cita, necesito un si rapido a nuestra politica de privacidad y reservas. En Atrevete reservamos un tiempo exclusivo para ti, asi que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar. La aceptas?",
+      "latency_ms": 12135,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "check_availability", "get_next_available_options"],
+      "bugs": [],
+      "milestone": "slot_selected_policy_shown"
+    },
+    {
+      "turn": 6,
+      "user_message": "Si, acepto la politica de privacidad",
+      "agent_response": "Perfecto, me falta tu nombre y primer apellido para dejarla registrada.",
+      "latency_ms": 14383,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "policy_accepted"
+    },
+    {
+      "turn": 7,
+      "user_message": "Mi nombre es Pilar Navarro",
+      "agent_response": "Perfecto, Pilar. Alguna nota para Marta?",
+      "latency_ms": 12452,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "name_collected"
+    },
+    {
+      "turn": 8,
+      "user_message": "No, no tengo notas especiales. Confirma la cita por favor",
+      "agent_response": "Listo, Pilar! Tu cita para tinte queda confirmada el sabado 4 de julio a las 9:00 con Marta.",
+      "latency_ms": 26821,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "check_availability", "book"],
+      "bugs": [],
+      "milestone": "appointment_booked_id_35c6b89d"
+    },
+    {
+      "turn": 9,
+      "user_message": "Perfecto gracias! Pero me ha surgido un compromiso el sabado. Puedo cambiarlo al miercoles?",
+      "agent_response": "Si, el miercoles 8 de julio con Marta si tengo huecos disponibles. Te va bien alguno de esos horarios?",
+      "latency_ms": 18097,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "check_availability", "get_next_available_options", "manage_appointments"],
+      "bugs": [],
+      "milestone": "reschedule_request_slots_found"
+    },
+    {
+      "turn": 10,
+      "user_message": "Si, me viene bien el miercoles. Puedes ponerme a las 10:00?",
+      "agent_response": "Hecho, te la he cambiado al miercoles 8 de julio a las 10:00 con Marta.",
+      "latency_ms": 15980,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "check_availability", "manage_appointments"],
+      "bugs": [],
+      "milestone": "appointment_rescheduled_to_2026-07-08T10:00"
+    }
+  ],
+  "bugs": [],
+  "milestones_reached": [
+    "intro_sent",
+    "closed_day_handled_alternatives_offered",
+    "date_accepted",
+    "slots_offered",
+    "slot_selected_policy_shown",
+    "policy_accepted",
+    "name_collected",
+    "appointment_booked_id_35c6b89d",
+    "reschedule_request_slots_found",
+    "appointment_rescheduled_to_2026-07-08T10:00"
+  ],
+  "db_delta": {
+    "appointments_before": 0,
+    "appointments_after": 1,
+    "customers_before": 0,
+    "customers_after": 1,
+    "final_appointment_status": "confirmed",
+    "final_appointment_start_time": "2026-07-08T08:00:00+00:00",
+    "final_appointment_start_time_local": "2026-07-08T10:00:00+02:00",
+    "appointment_id": "35c6b89d-c2a9-405d-9c02-c4fd053d2793",
+    "customer_id": "a21564c2-c758-4a8d-96e0-2386ddc1107b"
+  },
+  "snapshot_before": "0 0",
+  "snapshot_after": "1 1",
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "0f0d31de-0031-4968-8f98-53ef523da2b6",
+    "customer_phone": "+34999000012",
+    "customer_id": "a21564c2-c758-4a8d-96e0-2386ddc1107b",
+    "customer_name": "Pilar Navarro",
+    "messages_count": 50,
+    "latest_tool_call_name": "manage_appointments",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": true
+  },
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "rescheduled",
+    "db_appointment": {
+      "status": "confirmed"
+    },
+    "tool_calls_required": ["book", "manage_appointments"],
+    "tool_calls_forbidden": []
+  },
+  "passed": true
+}

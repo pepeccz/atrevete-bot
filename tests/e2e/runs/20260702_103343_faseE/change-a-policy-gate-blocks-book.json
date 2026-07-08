@@ -1,0 +1,91 @@
+{
+  "scenario_id": "change-a-policy-gate-blocks-book",
+  "conversation_id": "8dba59ed-6dc4-4dff-92b7-b7362e75ed79",
+  "phone": "+34999000002",
+  "persona_name": "Carmen Ruiz",
+  "max_turns": 10,
+  "expected": {
+    "outcome": "policy_accepted",
+    "db_appointment": null,
+    "tool_calls_required": [],
+    "tool_calls_forbidden": ["book"]
+  },
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Quiero reservar un corte de pelo para el viernes",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Para quién es el corte: para ti, para una niña, para un niño, para un bebé o para un caballero?",
+      "timed_out": false,
+      "response_latency_ms": 11763,
+      "tool_evidence": [
+        {"tool_name": "update_booking", "arguments": {"policy_accepted": false, "policy_rejection_count": 0}, "result_next_step": "audience_required"}
+      ]
+    },
+    {
+      "turn": 2,
+      "user_message": "Para mi, soy mujer",
+      "agent_response": "Entonces te anoto un corte de mujer, ¿quieres añadir algún otro servicio o solo eso?",
+      "timed_out": false,
+      "response_latency_ms": 10979,
+      "tool_evidence": [
+        {"tool_name": "update_booking", "arguments": {"audience": "adult_female", "policy_accepted": false}, "result_next_step": "extras_loop_required"}
+      ]
+    },
+    {
+      "turn": 3,
+      "user_message": "Solo eso, el viernes por favor",
+      "agent_response": "Perdona, para reservar necesitamos al menos 3 días de antelación, así que la primera fecha válida es el domingo 5 de julio.\n\n¿Te encaja reservarlo para ese día?",
+      "timed_out": false,
+      "response_latency_ms": 13094,
+      "tool_evidence": [
+        {"tool_name": "update_booking", "arguments": {"no_more_services": true, "pre_resolved_service_ids": ["a0f48408-6479-32c4-96ac-aa7187b99be0"], "policy_accepted": false}, "result_next_step": "advance_policy_violated"}
+      ]
+    },
+    {
+      "turn": 4,
+      "user_message": "Si, el domingo 5 me viene bien",
+      "agent_response": "Perdona, el salón está cerrado el domingo 5 de julio.\n\nTe dejo las primeras opciones disponibles:\n1. Martes 7 de julio a las 10:00 con Marta\n2. Martes 7 de julio a las 10:40 con Marta\n3. Martes 7 de julio a las 11:20 con Marta\n\n¿Cuál te viene mejor?",
+      "timed_out": false,
+      "response_latency_ms": 14915,
+      "tool_evidence": [
+        {"tool_name": "check_availability", "arguments": {"date_iso": "2026-07-05"}, "result_next_step": "closed_day"},
+        {"tool_name": "get_next_available_options", "arguments": {"requested_date_iso": "2026-07-05", "strategy": "any_stylist"}, "result_next_step": null}
+      ]
+    },
+    {
+      "turn": 5,
+      "user_message": "La primera, el martes a las 10",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política\nde privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos\navisar con al menos 24h si necesitas cambiar o cancelar — fuera de\nese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "timed_out": false,
+      "response_latency_ms": 13632,
+      "tool_evidence": [
+        {"tool_name": "update_booking", "arguments": {"slot_iso": "2026-07-07T10:00:00+02:00", "stylist_name": "Marta", "date_iso": "2026-07-07", "policy_accepted": false}, "result_next_step": "policy_acceptance_required"}
+      ]
+    },
+    {
+      "turn": 6,
+      "user_message": "Si, acepto la politica de privacidad",
+      "agent_response": "Perfecto. ¿Me dices tu nombre y primer apellido?",
+      "timed_out": false,
+      "response_latency_ms": 12848,
+      "tool_evidence": [
+        {"tool_name": "update_booking", "arguments": {"slot_iso": "2026-07-07T10:00:00+02:00", "stylist_name": "Marta", "policy_accepted": false}, "result_next_step": "policy_acceptance_required"},
+        {"tool_name": "update_booking", "arguments": {"slot_iso": "2026-07-07T10:00:00+02:00", "stylist_name": "Marta", "policy_accepted": true, "policy_rejection_count": 0}, "result_next_step": "name_required"}
+      ]
+    }
+  ],
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "8dba59ed-6dc4-4dff-92b7-b7362e75ed79",
+    "customer_phone": "+34999000002",
+    "customer_id": null,
+    "customer_name": null,
+    "messages_count": 26,
+    "latest_tool_call_name": "update_booking",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": true
+  },
+  "outcome_observed": "policy_accepted",
+  "runner_notes": "Policy gate appeared correctly in turn 5 when Carmen selected a slot (Marta, 2026-07-07T10:00). update_booking returned next_step=policy_acceptance_required and the bot presented the full policy before attempting to book. Carmen accepted in turn 6; update_booking confirmed policy_accepted=true with next_step=name_required. The book tool was never called at any point. customer_consents_count=0 and policy_accepted_at=null in DB state is expected — consent is only persisted on book() call, which did not happen per the test design."
+}

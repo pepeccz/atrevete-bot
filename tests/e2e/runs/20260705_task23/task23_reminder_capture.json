@@ -1,0 +1,8 @@
+{
+  "run_at": "2026-07-05T19:48:30.479254+00:00",
+  "handlers_fired": [
+    "reminder_24h"
+  ],
+  "send_attempts": [],
+  "db_state": []
+}

@@ -1,0 +1,97 @@
+{
+  "scenario_id": "change-a-min-days-from-settings",
+  "conversation_id": "a8a8b9fe-fe0c-4934-b45f-0640fb7ed273",
+  "outcome": "escalated",
+  "turns_taken": 2,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, ¿podéis darme cita para hoy? Necesito urgente un tinte.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nPara este servicio necesito que me indiques si es para señora o caballero.\n\nAdemás, hoy no puedo reservarlo: la fecha más próxima disponible es el miércoles 8 de julio, porque necesitamos al menos 3 días de antelación.",
+      "latency_ms": 11819,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "check_availability"],
+      "tool_evidence": [
+        {
+          "tool_name": "update_booking",
+          "result_next_step": "audience_required"
+        },
+        {
+          "tool_name": "check_availability",
+          "arguments": {"date_iso": "2026-07-05", "no_preference": true},
+          "result_next_step": "advance_policy_violated",
+          "result_payload": {"first_valid_date": "2026-07-08", "policy_min_days": 3}
+        }
+      ],
+      "bugs": [],
+      "milestone": "audience_clarification_requested + advance_policy_rejected (single-fact only: advance policy, no closed-day mention)"
+    },
+    {
+      "turn": 2,
+      "user_message": "Soy señora, pero de verdad necesito que sea hoy, es urgente. ¿No hay ninguna forma?",
+      "agent_response": "Te paso con alguien del equipo para que lo revisen contigo ahora mismo 🙏",
+      "latency_ms": 16101,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "check_availability", "escalate"],
+      "tool_evidence": [
+        {
+          "tool_name": "update_booking",
+          "result_next_step": "audience_required"
+        },
+        {
+          "tool_name": "check_availability",
+          "arguments": {"date_iso": "2026-07-05", "no_preference": true},
+          "result_next_step": "advance_policy_violated",
+          "result_payload": {"first_valid_date": "2026-07-08", "policy_min_days": 3}
+        },
+        {
+          "tool_name": "escalate",
+          "arguments": {"reason": "urgent_same_day_request"},
+          "result": "Con mucho gusto te paso con alguien del equipo del salón. Te atenderán en el próximo horario disponible. 🙏"
+        }
+      ],
+      "bugs": [],
+      "milestone": "escalated_to_human (reason: urgent_same_day_request) after repeated urgency insistence following rejection"
+    }
+  ],
+  "bugs": [],
+  "milestones_reached": [
+    "audience_clarification_requested",
+    "advance_policy_rejected_single_fact",
+    "escalated_to_human"
+  ],
+  "db_delta": {"customer_count_delta": 0, "appt_count_delta": 0},
+  "snapshot_before": {"customer_count": 0, "appt_count": 0},
+  "snapshot_after": {"customer_count": 0, "appt_count": 0},
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "a8a8b9fe-fe0c-4934-b45f-0640fb7ed273",
+    "customer_phone": "+34999000005",
+    "customer_id": null,
+    "customer_name": null,
+    "messages_count": 9,
+    "latest_tool_call_name": "escalate",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": false
+  },
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "rejected",
+    "db_appointment": null,
+    "tool_calls_required": [],
+    "tool_calls_forbidden": ["book"],
+    "tags": ["change-a", "min-days", "settings"]
+  },
+  "passed": false,
+  "pass_notes": "outcome literal mismatch (escalated vs rejected) but no booking occurred (db_appointment matches null, 'book' tool never called — tool_calls_forbidden respected). The mismatch is a genuine behavioral finding, not an evidence gap: the bot handed off to a human on the 2nd turn after the customer insisted on urgency, rather than continuing to firmly reject and hold the line at miércoles 8.",
+  "quality_observations": {
+    "extras_question_own_turn": "not_applicable — rejection/escalation flow never reached the extras step",
+    "confirmation_last": "not_applicable — no confirmation step was reached (rejected/escalated before booking readiness)",
+    "rejection_both_facts": "NO — only ONE fact was stated, not both. Turn 1 verbatim: 'Además, hoy no puedo reservarlo: la fecha más próxima disponible es el miércoles 8 de julio, porque necesitamos al menos 3 días de antelación.' This cites only the advance-policy fact (3 días de antelación + first_valid_date 2026-07-08 / miércoles 8). It never states that today (Sunday) is also a closed day. This traces to the tool layer, not just prompt wording: check_availability's tool_evidence returned next_step='advance_policy_violated' only — no separate closed-day violation code was present in the payload for the bot to surface.",
+    "stylist_menu_option0": "not_applicable — no stylist menu appeared in this run",
+    "tone": "warm/cercano — verdict: warm. Verbatim opening: '¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸'. Verbatim escalation close: 'Te paso con alguien del equipo para que lo revisen contigo ahora mismo 🙏'. Both turns use friendly emoji and first-person register.",
+    "unbacked_slots": "None observed — no concrete slot times were presented in either turn; every claim (audience clarification, advance-policy rejection, first_valid_date) is backed by tool_evidence (update_booking / check_availability) in the same turn.",
+    "escalation_finding": "NEW BEHAVIOR OF NOTE for the strike-counter-fix verification: on turn 2, when Isabel reiterated urgency after the turn-1 rejection ('de verdad necesito que sea hoy, es urgente'), the bot escalated to a human (tool: escalate, reason: 'urgent_same_day_request') instead of repeating/reinforcing the rejection. This is plausibly the intended strike-counter behavior (avoid looping on a rejected same-day request by handing off after one repeated insistence), but it means this scenario's terminal outcome is 'escalated', not the scripted 'rejected' — worth confirming with the team whether this is the intended post-fix contract or an over-eager escalation trigger."
+  }
+}

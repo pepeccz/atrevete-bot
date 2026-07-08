@@ -1,0 +1,121 @@
+{
+  "scenario_id": "change-a-policy-gate-blocks-book",
+  "conversation_id": "1ead5d1a-aa38-45a6-9019-0cd066b316dc",
+  "outcome": "policy_accepted",
+  "turns_taken": 5,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Quiero reservar un corte de pelo para el viernes.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Para quién es el corte: para señora, caballero, niña, niño o bebé?",
+      "latency_ms": 11678,
+      "timed_out": false,
+      "tool_calls_observed": [
+        {"tool_name": "update_booking", "policy_accepted": false, "next_step": "audience_required"}
+      ],
+      "bugs": [],
+      "milestone": "booking_started"
+    },
+    {
+      "turn": 2,
+      "user_message": "Para mi, para señora.",
+      "agent_response": "Perfecto. ¿Con qué estilista te lo reservo: Harolyn, Marta, Pilar o Victor?",
+      "latency_ms": 13363,
+      "timed_out": false,
+      "tool_calls_observed": [
+        {"tool_name": "update_booking", "policy_accepted": false, "next_step": "audience_required"},
+        {"tool_name": "update_booking", "policy_accepted": false, "next_step": "stylist_required"}
+      ],
+      "bugs": [],
+      "milestone": "audience_resolved"
+    },
+    {
+      "turn": 3,
+      "user_message": "Me da igual quien, la primera disponible para el viernes.",
+      "agent_response": "Perfecto, te lo dejo el viernes 3 de julio a las 10:00 con la primera con disponibilidad.  \nAntes de confirmártelo, ¿me dices tu nombre y apellido?",
+      "latency_ms": 11597,
+      "timed_out": false,
+      "tool_calls_observed": [
+        {"tool_name": "update_booking", "policy_accepted": false, "next_step": "audience_required"},
+        {"tool_name": "update_booking", "policy_accepted": false, "next_step": "stylist_required"},
+        {"tool_name": "update_booking", "policy_accepted": false, "next_step": "name_required"},
+        {"tool_name": "check_availability", "slots_found": true}
+      ],
+      "bugs": [],
+      "milestone": "slot_found"
+    },
+    {
+      "turn": 4,
+      "user_message": "Carmen Ruiz",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "latency_ms": 15439,
+      "timed_out": false,
+      "tool_calls_observed": [
+        {"tool_name": "update_booking", "policy_accepted": false, "next_step": "audience_required"},
+        {"tool_name": "update_booking", "policy_accepted": false, "next_step": "stylist_required"},
+        {"tool_name": "update_booking", "policy_accepted": false, "next_step": "name_required"},
+        {"tool_name": "check_availability", "slots_found": true},
+        {"tool_name": "update_booking", "policy_accepted": false, "next_step": "policy_acceptance_required"}
+      ],
+      "bugs": [],
+      "milestone": "policy_gate_presented"
+    },
+    {
+      "turn": 5,
+      "user_message": "Si, acepto la politica de privacidad.",
+      "agent_response": "¿Alguna nota para la cita?",
+      "latency_ms": 15299,
+      "timed_out": false,
+      "tool_calls_observed": [
+        {"tool_name": "update_booking", "policy_accepted": false, "next_step": "audience_required"},
+        {"tool_name": "update_booking", "policy_accepted": false, "next_step": "stylist_required"},
+        {"tool_name": "update_booking", "policy_accepted": false, "next_step": "name_required"},
+        {"tool_name": "check_availability", "slots_found": true},
+        {"tool_name": "update_booking", "policy_accepted": false, "next_step": "policy_acceptance_required"},
+        {"tool_name": "update_booking", "policy_accepted": true, "next_step": "notes_optional"}
+      ],
+      "bugs": [],
+      "milestone": "policy_accepted"
+    }
+  ],
+  "bugs": [],
+  "milestones_reached": [
+    "booking_started",
+    "audience_resolved",
+    "slot_found",
+    "policy_gate_presented",
+    "policy_accepted"
+  ],
+  "db_delta": {
+    "customers_created": 0,
+    "appointments_created": 0
+  },
+  "snapshot_before": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "snapshot_after": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "1ead5d1a-aa38-45a6-9019-0cd066b316dc",
+    "customer_phone": "+34999000002",
+    "customer_id": null,
+    "customer_name": null,
+    "messages_count": 21,
+    "latest_tool_call_name": "update_booking",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": false
+  },
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "policy_accepted",
+    "db_appointment": null,
+    "tool_calls_required": [],
+    "tool_calls_forbidden": ["book"]
+  },
+  "passed": true
+}

@@ -1,0 +1,142 @@
+{
+  "scenario_id": "change-b-cache-warm-second-turn",
+  "conversation_id": "61c23d8f-f1c4-4233-b032-431a71b05ebb",
+  "outcome": "booked",
+  "turns_taken": 6,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "¿Teneis disponibilidad para manicura esta semana?",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Tienes alguna preferencia entre manicura normal, manicura permanente o manicura permanente con tratamiento?",
+      "latency_ms": 13591,
+      "tool_calls": ["get_next_available_options", "update_booking"],
+      "tool_sources": ["checkpoint", "checkpoint"],
+      "notes": "Agent correctly disambiguates manicura variants. availability source=checkpoint (T1 seeds cache)."
+    },
+    {
+      "turn": 2,
+      "user_message": "Manicura normal. Que dias teneis libres esta semana?",
+      "agent_response": "Sí, esta semana tengo estos huecos para manicura:\n\n1. Sábado 4 de julio a las 09:00 con Rosa  \n2. Sábado 4 de julio a las 09:30 con Rosa  \n3. Sábado 4 de julio a las 10:00 con Rosa  \n\nSi no tienes preferencia de estilista, Rosa es la primera con disponibilidad. ¿Cuál te viene mejor?",
+      "latency_ms": 14003,
+      "tool_calls": ["get_next_available_options", "update_booking", "update_booking", "get_next_available_options"],
+      "tool_sources": ["checkpoint", "checkpoint", "checkpoint", "checkpoint"],
+      "notes": "CACHE WARM CONFIRMED: all get_next_available_options calls served from checkpoint. No live availability API hit. audience=adult_female preserved — no re-ask (R-48 holding)."
+    },
+    {
+      "turn": 3,
+      "user_message": "El primero, el sabado a las 9.",
+      "agent_response": "Perfecto, te lo dejo el sábado 4 de julio a las 09:00 con Rosa para manicura. ¿Te lo confirmo?",
+      "latency_ms": 12363,
+      "tool_calls": ["get_next_available_options", "update_booking", "update_booking", "get_next_available_options", "check_availability"],
+      "tool_sources": ["checkpoint", "checkpoint", "checkpoint", "checkpoint", "checkpoint"],
+      "notes": "Slot selected correctly. check_availability called for slot validation. audience not re-asked (R-48 OK)."
+    },
+    {
+      "turn": 4,
+      "user_message": "Si, confirma.",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "latency_ms": 11434,
+      "tool_calls": ["get_next_available_options", "update_booking", "update_booking", "get_next_available_options", "check_availability", "book"],
+      "tool_sources": ["checkpoint", "checkpoint", "checkpoint", "checkpoint", "checkpoint", "checkpoint"],
+      "notes": "BUG: book called with customer_full_name='Ana García' (hallucinated — customer never provided name). policy_accepted=false correctly rejected. Policy gate shown to user."
+    },
+    {
+      "turn": 5,
+      "user_message": "Si, acepto la politica.",
+      "agent_response": "¿Quieres añadir alguna nota para Rosa?",
+      "latency_ms": 15433,
+      "tool_calls": ["get_next_available_options", "update_booking", "update_booking", "get_next_available_options", "check_availability", "book", "update_booking"],
+      "tool_sources": ["checkpoint", "checkpoint", "checkpoint", "checkpoint", "checkpoint", "checkpoint", "checkpoint"],
+      "notes": "BUG: book still called with customer_full_name='Ana García' (hallucination persists). policy_accepted=false again — book tool does not see updated policy state from prior update_booking. update_booking finally registers policy_accepted=true. Agent skipped asking for name (has hallucinated 'Ana García'), went to notes question."
+    },
+    {
+      "turn": 6,
+      "user_message": "No, sin notas. Me llamo Marta Gonzalez.",
+      "agent_response": "¡Listo! Te he confirmado la cita para el sábado 4 de julio a las 09:00 con Rosa para manicura.\n\nSi quieres, también te puedo pasar el enlace del calendario.",
+      "latency_ms": 19175,
+      "tool_calls": ["get_next_available_options", "update_booking", "update_booking", "get_next_available_options", "check_availability", "book", "update_booking", "check_availability", "book"],
+      "tool_sources": ["checkpoint", "checkpoint", "checkpoint", "checkpoint", "checkpoint", "checkpoint", "checkpoint", "checkpoint", "checkpoint"],
+      "notes": "book called twice: first with 'Ana García'/policy_accepted=false (rejected), then with 'Marta Gonzalez'/policy_accepted=true (SUCCESS). appointment_id=9466783d-ad9e-42ac-8c7b-e16ba1522463. All availability served from checkpoint."
+    }
+  ],
+  "bugs": [
+    {
+      "type": "hallucination",
+      "severity": "high",
+      "turn": 4,
+      "description": "book tool called with customer_full_name='Ana García' — a name never provided by the customer. Persisted through turns 4, 5, and the first book attempt in turn 6. Customer corrected it by providing 'Marta Gonzalez' in turn 6.",
+      "evidence": "book args customer_full_name='Ana García' in turns 4, 5, and first book call of turn 6 despite customer never stating that name"
+    },
+    {
+      "type": "redundant_tool_calls",
+      "severity": "medium",
+      "turn": "2-6",
+      "description": "Every turn starts with the same stale update_booking call (variant_resolved=false, no slot, no policy) before correcting. This indicates the booking draft state from the checkpoint is not being passed correctly to the first tool call each turn — the LLM rebuilds from scratch and always makes one wasted update_booking call before the correct one.",
+      "evidence": "update_booking with variant_resolved=false appears as the first update_booking call on every turn from 2 through 6"
+    },
+    {
+      "type": "policy_not_persisted",
+      "severity": "medium",
+      "turn": 6,
+      "description": "After booking, customer_consents_count=0 and policy_accepted_at=null in DB state. Policy was accepted in conversation and booking succeeded, but the consent audit record was not written.",
+      "evidence": "state result: customer_consents_count=0, policy_accepted_at=null after successful booking with policy_accepted=true"
+    }
+  ],
+  "milestones_reached": [
+    "greeting_shown",
+    "disambiguation_done",
+    "cache_warm_confirmed",
+    "availability_shown",
+    "slot_selected",
+    "policy_shown",
+    "policy_accepted",
+    "booked"
+  ],
+  "db_delta": {
+    "appointments_before": 0,
+    "appointments_after": 1,
+    "conversations_before": 0,
+    "conversations_after": 1,
+    "appointment_id": "9466783d-ad9e-42ac-8c7b-e16ba1522463",
+    "customer_id": "a9bd593f-9cdc-4186-847d-18924975778f",
+    "service": "Manicura",
+    "stylist": "Rosa",
+    "start_iso": "2026-07-04T09:00:00+02:00",
+    "end_iso": "2026-07-04T09:30:00+02:00"
+  },
+  "snapshot_before": {
+    "appointments": 0,
+    "conversations": 0
+  },
+  "snapshot_after": {
+    "appointments": 1,
+    "conversations": 1
+  },
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "61c23d8f-f1c4-4233-b032-431a71b05ebb",
+    "customer_phone": "+34999000007",
+    "customer_id": "a9bd593f-9cdc-4186-847d-18924975778f",
+    "customer_name": "Marta Gonzalez",
+    "messages_count": 31,
+    "latest_tool_call_name": "book",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": true
+  },
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "booked",
+    "tool_calls_required": ["check_availability"]
+  },
+  "passed": true,
+  "cache_warm_observation": {
+    "turn_1_latency_ms": 13591,
+    "turn_2_latency_ms": 14003,
+    "all_availability_sources": "checkpoint",
+    "cache_warm_confirmed": true,
+    "note": "All get_next_available_options calls from turn 1 onward returned source=checkpoint. No live availability API hit observed across any turn."
+  },
+  "audience_reask_observed": false,
+  "audience_reask_note": "R-48 held: audience=adult_female was preserved across all 6 turns. No re-ask of audience occurred."
+}

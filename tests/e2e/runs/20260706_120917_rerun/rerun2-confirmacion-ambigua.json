@@ -1,0 +1,298 @@
+{
+  "scenario_id": "rerun2-confirmacion-ambigua",
+  "conversation_id": "cc19e02a-884c-4f67-9904-c3092b9ff9b1",
+  "context": "FINAL validation of the F2 disambiguation fix after PR #106 (fix/grounding-f2b-pending-query), deployed on pepe@server at commit 7a8cdc4ceb6465723015c5bf050502e909cd436e. Baseline FAIL was tests/e2e/runs/20260706_120917_rerun/rerun-confirmacion-ambigua.json: the disambiguation gate never fired because _dispatch_confirm_or_decline's precondition relied on get_pending_confirmations() which filters confirmation_sent_at IS NOT NULL, excluding freshly-booked PENDING appointments that never received the 48h notification. PR #106 fixes the gate's pending query to count ALL future PENDING appointments for the customer regardless of confirmation_sent_at.",
+  "outcome": "policy_accepted",
+  "outcome_note": "Using the v1 enum loosely: the scenario's actual terminal state is a successful single-appointment confirmation via the disambiguation flow (manage_appointments action=confirm on the customer-selected 'la 1' appointment), with the sibling PENDING appointment correctly left untouched. This is the disambiguation-then-single-confirmation outcome the scenario targets, and it PASSED in full — the opposite of the baseline's silent-wrong-confirm CRITICAL bug.",
+  "turns_taken": 16,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, cita corte señora",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nPerfecto, te anoto corte de mujer. ¿Quieres añadir algún otro servicio o solo el corte?",
+      "tool_calls_observed": [
+        "update_booking"
+      ],
+      "bugs": [],
+      "milestone": "service1_resolved_corte_mujer_adult_female"
+    },
+    {
+      "turn": 2,
+      "user_message": "Solo eso",
+      "agent_response": "Te dejo las primeras opciones disponibles para tu corte de mujer, con la estilista con disponibilidad más próxima:\n\n1. Viernes 10 de julio a las 10:00 con Marta\n2. Viernes 10 de julio a las 10:40 con Marta\n3. Viernes 10 de julio a las 12:00 con Marta\n\n¿Cuál te viene mejor?",
+      "tool_calls_observed": [
+        "update_booking",
+        "get_next_available_options"
+      ],
+      "bugs": [],
+      "milestone": "slots_offered_booking1"
+    },
+    {
+      "turn": 3,
+      "user_message": "La 1",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "tool_calls_observed": [
+        "update_booking",
+        "get_next_available_options"
+      ],
+      "bugs": [],
+      "milestone": "policy_acceptance_required_slot_2026-07-10T10:00_resolved_correctly"
+    },
+    {
+      "turn": 4,
+      "user_message": "Sí, acepto",
+      "agent_response": "Perfecto, ya tengo la cita encaminada 😊\n\nPara dejarla lista me falta tu nombre y primer apellido, ¿me lo dices?",
+      "tool_calls_observed": [
+        "update_booking"
+      ],
+      "bugs": [],
+      "milestone": "policy_accepted_name_required"
+    },
+    {
+      "turn": 5,
+      "user_message": "Elena Sanz",
+      "agent_response": "Perfecto, Elena, ya lo tengo casi cerrado 😊\n\n¿Quieres dejarme alguna nota para la cita?",
+      "tool_calls_observed": [
+        "update_booking"
+      ],
+      "bugs": [],
+      "milestone": "name_resolved_notes_optional"
+    },
+    {
+      "turn": 6,
+      "user_message": "No, gracias",
+      "agent_response": "Te la he agendado para el viernes 10 de julio a las 10:00 con Marta para corte de mujer.\n\nTe llegará una confirmación 48h antes; respóndela con un sí y quedará lista ✅\n\nSi quieres, también te paso el enlace del calendario.",
+      "tool_calls_observed": [
+        "check_availability",
+        "book"
+      ],
+      "bugs": [],
+      "milestone": "booking1_created_appointment_d696b588-7cf4-4729-aa33-7d6faa209a5e_PENDING_2026-07-10T10:00_gcal_not_applicable"
+    },
+    {
+      "turn": 7,
+      "user_message": "Otra cita, manicura normal",
+      "agent_response": "Para manicura tengo varias opciones: manicura, manicura permanente o manicura permanente con tratamiento.\n\n¿Cuál quieres?",
+      "tool_calls_observed": [
+        "update_booking"
+      ],
+      "bugs": [
+        "redundant_question: 'manicura normal' stated upfront was not recognized as resolving the variant; agent re-asked the same ambiguous-variant question. Non-blocking, pre-existing bug matching baseline BUG-5."
+      ],
+      "milestone": "booking2_service_ambiguous_variant"
+    },
+    {
+      "turn": 8,
+      "user_message": "Manicura, la normal",
+      "agent_response": "Perfecto, te anoto manicura normal. ¿Quieres añadir algún otro servicio o solo la manicura?",
+      "tool_calls_observed": [
+        "update_booking"
+      ],
+      "bugs": [],
+      "milestone": "booking2_variant_resolved"
+    },
+    {
+      "turn": 9,
+      "user_message": "Solo eso",
+      "agent_response": "Para buscarte huecos de manicura, necesito saber para quién es el servicio.\n\n¿Es para ti o para otra persona?",
+      "tool_calls_observed": [
+        "update_booking",
+        "get_next_available_options"
+      ],
+      "bugs": [
+        "redundant_question: audience (adult_female) already established in booking 1 of the SAME conversation but re-demanded for booking 2's slot lookup. Non-blocking, pre-existing bug matching baseline BUG-6."
+      ],
+      "milestone": "booking2_audience_reasked"
+    },
+    {
+      "turn": 10,
+      "user_message": "Señora, para mí",
+      "agent_response": "Te dejo las primeras opciones disponibles para tu manicura, con la estilista con disponibilidad más próxima:\n\n1. Viernes 10 de julio a las 14:00 con Rosa\n2. Viernes 10 de julio a las 14:30 con Rosa\n3. Viernes 10 de julio a las 15:00 con Rosa\n\n¿Cuál te viene mejor?",
+      "tool_calls_observed": [
+        "update_booking",
+        "get_next_available_options"
+      ],
+      "bugs": [],
+      "milestone": "booking2_slots_offered_same_day_as_booking1_needed_different_day_per_scenario"
+    },
+    {
+      "turn": 11,
+      "user_message": "Mejor el miércoles 15",
+      "agent_response": "Perfecto, el miércoles 15 te lo dejo encaminado 😊\n\n¿Quieres dejarme alguna nota para la cita?",
+      "tool_calls_observed": [
+        "update_booking"
+      ],
+      "bugs": [],
+      "milestone": "booking2_date_changed_to_2026-07-15_different_day_from_booking1_slot_not_yet_picked"
+    },
+    {
+      "turn": 12,
+      "user_message": "No, gracias",
+      "agent_response": "Perfecto, para el miércoles 15 de julio tengo huecos disponibles con Rosa.\n\nTe dejo las primeras opciones:\n1. 10:00\n2. 10:30\n3. 11:00\n\n¿Cuál te viene mejor?",
+      "tool_calls_observed": [
+        "get_next_available_options"
+      ],
+      "bugs": [],
+      "milestone": "booking2_slots_offered_2026-07-15"
+    },
+    {
+      "turn": 13,
+      "user_message": "La 1",
+      "agent_response": "Perfecto, Elena, te lo dejo el miércoles 15 de julio a las 10:00 para manicura con Rosa. ¿Te lo confirmo?",
+      "tool_calls_observed": [
+        "update_booking",
+        "check_availability"
+      ],
+      "bugs": [],
+      "milestone": "booking2_ready_for_confirmation"
+    },
+    {
+      "turn": 14,
+      "user_message": "Confirma",
+      "agent_response": "Te la he agendado para el miércoles 15 de julio a las 10:00 con Rosa para manicura.\n\nTe llegará una confirmación 48h antes; respóndela con un sí y quedará lista ✅",
+      "tool_calls_observed": [
+        "book"
+      ],
+      "bugs": [],
+      "milestone": "booking2_created_appointment_2f06b0cb-f826-4c72-84db-5550d4957d28_PENDING_2026-07-15T10:00_both_appts_now_PENDING_different_days_different_services_confirmation_sent_at_NULL_both"
+    },
+    {
+      "turn": 15,
+      "user_message": "quiero confirmar mi cita",
+      "agent_response": "Tienes 2 citas pendientes de confirmación:\n\n1. viernes 10 de julio a las 10:00 con Marta\n2. miércoles 15 de julio a las 10:00 con Rosa\n\n¿Cuál quieres confirmar: la 1, la 2 o todas?",
+      "tool_calls_observed": [
+        "manage_appointments"
+      ],
+      "bugs": [],
+      "milestone": "F2_GATE_FIRED_CORRECTLY_guided_list_no_mutation_PR106_FIX_CONFIRMED. LLM attempted manage_appointments(action='confirm', appointment_id='d696b588-...') but the tool internally intercepted and returned the guided disambiguation list with usage footer ('• *1*, *2*... - para una cita específica' / '• *TODAS* - para confirmar todas') instead of mutating. psql confirms both appointments remained status=pending, updated_at unchanged from their booking timestamps."
+    },
+    {
+      "turn": 16,
+      "user_message": "la 1",
+      "agent_response": "¡Perfecto! Tu cita del viernes 10 de julio a las 10:00 con Marta queda confirmada. ¡Te esperamos!",
+      "tool_calls_observed": [
+        "manage_appointments"
+      ],
+      "bugs": [],
+      "milestone": "ORDINAL_RESOLVED_CORRECTLY_first_listed_appointment_d696b588_flipped_to_CONFIRMED_second_2f06b0cb_remained_PENDING_untouched"
+    }
+  ],
+  "bugs": [
+    {
+      "id": "PRE-EXISTING-1-LOW",
+      "category": "redundant_question",
+      "description": "Stating 'manicura normal' upfront did not resolve the variant in one shot; the agent re-asked the same ambiguous-variant question. Same class as baseline's BUG-5. Not related to the F2 gate under test.",
+      "severity": "LOW"
+    },
+    {
+      "id": "PRE-EXISTING-2-MEDIUM",
+      "category": "redundant_question",
+      "description": "Audience (adult_female) established in booking 1 was re-demanded for booking 2's slot lookup within the same conversation. Same class as baseline's BUG-6. Not related to the F2 gate under test.",
+      "severity": "MEDIUM"
+    }
+  ],
+  "milestones_reached": [
+    "booking1_corte_mujer_created_pending_2026-07-10_confirmation_sent_at_NULL",
+    "booking2_manicura_created_pending_2026-07-15_confirmation_sent_at_NULL_different_day_and_service",
+    "pre_check_verified_via_psql_both_pending_confirmation_sent_at_null_exact_bug_reproduction_shape",
+    "ambiguous_confirm_message_sent_gate_fired_guided_list_shown_zero_mutation",
+    "ordinal_la_1_correctly_mapped_to_first_listed_appointment_by_earliest_start_time",
+    "first_appointment_confirmed_second_remained_pending_exactly_as_expected"
+  ],
+  "db_delta": {
+    "customer_count_delta": 0,
+    "appt_count_delta": 0,
+    "note": "Deltas are 0 because Step 8 cleanup (state_reset.py scoped to +34999000035) ran after the run and removed the customer + both appointments. Intermediate DB reads during the run (see mutation_evidence below) captured the live state before cleanup."
+  },
+  "mutation_evidence": [
+    {
+      "point": "pre_check_before_ambiguous_message_both_bookings_created",
+      "query_result": [
+        {
+          "id": "d696b588-7cf4-4729-aa33-7d6faa209a5e",
+          "status": "pending",
+          "start_time": "2026-07-10 08:00:00+00",
+          "confirmation_sent_at": null,
+          "gcal_sync_status": "not_applicable",
+          "stylist": "Marta"
+        },
+        {
+          "id": "2f06b0cb-f826-4c72-84db-5550d4957d28",
+          "status": "pending",
+          "start_time": "2026-07-15 08:00:00+00",
+          "confirmation_sent_at": null,
+          "gcal_sync_status": "not_applicable",
+          "stylist": "Rosa"
+        }
+      ],
+      "note": "This is the exact shape that bypassed the pre-PR#106 gate: both PENDING, both confirmation_sent_at NULL (never received the 48h notification since they were booked >48h out just now)."
+    },
+    {
+      "point": "immediately_after_turn15_quiero_confirmar_mi_cita",
+      "query_result": [
+        {
+          "id": "d696b588-7cf4-4729-aa33-7d6faa209a5e",
+          "status": "pending",
+          "updated_at": "2026-07-06 10:54:19.70062+00"
+        },
+        {
+          "id": "2f06b0cb-f826-4c72-84db-5550d4957d28",
+          "status": "pending",
+          "updated_at": "2026-07-06 10:57:45.60669+00"
+        }
+      ],
+      "note": "NO MUTATION. Both updated_at timestamps unchanged from their booking-creation timestamps. The LLM's manage_appointments(action='confirm', appointment_id='d696b588-...') tool call was intercepted by the gate and returned the guided disambiguation list instead of executing the confirm. This is the PR #106 fix working correctly for the exact scenario the baseline reproduced as a CRITICAL bug."
+    },
+    {
+      "point": "immediately_after_turn16_la_1",
+      "query_result": [
+        {
+          "id": "d696b588-7cf4-4729-aa33-7d6faa209a5e",
+          "status": "confirmed",
+          "updated_at": "2026-07-06 10:59:04.53674+00"
+        },
+        {
+          "id": "2f06b0cb-f826-4c72-84db-5550d4957d28",
+          "status": "pending",
+          "updated_at": "2026-07-06 10:57:45.60669+00"
+        }
+      ],
+      "note": "Exactly the first-listed appointment (Corte de Mujer, viernes 10 de julio, earliest start_time) flipped to confirmed. The second appointment (Manicura, miércoles 15 de julio) remained pending and untouched (updated_at unchanged). Ordinal 'la 1' correctly mapped to the appointment listed first in the bot's own disambiguation message."
+    }
+  ],
+  "snapshot_before": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "snapshot_after_cleanup": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "cc19e02a-884c-4f67-9904-c3092b9ff9b1",
+    "customer_phone": "+34999000035",
+    "customer_id": "51679f0e-bf3f-43eb-b176-2af4642b755c",
+    "customer_name": "Elena Sanz",
+    "messages_count": 76,
+    "latest_tool_call_name": "manage_appointments",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": true
+  },
+  "langfuse_trace_path": null,
+  "langfuse_pull_error": "UnauthorizedError 401 - Invalid credentials (known Langfuse credential issue per CLAUDE.md 'context-coherence prompts' runbook — key regeneration pending)",
+  "expect": {
+    "outcome": "disambiguation_then_single_confirmation"
+  },
+  "passed": true,
+  "observations": [
+    "CRITERION 1 (pre-check — both PENDING, confirmation_sent_at IS NULL before step 2): PASS. psql confirmed: d696b588-7cf4-4729-aa33-7d6faa209a5e (Corte de Mujer, 2026-07-10 08:00 UTC) status=pending, confirmation_sent_at=NULL, gcal_sync_status=not_applicable; 2f06b0cb-f826-4c72-84db-5550d4957d28 (Manicura, 2026-07-15 08:00 UTC) status=pending, confirmation_sent_at=NULL, gcal_sync_status=not_applicable. This is exactly the shape that bypassed the pre-PR#106 gate (get_pending_confirmations() filtered on confirmation_sent_at IS NOT NULL, returning 0 rows for this customer).",
+    "CRITERION 2 (step 2 — no mutation, guided list with usage footer): PASS. Sending exactly 'quiero confirmar mi cita' produced: 'Tienes 2 citas pendientes de confirmación:\\n\\n1. viernes 10 de julio a las 10:00 con Marta\\n2. miércoles 15 de julio a las 10:00 con Rosa\\n\\n¿Cuál quieres confirmar: la 1, la 2 o todas?' plus a usage footer ('*1*, *2*... - para una cita específica' / '*TODAS* - para confirmar todas'). Tool evidence shows the LLM DID attempt manage_appointments(action='confirm', appointment_id='d696b588-...') but the tool's internal gate intercepted it and returned the guided list instead of mutating. psql immediately after the turn confirmed both appointments remained status=pending with updated_at unchanged from their booking-creation timestamps (10:54:19 and 10:57:45 respectively) — zero mutation.",
+    "CRITERION 3 ('la 1' reply — exactly first-listed appointment flips CONFIRMED, other stays PENDING): PASS. Immediately after replying 'la 1', psql showed d696b588-7cf4-4729-aa33-7d6faa209a5e (Corte de Mujer, viernes 10 de julio) status=confirmed with updated_at bumped to 10:59:04, while 2f06b0cb-f826-4c72-84db-5550d4957d28 (Manicura, miércoles 15 de julio) remained status=pending with updated_at unchanged (10:57:45). Tool evidence: manage_appointments(action='confirm', appointment_id='d696b588-7cf4-4729-aa33-7d6faa209a5e') succeeded, returning 'Tu cita del viernes 10 de julio a las 10:00 con Marta queda confirmada.'",
+    "CRITERION 4 (ordinal mapping — 'la 1' = appointment listed FIRST in the bot's own message, earliest start_time): PASS. The bot's guided list in turn 15 listed '1. viernes 10 de julio a las 10:00 con Marta' before '2. miércoles 15 de julio a las 10:00 con Rosa' — earliest start_time first. 'la 1' correctly resolved to appointment_id d696b588-... (July 10, the earlier date), matching the bot's own ordinal presentation exactly. No cross-mapping or off-by-one error.",
+    "IDOR / cross-customer check (no formal criterion but verified as good practice): PASS. All manage_appointments calls in this run (list-via-gate x1, confirm x1) targeted appointment IDs belonging to the SAME resolved customer_id (51679f0e-bf3f-43eb-b176-2af4642b755c) as the active conversation/phone +34999000035. No cross-customer appointment ID was leaked or targeted.",
+    "PRE-EXISTING NON-BLOCKING BUGS (unrelated to the F2 gate under test, matching baseline BUG-5/BUG-6): (a) stating 'manicura normal' upfront did not resolve the variant in one shot (turn 7); (b) audience already established in booking 1 was re-demanded for booking 2's slot lookup (turn 9). Neither affects the disambiguation gate's correctness and both are cosmetic UX friction already known from the baseline run.",
+    "OVERALL VERDICT: PASS. PR #106 (fix/grounding-f2b-pending-query) fixes the CRITICAL bug identified in the baseline (tests/e2e/runs/20260706_120917_rerun/rerun-confirmacion-ambigua.json): the disambiguation gate now correctly counts ALL future PENDING appointments for the customer regardless of confirmation_sent_at, so it fires even when neither appointment has yet received its 48h confirmation template. The exact reproduction scenario from the baseline — 2 freshly-booked PENDING appointments, both confirmation_sent_at=NULL, bare 'quiero confirmar mi cita' — now correctly triggers the guided numbered disambiguation list with zero mutation, and the customer's ordinal reply ('la 1') correctly and exclusively confirms the first-listed appointment while leaving the other untouched."
+  ]
+}

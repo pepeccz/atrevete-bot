@@ -1,0 +1,185 @@
+{
+  "scenario_id": "change-b-cache-warm-second-turn",
+  "conversation_id": "e21231af-b258-45dd-a7c4-1b6b18e58182",
+  "outcome": "booked",
+  "turns_taken": 12,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "¿Teneis disponibilidad para manicura esta semana?",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Qué tipo de manicura buscas? Tengo Manicura, Manicura Permanente o Manicura Permanente con Tratamiento.",
+      "latency_ms": 10312,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "first_availability_question"
+    },
+    {
+      "turn": 2,
+      "user_message": "Manicura normal. ¿Que dias teneis disponibles esta semana?",
+      "agent_response": "Perfecto, te anoto manicura. ¿Quieres añadir algún otro servicio o solo la manicura?",
+      "latency_ms": 10390,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "second_availability_question_cache_warm_check"
+    },
+    {
+      "turn": 3,
+      "user_message": "Solo la manicura, gracias. ¿Que huecos hay disponibles?",
+      "agent_response": "Para mirar huecos concretos necesito un día exacto, no solo "esta semana". ¿Qué día te viene bien?",
+      "latency_ms": 11319,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": null
+    },
+    {
+      "turn": 4,
+      "user_message": "El martes 1 de julio, ¿teneis algo por la manana?",
+      "agent_response": "Perdona, para reservar necesitamos al menos 3 días de antelación. La primera fecha disponible es el viernes 3 de julio. Si quieres, te miro los huecos de esa mañana.",
+      "latency_ms": 12507,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "check_availability"],
+      "bugs": [],
+      "milestone": "check_availability_called_advance_policy_enforced"
+    },
+    {
+      "turn": 5,
+      "user_message": "Si, mirame el viernes 3 de julio por la manana.",
+      "agent_response": "¿Es para ti o para otra persona?",
+      "latency_ms": 11650,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "check_availability"],
+      "bugs": [],
+      "milestone": null
+    },
+    {
+      "turn": 6,
+      "user_message": "Para mi.",
+      "agent_response": "Perfecto. Para seguir, necesito tu nombre y primer apellido.",
+      "latency_ms": 16906,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "check_availability"],
+      "bugs": [],
+      "milestone": "audience_provided"
+    },
+    {
+      "turn": 7,
+      "user_message": "Marta Gonzalez",
+      "agent_response": "¿Quieres dejarme alguna nota para la cita o prefieres que la gestione sin más?",
+      "latency_ms": 13228,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "name_provided"
+    },
+    {
+      "turn": 8,
+      "user_message": "Sin notas, gracias.",
+      "agent_response": "Me falta elegir un hueco exacto antes de poder confirmártelo. ¿Prefieres que te enseñe los huecos de la mañana del viernes 3 de julio?",
+      "latency_ms": 14198,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "check_availability"],
+      "bugs": [],
+      "milestone": null
+    },
+    {
+      "turn": 9,
+      "user_message": "Si, muéstrame los huecos de la manana del viernes.",
+      "agent_response": "¿Es para ti o para otra persona?",
+      "latency_ms": 16239,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "check_availability", "get_next_available_options"],
+      "bugs": ["context_loss: audience re-asked despite customer answering 'Para mi' in turn 6; update_booking audience field never carried forward in draft state across turns"],
+      "milestone": null
+    },
+    {
+      "turn": 10,
+      "user_message": "Para mi, me llamo Marta Gonzalez, sin notas. Por favor muestrame los huecos del viernes 3 de julio por la manana.",
+      "agent_response": "Estas son las opciones de la mañana del viernes 3 de julio:\n\n1. 10:00 con Rosa\n2. 10:30 con Rosa\n3. 11:30 con Rosa\n\nSi quieres, dime el número que prefieres.",
+      "latency_ms": 12935,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "check_availability", "get_next_available_options"],
+      "bugs": [],
+      "milestone": "slots_displayed"
+    },
+    {
+      "turn": 11,
+      "user_message": "1",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar...\n\n¿La aceptas?",
+      "latency_ms": 25727,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "check_availability", "get_next_available_options", "book"],
+      "bugs": [],
+      "milestone": "policy_gate_triggered"
+    },
+    {
+      "turn": 12,
+      "user_message": "Si, la acepto.",
+      "agent_response": "¡Listo! Te queda confirmada la manicura el viernes 3 de julio a las 10:00 con Rosa. Te comparto el enlace del calendario por si te viene bien: https://calendar.google.com/calendar/render?action=TEMPLATE&text=Manicura%20en%20Atr%C3%A9vete&dates=20260703T080000Z/20260703T083000Z&details=Turno%20con%20Rosa&location=Atr%C3%A9vete%20Sal%C3%B3n%20de%20Belleza",
+      "latency_ms": 17483,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "check_availability", "get_next_available_options", "book"],
+      "bugs": [],
+      "milestone": "booked"
+    }
+  ],
+  "bugs": [
+    "context_loss(T9): audience already answered 'Para mi' in T6 but re-asked; audience field never persisted in draft across turns — LLM re-initializes update_booking with audience=null on each invocation"
+  ],
+  "milestones_reached": [
+    "first_availability_question",
+    "second_availability_question_cache_warm_check",
+    "check_availability_called_advance_policy_enforced",
+    "audience_provided",
+    "name_provided",
+    "slots_displayed",
+    "policy_gate_triggered",
+    "policy_accepted",
+    "booked"
+  ],
+  "cache_warm_analysis": {
+    "turn1_latency_ms": 10312,
+    "turn2_latency_ms": 10390,
+    "delta_ms": 78,
+    "verdict": "No measurable cache warm effect between T1 and T2; latencies virtually identical (~10.3s each). Second availability question did not produce a faster response."
+  },
+  "db_delta": {
+    "customers_delta": 1,
+    "appointments_delta": 1,
+    "appointment_id": "170161a0-63ac-4197-bb12-b0bcbc56dbb6",
+    "customer_id": "a1b2c911-081f-4e02-9667-ec49c08d4e05",
+    "booked_slot": "2026-07-03T10:00:00+02:00",
+    "stylist": "Rosa"
+  },
+  "snapshot_before": {
+    "customer_count": 0,
+    "appointment_count": 0
+  },
+  "snapshot_after": {
+    "customer_count": 1,
+    "appointment_count": 1
+  },
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "e21231af-b258-45dd-a7c4-1b6b18e58182",
+    "customer_phone": "+34999000007",
+    "customer_id": "a1b2c911-081f-4e02-9667-ec49c08d4e05",
+    "customer_name": "Marta Gonzalez",
+    "messages_count": 53,
+    "latest_tool_call_name": "book",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": true,
+    "note": "customer_consents_count=0 and policy_accepted_at=null despite policy acceptance in T12 and successful book() call — possible consent-record write gap in book tool"
+  },
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "booked",
+    "db_appointment": null,
+    "tool_calls_required": ["check_availability"],
+    "tool_calls_forbidden": []
+  },
+  "passed": true
+}

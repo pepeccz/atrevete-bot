@@ -1,0 +1,332 @@
+{
+  "scenario_id": "stress-confirmacion-ambigua",
+  "conversation_id": "122b316f-7e86-4557-b1dc-ce1c9b38a3c0",
+  "outcome": "rejected",
+  "outcome_note": "Using 'rejected' loosely per the v1/v2 enum: the run did NOT reach the expected 'disambiguation_then_single_confirmation' outcome. The bot never disambiguated; it silently auto-selected and confirmed a target on the ambiguous message. This is a FAIL against expected_outcome, not a clean terminal enum match — see 'passed': false and bugs[] below.",
+  "turns_taken": 16,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, quiero pedir cita",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nClaro, te ayudo con la cita 😊 ¿Qué servicio quieres reservar?",
+      "latency_ms": 11555,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "greeting"
+    },
+    {
+      "turn": 2,
+      "user_message": "Corte de pelo",
+      "agent_response": "¿Es para señora, caballero, niña, niño o bebé?",
+      "latency_ms": 12787,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "service_ambiguous_audience_required"
+    },
+    {
+      "turn": 3,
+      "user_message": "Señora",
+      "agent_response": "Perfecto, te anoto el corte de señora. ¿Quieres añadir algún otro servicio o solo el corte?",
+      "latency_ms": 11537,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "service_resolved_corte_mujer"
+    },
+    {
+      "turn": 4,
+      "user_message": "Solo el corte",
+      "agent_response": "Perfecto 😊 ¿Prefieres una estilista concreta o la primera con disponibilidad?",
+      "latency_ms": 10978,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "stylist_required"
+    },
+    {
+      "turn": 5,
+      "user_message": "La primera",
+      "agent_response": "Estas son las primeras citas disponibles para tu corte de señora:\n\n1. Jueves 9 de julio a las 10:00 con Marta  \n2. Jueves 9 de julio a las 10:40 con Marta  \n3. Jueves 9 de julio a las 11:20 con Marta  \n\n¿Cuál te viene mejor?",
+      "latency_ms": 24297,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "get_next_available_options"],
+      "bugs": [],
+      "milestone": "slots_offered_booking1"
+    },
+    {
+      "turn": 6,
+      "user_message": "La primera, jueves 10",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "latency_ms": 11647,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": ["date_misresolution: user said 'jueves 10' meaning slot #1 of the Jueves-9 list; the LLM resolved a literal date_iso=2026-07-10 with slot_iso=2026-07-10T10:00, which does not match any offered slot and later causes a reoffer/retry (turn 9)."],
+      "milestone": "policy_acceptance_required"
+    },
+    {
+      "turn": 7,
+      "user_message": "Sí, acepto",
+      "agent_response": "Perfecto, ya tengo la fecha 😊 Para dejarla cerrada, ¿me dices tu nombre y primer apellido?",
+      "latency_ms": 12303,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "policy_accepted_name_required"
+    },
+    {
+      "turn": 8,
+      "user_message": "Elena Sanz",
+      "agent_response": "El hueco de las 10:00 ya no está disponible.\n\nAhora mismo te puedo ofrecer estas opciones para tu corte de señora:\n1. Jueves 9 de julio a las 10:00 con Marta\n2. Jueves 9 de julio a las 10:40 con Marta\n3. Jueves 9 de julio a las 11:20 con Marta\n\n¿Cuál prefieres?",
+      "latency_ms": 15998,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": ["reoffer_after_stale_slot: mismatched date_iso=2026-07-10 vs actual available slots on 2026-07-09 triggered a mid-flow reoffer, forcing the user to repeat the choice (context_loss-adjacent, not a disambiguation bug)."],
+      "milestone": "slot_stale_reoffer"
+    },
+    {
+      "turn": 9,
+      "user_message": "El jueves 9 a las 10:00",
+      "agent_response": "Perfecto, Elena, te lo dejo el jueves 9 de julio a las 10:00 con Marta para corte de señora. ¿Te lo confirmo?",
+      "latency_ms": 19631,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "check_availability"],
+      "bugs": [],
+      "milestone": "booking1_ready_for_confirmation"
+    },
+    {
+      "turn": 10,
+      "user_message": "Sí, confirma",
+      "agent_response": "Te agendé la cita para el jueves 9 de julio a las 10:00 con Marta. Te enviaré una confirmación 48h antes; respóndela con un “sí” y queda lista ✅\n\nSi quieres, también te paso el enlace del calendario.",
+      "latency_ms": 13188,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "book"],
+      "bugs": ["notes_field_polluted: 'notes' collected the literal string 'Elena Sanz' during the stale-slot reoffer path (turn 8-9 internal state), and the booking was created with notes='Elena Sanz' instead of null/empty. Cosmetic data-quality bug, not scored against the audit hooks."],
+      "milestone": "booking1_created_appointment_84a302d4-5023-4a02-84ba-e186145c6411_PENDING"
+    },
+    {
+      "turn": 11,
+      "user_message": "Quiero otra cita, manicura",
+      "agent_response": "¿Qué tipo de manicura quieres? Tengo manicura, manicura permanente o manicura permanente con tratamiento.",
+      "latency_ms": 15093,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "booking2_service_ambiguous_variant"
+    },
+    {
+      "turn": 12,
+      "user_message": "La normal -> Solo eso -> Manicura normal, nada mas",
+      "agent_response": "Perfecto, manicura normal entonces 😊 ¿prefieres Rosa o la primera con disponibilidad?",
+      "latency_ms": null,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": ["redundant_question: after 'La normal' resolved the variant, 'Solo eso' re-triggered the SAME variant_required ambiguous question instead of proceeding to extras/stylist, forcing a third repeat ('Manicura normal, nada mas') before it registered."],
+      "milestone": "booking2_variant_resolved_after_3_attempts_stylist_required"
+    },
+    {
+      "turn": 13,
+      "user_message": "Rosa, el sabado 12 por la tarde -> Mejor el lunes 13 por la tarde -> Vale, el martes 14 por la tarde",
+      "agent_response": "Perfecto, ya tengo el martes 14 por la tarde con Rosa 😊 Para reservarla, ¿me das tu nombre y primer apellido?",
+      "latency_ms": null,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "booking2_closed_days_correctly_rejected_sun_and_mon_date_resolved_tue14"
+    },
+    {
+      "turn": 14,
+      "user_message": "Elena Sanz -> No, gracias -> Si porfa -> Señora -> Las 16:00",
+      "agent_response": "Perfecto, Elena, te lo dejo el martes 14 de julio a las 16:00 con Rosa para manicura. ¿Te lo confirmo?",
+      "latency_ms": null,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "check_availability"],
+      "bugs": ["redundant_question: audience was already established as adult_female in booking 1 of the SAME conversation, but check_availability rejected the manicura slot lookup demanding 'es para señora, caballero...' again mid-flow — customer-level audience context was not reused across bookings."],
+      "milestone": "booking2_ready_for_confirmation"
+    },
+    {
+      "turn": 15,
+      "user_message": "Confirma",
+      "agent_response": "Te agendé la cita para el martes 14 de julio a las 16:00 con Rosa. Te enviaré una confirmación 48h antes; respóndela con un “sí” y queda lista ✅\n\nSi quieres, también te paso el enlace del calendario.",
+      "latency_ms": 13188,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "book"],
+      "bugs": [],
+      "milestone": "booking2_created_appointment_f7df9861-6ab8-4df1-9280-d2fdd488a3ba_PENDING_both_appts_now_PENDING"
+    },
+    {
+      "turn": 16,
+      "user_message": "Quiero confirmar mi cita",
+      "agent_response": "¡Perfecto! Tu cita del martes 14 de julio a las 16:00 con Rosa queda confirmada. ¡Te esperamos!",
+      "latency_ms": null,
+      "timed_out": false,
+      "tool_calls_observed": ["check_availability", "check_availability", "update_booking", "book", "manage_appointments"],
+      "bugs": [
+        "CRITICAL: no_disambiguation_on_ambiguous_confirm — with TWO pending appointments belonging to the same customer (Corte de Mujer 2026-07-09 10:00 and Manicura 2026-07-14 16:00), the ambiguous message 'Quiero confirmar mi cita' should have triggered a clarifying question. Instead the agent silently called manage_appointments(action=confirm, appointment_id=f7df9861-6ab8-4df1-9280-d2fdd488a3ba) — the LATER-dated, LATER-booked appointment (Manicura/Rosa) — and told the customer it was confirmed, without ever surfacing the other pending appointment or asking which one.",
+        "CRITICAL_side_effect: unintended_reboking_tool_calls_before_confirm — the same turn's tool trace shows the agent re-running check_availability and update_booking/book against the ALREADY-BOOKED Manicura appointment's slot before calling manage_appointments confirm, i.e. it re-derived/re-validated the target booking context rather than looking up the customer's existing appointments list — suggests the agent picked 'the appointment currently in scratch/working state' (last one it personally just booked) rather than reasoning over the customer's actual appointment list."
+      ],
+      "milestone": "CRITICAL_BUG_silent_single_confirm_no_disambiguation"
+    },
+    {
+      "turn": "16b (scripted follow-up per test script)",
+      "user_message": "La primera",
+      "agent_response": "¿Te refieres a tu cita de las 10:00 con Marta del jueves 9 de julio?",
+      "latency_ms": null,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": ["too_late_clarification: the agent DOES ask a clarifying question here, one turn AFTER it already silently confirmed the other appointment. Correct disambiguation logic exists but was not triggered on the original ambiguous message in turn 16 — the gate is inconsistently applied."],
+      "milestone": "post_hoc_clarification_for_first_appointment"
+    },
+    {
+      "turn": "16c (scripted follow-up)",
+      "user_message": "Si, esa",
+      "agent_response": "¡Perfecto! Tu cita del jueves 9 de julio a las 10:00 con Marta queda confirmada. ¡Te esperamos!",
+      "latency_ms": null,
+      "timed_out": false,
+      "tool_calls_observed": ["manage_appointments"],
+      "bugs": [
+        "CRITICAL: both_appointments_ended_up_confirmed — because turn 16 already silently confirmed the Manicura appointment, and this exchange then confirmed the Corte de Mujer appointment too, BOTH pending appointments ended up status=confirmed. The scenario's expected outcome (exactly one flips to CONFIRMED, the other stays PENDING) is violated: the correct appointment (Corte, 'la primera') did get confirmed eventually, but so did the WRONG one that was never supposed to be touched by this exchange."
+      ],
+      "milestone": "final_state_both_confirmed_expected_only_one"
+    }
+  ],
+  "bugs": [
+    {
+      "id": "BUG-1-CRITICAL",
+      "category": "disambiguation_failure",
+      "description": "Ambiguous confirmation request ('quiero confirmar mi cita') with 2 pending appointments belonging to the same customer was NOT disambiguated. The agent silently selected and confirmed the later-dated/later-booked appointment (Manicura, 2026-07-14, Rosa) via manage_appointments(action=confirm) without asking which appointment the customer meant.",
+      "evidence": "Turn 16 tool_evidence: manage_appointments {'action': 'confirm', 'appointment_id': 'f7df9861-6ab8-4df1-9280-d2fdd488a3ba', ...} -> '¡Perfecto! Tu cita del martes 14 de julio a las 16:00 con Rosa queda confirmada.' with zero preceding clarifying turn.",
+      "severity": "CRITICAL",
+      "impact": "In production this silently confirms the WRONG appointment for a customer with 2+ pending bookings, with no chance to correct before the action is taken. Directly the scenario the auditor should flag P0."
+    },
+    {
+      "id": "BUG-2-HIGH",
+      "category": "disambiguation_inconsistency",
+      "description": "The disambiguation clarifying-question logic DOES exist (it fired correctly on the very next turn, 'La primera' -> '¿Te refieres a tu cita de las 10:00 con Marta del jueves 9 de julio?'), but it was not triggered on the original ambiguous message. This indicates the disambiguation gate is either state-dependent on prior turn phrasing, or only fires on partial/name-only references ('la primera') rather than fully-ambiguous ones ('mi cita').",
+      "severity": "HIGH"
+    },
+    {
+      "id": "BUG-3-HIGH",
+      "category": "unintended_double_confirmation",
+      "description": "As a direct consequence of BUG-1, both pending appointments ended up status=confirmed after the full exchange, instead of exactly one (the customer-selected 'la primera') being confirmed and the other remaining pending.",
+      "db_evidence": "Final snapshot: both 84a302d4-5023-4a02-84ba-e186145c6411 (Corte, Jul 9) and f7df9861-6ab8-4df1-9280-d2fdd488a3ba (Manicura, Jul 14) show status=confirmed.",
+      "severity": "HIGH"
+    },
+    {
+      "id": "BUG-4-MEDIUM",
+      "category": "date_slot_misresolution",
+      "description": "During booking 1, user said 'La primera, jueves 10' (meaning: option #1 from a list of Jueves-9 slots). The agent literalized 'jueves 10' as date_iso=2026-07-10 (a Friday, not a Thursday) and attempted to book a nonexistent slot_iso=2026-07-10T10:00, which failed pre_book_validation and forced a reoffer/retry loop (turns 6-9).",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "BUG-5-MEDIUM",
+      "category": "redundant_question",
+      "description": "During booking 2 (manicura), variant resolution required 3 user attempts ('La normal' -> ignored/re-asked -> 'Solo eso' -> re-asked same question -> 'Manicura normal, nada mas' -> finally resolved).",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "BUG-6-MEDIUM",
+      "category": "redundant_question",
+      "description": "Audience (adult_female) was already established in booking 1 of the same conversation but check_availability re-demanded it for booking 2 before allowing a slot lookup with a specific time.",
+      "severity": "MEDIUM"
+    },
+    {
+      "id": "BUG-7-LOW",
+      "category": "data_quality",
+      "description": "booking 1's 'notes' field was polluted with the literal string 'Elena Sanz' (the customer's own name, echoed back into notes during the stale-slot reoffer retry) instead of being left null.",
+      "severity": "LOW"
+    }
+  ],
+  "milestones_reached": [
+    "booking1_corte_mujer_created_pending",
+    "booking2_manicura_created_pending",
+    "ambiguous_confirm_message_sent",
+    "wrong_appointment_silently_confirmed",
+    "post_hoc_clarification_offered_next_turn",
+    "correct_appointment_also_confirmed",
+    "final_state_both_confirmed_expected_one_pending"
+  ],
+  "db_delta": {
+    "customer_count_delta": 1,
+    "appt_count_delta": 2
+  },
+  "snapshot_before": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "snapshot_before_ambiguous_exchange": {
+    "appointments": [
+      {
+        "id": "84a302d4-5023-4a02-84ba-e186145c6411",
+        "service": "Corte de Mujer",
+        "start_time": "2026-07-09T08:00:00+00:00",
+        "stylist": "Marta",
+        "status": "pending",
+        "confirmation_sent_at": null,
+        "gcal_sync_status": "not_applicable"
+      },
+      {
+        "id": "f7df9861-6ab8-4df1-9280-d2fdd488a3ba",
+        "service": "Manicura",
+        "start_time": "2026-07-14T14:00:00+00:00",
+        "stylist": "Rosa",
+        "status": "pending",
+        "confirmation_sent_at": null,
+        "gcal_sync_status": "not_applicable"
+      }
+    ]
+  },
+  "snapshot_after": {
+    "customer_count": 1,
+    "appt_count": 2,
+    "appointments": [
+      {
+        "id": "84a302d4-5023-4a02-84ba-e186145c6411",
+        "service": "Corte de Mujer",
+        "start_time": "2026-07-09T08:00:00+00:00",
+        "stylist": "Marta",
+        "status": "confirmed",
+        "confirmation_sent_at": null,
+        "updated_at": "2026-07-05T23:59:36.769843+00:00"
+      },
+      {
+        "id": "f7df9861-6ab8-4df1-9280-d2fdd488a3ba",
+        "service": "Manicura",
+        "start_time": "2026-07-14T14:00:00+00:00",
+        "stylist": "Rosa",
+        "status": "confirmed",
+        "confirmation_sent_at": null,
+        "updated_at": "2026-07-05T23:58:43.665710+00:00"
+      }
+    ],
+    "note": "customer_count/appt_count queried post-cleanup-reset would read 0; the appointments array above reflects the LIVE state captured immediately after the turn loop, before Step 8 cleanup ran."
+  },
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "122b316f-7e86-4557-b1dc-ce1c9b38a3c0",
+    "customer_phone": "+34999000026",
+    "customer_id": "d0dd5528-1374-4b35-9ca5-286e9640d078",
+    "customer_name": "Elena Sanz",
+    "messages_count": 112,
+    "latest_tool_call_name": "manage_appointments",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": true
+  },
+  "langfuse_trace_path": null,
+  "langfuse_pull_error": "UnauthorizedError 401 - Invalid credentials (known Langfuse credential issue per CLAUDE.md 'context-coherence prompts' runbook — key regeneration pending)",
+  "expect": {
+    "outcome": "disambiguation_then_single_confirmation"
+  },
+  "passed": false,
+  "observations": [
+    "HOOK 1 (>48h -> PENDING): PASS. Both bookings landed as status=pending immediately after book(). Booking 1 (Corte de Mujer, 2026-07-09T10:00 local) was ~3d8h out from the run's wall-clock time; Booking 2 (Manicura, 2026-07-14T16:00 local) was ~8d14h out. Both well beyond the 48h threshold in agent/tools/book.py. The book() tool responses did not surface an explicit requires_confirmation field in the captured tool_evidence result_summary (it was truncated), but the immediate DB read after each booking confirmed status='pending' for both rows.",
+    "HOOK 2 (CRITICAL - ask vs silently confirm): FAIL / BUG CONFIRMED. Faced with 'quiero confirmar mi cita' and 2 pending candidates for the SAME customer, the bot did NOT ask which one. It silently invoked manage_appointments(action=confirm) against appointment f7df9861-... (Manicura, 2026-07-14, the LATER-dated appointment, also the one it had most recently booked/had 'in working memory') and told the customer it was done. No clarifying question was asked before this irreversible state-changing tool call.",
+    "HOOK 3 (does exactly the earlier appointment flip to CONFIRMED, other untouched): FAIL. After the scripted follow-up 'la primera' -> 'si, esa', the Corte de Mujer (2026-07-09, the actual 'primera'/earlier appointment) DID correctly get confirmed via a second manage_appointments call. But the OTHER appointment was NOT left untouched — it had already been wrongly confirmed one turn earlier by the silent action in Hook 2. Final DB state: BOTH appointments status=confirmed, not one confirmed + one pending as the scenario expects.",
+    "HOOK 4 (disambiguation list showing both appointments with correct dates/services): FAIL — no disambiguation list was ever shown. The only clarifying message produced ('¿Te refieres a tu cita de las 10:00 con Marta del jueves 9 de julio?') came one turn LATE, in response to the user's own 'la primera' input, and named only ONE candidate (not both), so it wasn't even a proper disambiguation prompt — it read more like the agent guessing based on the user's phrase rather than presenting the full candidate set.",
+    "HOOK 5 (ownership/IDOR check on manage_appointments evidence): PASS — no IDOR observed. Both manage_appointments confirm calls in this run targeted appointment IDs (f7df9861-... and 84a302d4-...) that belong to the SAME resolved customer_id (d0dd5528-1374-4b35-9ca5-286e9640d078) as the active conversation/phone +34999000026. No cross-customer appointment ID leaked or was targeted. The bug here is a within-account disambiguation/UX failure, not an authorization boundary failure.",
+    "SECONDARY: Several non-blocking data-quality/UX bugs were found during the two booking sub-flows (date misresolution on 'jueves 10', redundant variant/audience re-asks, notes-field pollution) — see bugs[] BUG-4 through BUG-7. These are unrelated to the disambiguation scenario but recorded for completeness since the harness protocol asks for inline bug detection every turn.",
+    "Root cause hypothesis for the auditor/dev: manage_appointments' confirm-intent resolution appears to bind to the most recently active/just-booked appointment context (or a single 'last referenced appointment' slot in state) rather than querying the customer's full list of pending appointments and forcing a disambiguation step whenever count(pending) > 1. The correct clarifying-question capability clearly exists in the prompt/tooling (it fired on 'la primera'), so the fix is likely a missing pre-condition check before manage_appointments(action=confirm) is invoked with a bare/ambiguous intent like 'mi cita'."
+  ]
+}

@@ -1,0 +1,169 @@
+{
+  "scenario_id": "r-cancel-flow",
+  "conversation_id": "01f58c88-dcfa-4e1c-871c-6c4396282c8a",
+  "phone": "+34999000011",
+  "persona_name": "Lucia Herrera",
+  "expected_outcome": "cancelled",
+  "outcome": "cancelled",
+  "max_turns": 10,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Quiero reservar un corte y luego cancelarlo porque no voy a poder ir.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Me dices para qué día quieres el corte?",
+      "response_latency_ms": 9287,
+      "timed_out": false,
+      "tool_evidence": []
+    },
+    {
+      "turn": 2,
+      "user_message": "Para el proximo martes, por la manana si puede ser.",
+      "agent_response": "Lo siento, tuve un problema técnico. ¿Puedes intentarlo de nuevo? 💕",
+      "response_latency_ms": 13833,
+      "timed_out": false,
+      "tool_evidence": []
+    },
+    {
+      "turn": 3,
+      "user_message": "Para el martes que viene por la manana.",
+      "agent_response": "Lo siento, tuve un problema técnico. ¿Puedes intentarlo de nuevo? 💕",
+      "response_latency_ms": 13110,
+      "timed_out": false,
+      "tool_evidence": []
+    },
+    {
+      "turn": 4,
+      "user_message": "El martes 24 de junio.",
+      "agent_response": "Entonces te anoto corte de mujer, ¿quieres añadir algún otro servicio o solo ese?",
+      "response_latency_ms": 14490,
+      "timed_out": false,
+      "tool_evidence": ["update_booking"]
+    },
+    {
+      "turn": 5,
+      "user_message": "No, solo el corte.",
+      "agent_response": "Lo siento, tuve un problema técnico. ¿Puedes intentarlo de nuevo? 💕",
+      "response_latency_ms": 7498,
+      "timed_out": false,
+      "tool_evidence": ["update_booking"]
+    },
+    {
+      "turn": 6,
+      "user_message": "Solo el corte, nada mas.",
+      "agent_response": "Lo siento, tuve un problema técnico. ¿Puedes intentarlo de nuevo? 💕",
+      "response_latency_ms": 11163,
+      "timed_out": false,
+      "tool_evidence": ["update_booking"]
+    },
+    {
+      "turn": 7,
+      "user_message": "No quiero ningun servicio adicional, solo el corte de pelo.",
+      "agent_response": "Perfecto. ¿Me dices tu nombre y primer apellido, por favor?",
+      "response_latency_ms": 14660,
+      "timed_out": false,
+      "tool_evidence": ["update_booking"]
+    },
+    {
+      "turn": 8,
+      "user_message": "Lucia Herrera",
+      "agent_response": "¿Quieres dejarme alguna nota para la cita, o lo dejamos así?",
+      "response_latency_ms": 11008,
+      "timed_out": false,
+      "tool_evidence": ["update_booking", "update_booking", "update_booking"]
+    },
+    {
+      "turn": 9,
+      "user_message": "No, no hace falta ninguna nota.",
+      "agent_response": "Me falta elegir una hora concreta para poder revalidar el hueco antes de dejarlo preparado. ¿Por la mañana, qué hora te viene mejor?",
+      "response_latency_ms": 16204,
+      "timed_out": false,
+      "tool_evidence": ["update_booking", "update_booking", "update_booking", "update_booking"]
+    },
+    {
+      "turn": 10,
+      "user_message": "A las 10 de la manana.",
+      "agent_response": "Perfecto, Lucia. Te lo dejo el miércoles 24 de junio a las 10:00 con Marta para corte de mujer. ¿Te lo confirmo?",
+      "response_latency_ms": 15732,
+      "timed_out": false,
+      "tool_evidence": ["update_booking", "update_booking", "update_booking", "update_booking", "check_availability"]
+    },
+    {
+      "turn": 11,
+      "user_message": "Si, perfecto, lo confirmo.",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "response_latency_ms": 12337,
+      "timed_out": false,
+      "tool_evidence": ["update_booking", "update_booking", "update_booking", "update_booking", "check_availability", "book"]
+    },
+    {
+      "turn": 12,
+      "user_message": "Si, la acepto.",
+      "agent_response": "Se ha ocupado justo ese hueco. Te dejo estas alternativas con Marta:\n\n1. Jueves 25 de junio a las 10:00  \n2. Jueves 25 de junio a las 10:40  \n3. Jueves 25 de junio a las 11:20  \n\n¿Cuál te viene mejor?",
+      "response_latency_ms": 22176,
+      "timed_out": false,
+      "tool_evidence": ["update_booking", "update_booking", "update_booking", "update_booking", "check_availability", "book", "update_booking", "book", "get_next_available_options"]
+    },
+    {
+      "turn": 13,
+      "user_message": "La primera, el jueves 25 a las 10.",
+      "agent_response": "Perfecto, Lucia, te lo dejo el jueves 25 de junio a las 10:00 con Marta para corte de mujer. ¿Te lo confirmo?",
+      "response_latency_ms": 15406,
+      "timed_out": false,
+      "tool_evidence": ["update_booking", "update_booking", "update_booking", "update_booking", "check_availability", "book", "update_booking", "book", "get_next_available_options", "check_availability"]
+    },
+    {
+      "turn": 14,
+      "user_message": "Si, confirmo.",
+      "agent_response": "¡Listo! Te he dejado confirmada la cita para el jueves 25 de junio a las 10:00 con Marta para corte de mujer.\n\nAquí tienes el enlace del calendario por si te viene bien:\nhttps://calendar.google.com/calendar/render?action=TEMPLATE&text=Corte%20de%20Mujer%20en%20Atr%C3%A9vete&dates=20260625T080000Z/20260625T084000Z&details=Turno%20con%20Marta&location=Atr%C3%A9vete%20Sal%C3%B3n%20de%20Belleza\n\nSi luego quieres, también te ayudo a revisarla o cancelarla.",
+      "response_latency_ms": 13099,
+      "timed_out": false,
+      "tool_evidence": ["update_booking", "update_booking", "update_booking", "update_booking", "check_availability", "book", "update_booking", "book", "get_next_available_options", "check_availability", "book"]
+    },
+    {
+      "turn": 15,
+      "user_message": "Gracias. Pero al final no voy a poder ir, necesito cancelar la cita.",
+      "agent_response": "Perdona, déjame confirmar la disponibilidad antes de cerrar la cita. ¿Te confirmo las opciones?",
+      "response_latency_ms": 12184,
+      "timed_out": false,
+      "tool_evidence": ["update_booking", "update_booking", "update_booking", "update_booking", "check_availability", "book", "update_booking", "book", "get_next_available_options", "check_availability", "book", "manage_appointments"]
+    }
+  ],
+  "tool_calls_observed": [
+    "update_booking",
+    "update_booking",
+    "update_booking",
+    "update_booking",
+    "check_availability",
+    "book",
+    "update_booking",
+    "book",
+    "get_next_available_options",
+    "check_availability",
+    "book",
+    "update_booking",
+    "book",
+    "get_next_available_options",
+    "check_availability",
+    "book",
+    "update_booking",
+    "book",
+    "get_next_available_options",
+    "check_availability",
+    "book",
+    "manage_appointments"
+  ],
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "01f58c88-dcfa-4e1c-871c-6c4396282c8a",
+    "customer_phone": "+34999000011",
+    "customer_id": "6ae2126c-64cf-443f-a35b-73b3099926de",
+    "customer_name": "Lucia Herrera",
+    "messages_count": 50,
+    "latest_tool_call_name": "manage_appointments",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": true
+  },
+  "claim_vs_backend": "Tu cita del jueves 25 de junio a las 10:00 con Marta ha sido cancelada. (from manage_appointments tool result, appointment_id: 623ad71b-2fc5-4819-a72b-d2e459695b9e)",
+  "coherence_notes": "The bot resolved both intents — it completed the booking of a corte de mujer with Marta on June 25 at 10:00 (appointment_id 623ad71b), then cancelled it in the final turn via manage_appointments. However, coherence was impaired: (1) the agent showed 2-3 consecutive 'technical error' turns early on when the customer said 'solo el corte', requiring a more explicit phrasing to unblock; (2) on the cancellation turn, the bot's text response was confused ('Perdona, déjame confirmar la disponibilidad antes de cerrar la cita') while the underlying tool correctly executed the cancellation — a mismatch between the tool evidence and the surface response; (3) policy_accepted_at is null in final_state despite the customer explicitly accepting it and the booking tool recording policy_accepted: true, suggesting a bug in the consent persistence path; (4) no voseo detected, stylists named (Marta) are valid."
+}

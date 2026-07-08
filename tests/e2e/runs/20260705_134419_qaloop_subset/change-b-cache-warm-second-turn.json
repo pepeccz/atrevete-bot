@@ -1,0 +1,199 @@
+{
+  "scenario_id": "change-b-cache-warm-second-turn",
+  "conversation_id": "e8dbd106-5ba8-4bed-99b2-7cea8ab8e699",
+  "outcome": "booked",
+  "turns_taken": 13,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola! ¿Tenéis disponibilidad para manicura esta semana?",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nSí, tengo opciones para manicura, pero antes necesito concretar cuál quieres: **manicura**, **manicura permanente** o **manicura permanente con tratamiento**.",
+      "latency_ms": 10905,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "variant_disambiguation_requested"
+    },
+    {
+      "turn": 2,
+      "user_message": "La manicura normal, la básica. ¿Qué días tenéis libres esta semana entonces?",
+      "agent_response": "Perfecto, la manicura básica ya me queda clara 😊\n\n¿Quieres añadir algún otro servicio o solo la manicura?",
+      "latency_ms": 10380,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "variant_resolved_extras_asked"
+    },
+    {
+      "turn": 3,
+      "user_message": "Solo la manicura, nada más.",
+      "agent_response": "Perfecto, solo la manicura básica entonces.\n\n¿Me dices el día exacto y el mes que te vienen bien esta semana?",
+      "latency_ms": 15479,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "extras_resolved_date_requested"
+    },
+    {
+      "turn": 4,
+      "user_message": "El miércoles 8 de julio, si no puede ser cualquier día de esa semana.",
+      "agent_response": "Perfecto, el miércoles 8 de julio me encaja.\n\nPara dejarte la cita preparada, ¿me das tu nombre y primer apellido?",
+      "latency_ms": 10307,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "date_provided_name_requested"
+    },
+    {
+      "turn": 5,
+      "user_message": "Marta González",
+      "agent_response": "Genial, Marta González.\n\n¿Quieres que te busque ahora un hueco para el miércoles 8 de julio o prefieres que te diga primero si queda mejor por la mañana o por la tarde?",
+      "latency_ms": 8595,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "name_collected"
+    },
+    {
+      "turn": 6,
+      "user_message": "Sí, búscame un hueco, mejor por la mañana.",
+      "agent_response": "Para mirarte la disponibilidad del miércoles por la mañana, ¿es para ti o para otra persona?",
+      "latency_ms": 12905,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "check_availability"],
+      "bugs": [],
+      "milestone": "first_check_availability_call_rejected_audience_required"
+    },
+    {
+      "turn": 7,
+      "user_message": "Es para mí.",
+      "agent_response": "Perfecto, Marta 😊\n\n¿Quieres dejarme alguna nota para la manicura, o la dejamos sin comentarios?",
+      "latency_ms": 11680,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "audience_resolved_notes_requested"
+    },
+    {
+      "turn": 8,
+      "user_message": "Sin notas, gracias.",
+      "agent_response": "Perfecto. Ahora necesito comprobar un hueco exacto antes de confirmártelo.\n\n¿Te va mejor por la mañana si te propongo el primer hueco disponible?",
+      "latency_ms": 10498,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "notes_resolved_slot_search_confirmed"
+    },
+    {
+      "turn": 9,
+      "user_message": "Sí, perfecto, el primer hueco por la mañana.",
+      "agent_response": "No me sale hueco por la mañana para el miércoles 8 de julio. El primer hueco disponible que veo es el **jueves 9 de julio a las 16:00** con **Rosa**.\n\nSi quieres, también te puedo dar las otras dos opciones que me aparecen.",
+      "latency_ms": 11851,
+      "timed_out": false,
+      "tool_calls_observed": ["get_next_available_options"],
+      "bugs": ["ignored_preference"],
+      "milestone": "next_available_options_returned"
+    },
+    {
+      "turn": 10,
+      "user_message": "Mejor dime las otras opciones, prefiero por la mañana si hay alguna.",
+      "agent_response": "Sí, en **jueves 9 de julio** sí tienes opciones por la mañana con **Rosa**:\n\n1. **jueves 9 de julio a las 10:00**\n2. **jueves 9 de julio a las 10:30**\n3. **jueves 9 de julio a las 11:00**\n\n¿Cuál te viene mejor?",
+      "latency_ms": 10763,
+      "timed_out": false,
+      "tool_calls_observed": ["check_availability"],
+      "bugs": [],
+      "milestone": "successful_check_availability_morning_slots_returned"
+    },
+    {
+      "turn": 11,
+      "user_message": "Perfecto, el de las 10:00 con Rosa.",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "latency_ms": 13290,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "slot_selected_policy_gate_triggered"
+    },
+    {
+      "turn": 12,
+      "user_message": "Sí, la acepto.",
+      "agent_response": "Perfecto, Marta González, te lo dejo el **jueves 9 de julio a las 10:00** con **Rosa** para **manicura**.\n\n¿Te lo confirmo?",
+      "latency_ms": 16180,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "policy_accepted_final_confirmation_requested"
+    },
+    {
+      "turn": 13,
+      "user_message": "Sí, confírmamelo, gracias.",
+      "agent_response": "Te la he agendado para el **jueves 9 de julio a las 10:00** con **Rosa** para **manicura**.\n\nTe llegará una confirmación 48h antes; cuando la respondas, quedará lista ✅\n\nAquí tienes el enlace del calendario por si te viene bien:\nhttps://calendar.google.com/calendar/render?action=TEMPLATE&text=Manicura%20en%20Atr%C3%A9vete&dates=20260709T080000Z/20260709T083000Z&details=Turno%20con%20Rosa&location=Atr%C3%A9vete%20Sal%C3%B3n%20de%20Belleza",
+      "latency_ms": 16117,
+      "timed_out": false,
+      "tool_calls_observed": ["check_availability", "book"],
+      "bugs": [],
+      "milestone": "booking_confirmed"
+    }
+  ],
+  "bugs": [
+    {
+      "turn": 9,
+      "type": "ignored_preference",
+      "description": "User explicitly asked for a morning slot in turn 6 ('mejor por la mañana'). get_next_available_options returned both a 16:00 slot (rank_reason=earliest_any_stylist) and a 10:00 morning slot for the same day/stylist, but the bot surfaced only the 16:00 slot as 'the first available slot' and required the customer to ask again ('prefiero por la mañana') before the 10:00 morning option was offered in turn 10."
+    }
+  ],
+  "milestones_reached": [
+    "variant_disambiguation_requested",
+    "variant_resolved_extras_asked",
+    "extras_resolved_date_requested",
+    "date_provided_name_requested",
+    "name_collected",
+    "first_check_availability_call_rejected_audience_required",
+    "audience_resolved_notes_requested",
+    "notes_resolved_slot_search_confirmed",
+    "next_available_options_returned",
+    "successful_check_availability_morning_slots_returned",
+    "slot_selected_policy_gate_triggered",
+    "policy_accepted_final_confirmation_requested",
+    "booking_confirmed"
+  ],
+  "db_delta": {"customer_count_delta": 1, "appt_count_delta": 1},
+  "snapshot_before": {"customer_count": 0, "appt_count": 0},
+  "snapshot_after": {"customer_count": 1, "appt_count": 1},
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "e8dbd106-5ba8-4bed-99b2-7cea8ab8e699",
+    "customer_phone": "+34999000007",
+    "customer_id": "350a5551-e6e2-4688-9cd5-df29dae31436",
+    "customer_name": "Marta González",
+    "messages_count": 52,
+    "latest_tool_call_name": "book",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": true,
+    "note": "customer_consents_count=0 / policy_accepted_at=null is a known state-vs-DB reconcile artifact (see Fase E findings), not a new bug — policy_accepted=true was confirmed in the update_booking tool result and the appointment booked successfully."
+  },
+  "appointment_snapshot": {
+    "id": "1fc1320c-ea53-40d3-bf36-88f31264cccd",
+    "status": "pending",
+    "gcal_sync_status": "not_applicable",
+    "cancellation_reason": null,
+    "note": "status=pending is correct: appointment is >48h out (today 2026-07-05, appt 2026-07-09), so the confirm_48h lead-time gate applies per CLAUDE.md Confirmation Flow."
+  },
+  "langfuse_trace_path": null,
+  "langfuse_pull_error": "UnauthorizedError 401 — Invalid Langfuse credentials on server env (host/key mismatch); traces not retrievable for this run",
+  "expect": {
+    "outcome": "booked",
+    "db_appointment": null,
+    "tool_calls_required": ["check_availability"],
+    "tool_calls_forbidden": []
+  },
+  "passed": true,
+  "extra_observations": {
+    "stylist_menu_ordering": "No explicit stylist-choice menu was ever presented to the customer. The bot silently defaulted no_preference_stylist=true from turn 1 without asking 'stylist X vs first available' — it only surfaced a concrete stylist name (Rosa) once slots were returned by get_next_available_options/check_availability. So the 'primera con disponibilidad como opción 0' pattern could not be observed as a first-class menu step; it was implicit.",
+    "extras_as_own_turn": "Yes — turn 2's agent_response ends with a standalone extras question ('¿Quieres añadir algún otro servicio o solo la manicura?'), asked immediately after variant resolution and before any date/name collection.",
+    "confirmation_only_at_end": "Confirmed — the explicit yes/no booking confirmation ('¿Te lo confirmo?') only appears in turn 12, strictly after policy acceptance (turn 11) and name collection (turn 4/5), and after notes (turn 7/8). The actual book() tool call and final confirmation message only fire in turn 13 after the customer answers 'Sí, confírmamelo'.",
+    "tone_warmth": "Consistently warm with light emoji use throughout: '¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸' (turn 1 opener), 'Perfecto, la manicura básica ya me queda clara 😊' (turn 2), 'Perfecto, Marta 😊' (turn 7). The closing message stays warm but becomes more transactional/informational: 'Te la he agendado para el jueves 9 de julio a las 10:00 con Rosa para manicura. Te llegará una confirmación 48h antes; cuando la respondas, quedará lista ✅' — no notably flat or cold responses observed.",
+    "turn_latencies_first_vs_second_availability_question": "The scenario's intended 'two consecutive availability questions with cache warm-up on the second' could not be cleanly tested as designed: the FIRST check_availability call (turn 6, 12905ms total turn latency) was rejected before any real availability computation because 'audience' was still missing — it never reached the slot-lookup logic. By the time audience was resolved, the booking flow had already moved to get_next_available_options for a DIFFERENT date (2026-07-09, since 2026-07-08 had no morning availability), and the first genuinely successful check_availability call (turn 10, 10763ms total turn latency, date=2026-07-09) was a NEW query, not a cache-hit repeat of the turn-6 query (date=2026-07-08). So no like-for-like cache-warm speedup comparison is available from this natural conversation; total turn latencies stayed in a narrow 8.6s-16.2s band across the whole run with no obvious step-change attributable to caching."
+  }
+}

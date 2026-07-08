@@ -1,0 +1,196 @@
+{
+  "scenario_id": "change-c-gcal-synced-status",
+  "conversation_id": "ef534309-2fdb-4171-a134-79947edace6f",
+  "outcome": "stuck",
+  "turns_taken": 12,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Quiero reservar una manicura para el miércoles a las 11.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Qué tipo de manicura buscas? Tengo Manicura, Manicura Permanente o Manicura Permanente con Tratamiento.",
+      "latency_ms": 17049,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "variant_disambiguation_requested"
+    },
+    {
+      "turn": 2,
+      "user_message": "La manicura normal, sin nada especial.",
+      "agent_response": "Perfecto, te anoto la manicura normal 😊 ¿Quieres añadir algún otro servicio o solo esa?",
+      "latency_ms": 13773,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking"],
+      "bugs": [],
+      "milestone": "variant_resolved_manicura_normal_extras_asked"
+    },
+    {
+      "turn": 3,
+      "user_message": "No, solo eso.",
+      "agent_response": "Perfecto, pero para dejarlo bien cerrado necesito que me confirmes si quieres la manicura normal, la permanente o la permanente con tratamiento.",
+      "latency_ms": 11242,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking", "update_booking"],
+      "bugs": ["context_loss", "redundant_question"],
+      "milestone": "variant_regression_1_after_declining_extras"
+    },
+    {
+      "turn": 4,
+      "user_message": "La manicura normal, como te dije antes.",
+      "agent_response": "Perfecto, te la dejo para el miércoles 8 de julio. Para seguir con la reserva, ¿me dices tu nombre y tu primer apellido?",
+      "latency_ms": 12567,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking", "update_booking", "update_booking"],
+      "bugs": [],
+      "milestone": "date_resolved_2026-07-08_name_requested"
+    },
+    {
+      "turn": 5,
+      "user_message": "Ana Torres.",
+      "agent_response": "Veo que sigue faltando cerrar el tipo de manicura. ¿Quieres la manicura normal, la permanente o la permanente con tratamiento?",
+      "latency_ms": 14181,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking", "update_booking", "update_booking", "update_booking"],
+      "bugs": ["context_loss", "redundant_question"],
+      "milestone": "variant_regression_2_after_giving_name"
+    },
+    {
+      "turn": 6,
+      "user_message": "Manicura normal, sin tratamiento ni permanente.",
+      "agent_response": "Perfecto, Ana 😊 ¿Quieres añadir alguna nota para la cita?",
+      "latency_ms": 14351,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "update_booking"],
+      "bugs": [],
+      "milestone": "name_captured_ana_torres_notes_requested"
+    },
+    {
+      "turn": 7,
+      "user_message": "No hace falta, gracias.",
+      "agent_response": "Sigo viendo la misma aclaración pendiente: ¿la quieres normal, permanente o permanente con tratamiento?",
+      "latency_ms": 13017,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "update_booking"],
+      "bugs": ["context_loss", "redundant_question", "hallucination"],
+      "milestone": "variant_regression_3_after_declining_notes_text_contradicts_own_tool_result"
+    },
+    {
+      "turn": 8,
+      "user_message": "Normal, sin tratamiento, sin permanente. Manicura básica.",
+      "agent_response": "Perfecto, Ana. Para poder cerrarla necesito comprobar una hora exacta antes de confirmártela. ¿Te va bien a las 11:00?",
+      "latency_ms": 15523,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "update_booking"],
+      "bugs": [],
+      "milestone": "notes_optional_cleared_pre_book_validation_slot_time_confirmed"
+    },
+    {
+      "turn": 9,
+      "user_message": "Sí, a las 11 me viene perfecto.",
+      "agent_response": "Antes de mirar más huecos, necesito saber para quién es la manicura: ¿es para ti o para otra persona?",
+      "latency_ms": 13208,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "check_availability"],
+      "bugs": [],
+      "milestone": "check_availability_rejected_audience_required"
+    },
+    {
+      "turn": 10,
+      "user_message": "Es para mí.",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "latency_ms": 13456,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "check_availability", "update_booking"],
+      "bugs": [],
+      "milestone": "audience_unisex_resolved_slot_iso_set_policy_gate_presented"
+    },
+    {
+      "turn": 11,
+      "user_message": "Sí, la acepto.",
+      "agent_response": "Me falta cerrar ese punto de la manicura: ¿la quieres normal, permanente o permanente con tratamiento?",
+      "latency_ms": 13733,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "check_availability", "update_booking", "update_booking"],
+      "bugs": ["context_loss", "redundant_question", "hallucination"],
+      "milestone": "variant_regression_4_immediately_after_policy_accepted_true_root_cause_confirmed"
+    },
+    {
+      "turn": 12,
+      "user_message": "Manicura normal, ya te lo he dicho varias veces.",
+      "agent_response": "Entiendo que sí, pero ahora mismo la reserva sigue bloqueada por la desambiguación de variante. Si quieres, te la dejo como manicura normal y sigo con la cita.",
+      "latency_ms": 8637,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "check_availability", "update_booking", "update_booking"],
+      "bugs": ["context_loss", "redundant_question"],
+      "milestone": "max_turns_reached_no_book_call_ever_fired"
+    }
+  ],
+  "bugs": [
+    {
+      "type": "context_loss",
+      "severity": "critical",
+      "description": "Root cause identified across turns 3, 5, 7, 11, 12: whenever the LLM issues an update_booking call to progress ANY other field (no_more_services, customer_full_name, notes_asked, audience, slot_iso, policy_accepted), it frequently omits variant_resolved=true on that specific call. Because the tool treats a missing/false variant_resolved as 'variant not yet confirmed', the tool flips status back to ambiguous/variant_required even though the customer explicitly named the variant ('manicura normal') multiple turns earlier (turns 2, 4, 6, 8). The LLM then immediately re-issues the SAME call with variant_resolved=true in most turns (self-correcting within the same turn), but on turns 3, 5, 7, 11 the agent's final natural-language reply to the customer echoed the intermediate ambiguous tool result instead of the corrected/final one, causing the bot to re-ask an already-answered question up to 4 separate times across a single conversation."
+    },
+    {
+      "type": "stuck_no_booking",
+      "severity": "critical",
+      "description": "Scenario reached max_turns (12) without ever calling book(). Despite the customer supplying every required field (variant, date, name, notes, slot time, audience, policy acceptance) by turn 10, the variant-resolution regression bug (see context_loss above) re-triggered one more time on turn 11 right after policy_accepted=true was set, and the conversation never recovered within the remaining turn budget. No appointment was created (db_delta = 0); scenario expectation of 'booked' with gcal_sync_status='not_applicable' was NOT met."
+    },
+    {
+      "type": "hallucination",
+      "severity": "medium",
+      "description": "Turns 7 and 11: agent's text response asserts 'Sigo viendo la misma aclaración pendiente' / 'Me falta cerrar ese punto' (still pending) when the underlying tool call sequence for that same turn, in most cases, DID resolve the variant by the last tool_evidence entry. The reply text is inconsistent with the final tool state for that turn, misleading the customer about what's actually missing."
+    }
+  ],
+  "milestones_reached": [
+    "variant_disambiguation_requested",
+    "variant_resolved_manicura_normal (turn 2, then regressed 3x)",
+    "date_resolved_2026-07-08",
+    "name_captured_ana_torres",
+    "notes_optional_cleared",
+    "audience_unisex_resolved",
+    "slot_iso_2026-07-08T11:00:00+02:00_set",
+    "policy_acceptance_presented_and_accepted",
+    "NEVER_REACHED: book() tool call",
+    "NEVER_REACHED: appointment created"
+  ],
+  "db_delta": {
+    "customer_count_delta": 0,
+    "appt_count_delta": 0
+  },
+  "snapshot_before": {"customer_count": 0, "appt_count": 0},
+  "snapshot_after": {"customer_count": 0, "appt_count": 0},
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "ef534309-2fdb-4171-a134-79947edace6f",
+    "customer_phone": "+34999000010",
+    "customer_id": null,
+    "customer_name": null,
+    "messages_count": 46,
+    "latest_tool_call_name": "update_booking",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": true
+  },
+  "langfuse_trace_path": null,
+  "langfuse_pull_error": "UnauthorizedError 401 Invalid credentials — known server Langfuse credential issue, not retried per skill guidance",
+  "expect": {
+    "outcome": "booked",
+    "db_appointment": {
+      "status": "pending",
+      "gcal_sync_status": "not_applicable"
+    },
+    "tool_calls_required": ["check_availability", "book"],
+    "tool_calls_forbidden": [],
+    "tags": ["change-c", "gcal"]
+  },
+  "passed": false,
+  "quality_observations": {
+    "extras_question_own_turn": "Yes — turn 2 ('¿Quieres añadir algún otro servicio o solo esa?') was asked as its own dedicated bot turn immediately after variant resolution, before stylist/date were collected. Matches expected step order.",
+    "confirmation_last": "Not reached — the conversation never got to a final '¿Te lo confirmo?' summary because it got stuck re-litigating the variant before book() could ever be attempted. Policy (turn 10) → name (turn 4, before policy — see note) → notes (turn 6) order partially holds, but no final confirmation step was ever produced.",
+    "rejection_both_facts": "N/A — this scenario is a happy-path booking, no closed-day/under-advance rejection occurred.",
+    "stylist_menu_option0": "N/A — no stylist menu appeared; persona had no_preference_stylist=true throughout and no stylist selection UI/list was ever presented.",
+    "tone": "Warm/cercano — consistent use of emoji and first-name address ('Perfecto, Ana 😊'), softened phrasing even under repeated correction ('Entiendo que sí, pero ahora mismo la reserva sigue bloqueada...'). Verbatim quote: 'Perfecto, te anoto la manicura normal 😊 ¿Quieres añadir algún otro servicio o solo esa?' (turn 2).",
+    "unbacked_slots": "No concrete slot TIMES were ever presented ungrounded — the bot asked to confirm the customer-provided '11:00' (turn 8) and always called check_availability before referencing a specific slot_iso. No fabricated alternative slot times were observed in any turn."
+  }
+}

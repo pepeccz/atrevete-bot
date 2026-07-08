@@ -1,0 +1,121 @@
+{
+  "scenario_id": "change-a-tz-madrid",
+  "conversation_id": "9867482d-9e89-4ca3-a012-27e1ada25cb9",
+  "phone": "+34999000004",
+  "persona_name": "Elena Garcia",
+  "max_turns": 10,
+  "expected": {
+    "outcome": "booked",
+    "db_appointment": {"status": "pending"},
+    "tool_calls_required": ["check_availability"],
+    "tool_calls_forbidden": []
+  },
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Buenas noches, teneis huecos manana por la tarde?",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nNecesito saber para quién es el servicio antes de mirar horarios: ¿es para ti o para otra persona?",
+      "timed_out": false,
+      "response_latency_ms": 14855,
+      "tool_evidence": [
+        {"tool_name": "get_next_available_options", "arguments": {"service_ids": ["a0f48408-6479-32c4-96ac-aa7187b99be0"], "requested_date_iso": "2026-07-03", "stylist_id": null, "audience": null, "strategy": "any_stylist", "max_options": 3, "search_days": 7}, "result": {"result_summary": "{\"status\":\"rejected\",\"collected\":{},\"missing\":[],\"next_step\":\"audience_required\",\"payload\":{},\"errors\":[\"Necesito saber para quién es el servicio antes de mirar los horarios.\"]}", "status": "success"}, "source": "checkpoint"},
+        {"tool_name": "check_availability", "arguments": {"service_ids": ["a0f48408-6479-32c4-96ac-aa7187b99be0"], "stylist_id": null, "date_iso": "2026-07-03", "audience": null, "no_preference": true, "slot_time": null, "preferred_window": "afternoon"}, "result": {"result_summary": "{\"status\":\"rejected\",\"collected\":{},\"missing\":[],\"next_step\":\"advance_policy_violated\",\"payload\":{\"first_valid_date\":\"2026-07-05\",\"policy_min_days\":3},\"errors\":[\"Solo podemos reservar con al menos 3 días de antelación. La fecha más próxima disponible es 2026-07-05.\"]}", "status": "success"}, "source": "checkpoint"}
+      ]
+    },
+    {
+      "turn": 2,
+      "user_message": "Para mi",
+      "agent_response": "¿Es para señora, caballero, niña, niño o bebé?",
+      "timed_out": false,
+      "response_latency_ms": 11605,
+      "tool_evidence": [
+        {"tool_name": "update_booking", "arguments": {"services": ["corte de mujer"], "audience": null, "policy_accepted": false}, "result": {"result_summary": "{\"status\":\"rejected\",\"next_step\":\"audience_required\"}", "status": "success"}, "source": "checkpoint"}
+      ]
+    },
+    {
+      "turn": 3,
+      "user_message": "Para señora",
+      "agent_response": "Entonces te anoto corte de mujer, ¿quieres añadir algún otro servicio o solo ese?",
+      "timed_out": false,
+      "response_latency_ms": 12115,
+      "tool_evidence": [
+        {"tool_name": "update_booking", "arguments": {"services": ["corte de mujer"], "audience": "adult_female", "no_more_services": false, "policy_accepted": false}, "result": {"result_summary": "{\"status\":\"partial\",\"next_step\":\"extras_loop_required\"}", "status": "success"}, "source": "checkpoint"}
+      ]
+    },
+    {
+      "turn": 4,
+      "user_message": "Solo ese",
+      "agent_response": "Perdona, mañana no llegamos a la antelación mínima de 3 días. La primera fecha disponible es el domingo 5 de julio.\n\nSi te viene bien, te busco huecos para ese día.",
+      "timed_out": false,
+      "response_latency_ms": 10682,
+      "tool_evidence": [
+        {"tool_name": "update_booking", "arguments": {"services": ["corte de mujer"], "audience": "adult_female", "no_more_services": true, "pre_resolved_service_ids": ["a0f48408-6479-32c4-96ac-aa7187b99be0"], "policy_accepted": false}, "result": {"result_summary": "{\"status\":\"rejected\",\"next_step\":\"advance_policy_violated\",\"payload\":{\"rejected_date\":\"2026-07-03\",\"first_valid_date\":\"2026-07-05\",\"policy_min_days\":3}}", "status": "success"}, "source": "checkpoint"}
+      ]
+    },
+    {
+      "turn": 5,
+      "user_message": "Si, el 5 de julio me viene bien",
+      "agent_response": "Perdona, el salón está cerrado el domingo 5 de julio.\n\nEstos son los huecos más próximos que te puedo ofrecer:\n1. Martes 7 de julio a las 10:00\n2. Martes 7 de julio a las 10:40\n3. Martes 7 de julio a las 11:20\n\n¿Cuál te viene mejor?",
+      "timed_out": false,
+      "response_latency_ms": 14267,
+      "tool_evidence": [
+        {"tool_name": "check_availability", "arguments": {"service_ids": ["a0f48408-6479-32c4-96ac-aa7187b99be0"], "date_iso": "2026-07-05", "audience": "adult_female", "preferred_window": "afternoon"}, "result": {"result_summary": "{\"status\":\"rejected\",\"next_step\":\"closed_day\",\"payload\":{\"closed_date\":\"2026-07-05\",\"weekday\":\"sunday\"}}", "status": "success"}, "source": "checkpoint"}
+      ]
+    },
+    {
+      "turn": 6,
+      "user_message": "El primero, a las 10:00",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "timed_out": false,
+      "response_latency_ms": 13507,
+      "tool_evidence": [
+        {"tool_name": "update_booking", "arguments": {"slot_iso": "2026-07-07T10:00:00+02:00", "date_iso": "2026-07-07", "audience": "adult_female", "policy_accepted": false}, "result": {"result_summary": "{\"status\":\"partial\",\"next_step\":\"policy_acceptance_required\"}", "status": "success"}, "source": "checkpoint"}
+      ]
+    },
+    {
+      "turn": 7,
+      "user_message": "Si, acepto",
+      "agent_response": "Perfecto, para dejarla cerrada me falta tu nombre y primer apellido.",
+      "timed_out": false,
+      "response_latency_ms": 11832,
+      "tool_evidence": [
+        {"tool_name": "update_booking", "arguments": {"slot_iso": "2026-07-07T10:00:00+02:00", "policy_accepted": true}, "result": {"result_summary": "{\"status\":\"partial\",\"next_step\":\"name_required\"}", "status": "success"}, "source": "checkpoint"}
+      ]
+    },
+    {
+      "turn": 8,
+      "user_message": "Elena Garcia",
+      "agent_response": "¿Quieres añadir alguna nota para la cita?",
+      "timed_out": false,
+      "response_latency_ms": 19030,
+      "tool_evidence": [
+        {"tool_name": "update_booking", "arguments": {"customer_full_name": "Elena Garcia", "slot_iso": "2026-07-07T10:00:00+02:00", "policy_accepted": true, "notes_asked": true}, "result": {"result_summary": "{\"status\":\"partial\",\"next_step\":\"notes_optional\"}", "status": "success"}, "source": "checkpoint"}
+      ]
+    },
+    {
+      "turn": 9,
+      "user_message": "No, sin notas",
+      "agent_response": "Te he agendado la cita para el martes 7 de julio a las 10:00 con Pilar para corte de mujer. Te enviaré una confirmación 48h antes; respóndela con un \"sí\" y queda lista ✅\n\nTambién te dejo el enlace del calendario:\nhttps://calendar.google.com/calendar/render?action=TEMPLATE&text=Corte%20de%20Mujer%20en%20Atr%C3%A9vete&dates=20260707T080000Z/20260707T084000Z&details=Turno%20con%20Pilar&location=Atr%C3%A9vete%20Sal%C3%B3n%20de%20Belleza",
+      "timed_out": false,
+      "response_latency_ms": 17561,
+      "tool_evidence": [
+        {"tool_name": "check_availability", "arguments": {"service_ids": ["a0f48408-6479-32c4-96ac-aa7187b99be0"], "date_iso": "2026-07-07", "audience": "adult_female", "slot_time": "10:00", "preferred_window": null}, "result": {"result_summary": "{\"status\":\"ok\",\"payload\":{\"slots\":[{\"start_iso\":\"2026-07-07T10:00:00+02:00\",\"end_iso\":\"2026-07-07T10:40:00+02:00\",\"stylist_id\":\"9a40971e-d000-45c8-916c-a66e3a8c0b05\",\"stylist_name\":\"Pilar\",\"label\":\"martes 7 de julio\"}],\"exact_match\":true}}", "status": "success"}, "source": "checkpoint"},
+        {"tool_name": "book", "arguments": {"service_ids": ["a0f48408-6479-32c4-96ac-aa7187b99be0"], "stylist_id": "9a40971e-d000-45c8-916c-a66e3a8c0b05", "start_iso": "2026-07-07T10:00:00+02:00", "customer_full_name": "Elena Garcia", "confirmed": true, "pre_book_validated": true, "notes": null, "policy_accepted": true}, "result": {"result_summary": "{\"status\":\"ok\",\"payload\":{\"appointment_id\":\"8693396d-bd0a-40c5-ae36-f75cd9bf74b1\",\"customer_id\":\"ae2c8230-d605-49e5-a4b8-cc6a2d4ede61\",\"start_iso\":\"2026-07-07T10:00:00+02:00\",\"end_iso\":\"2026-07-07T10:40:00+02:00\",\"stylist_id\":\"9a40971e-d000-45c8-916c-a66e3a8c0b05\"}}", "status": "success"}, "source": "checkpoint"}
+      ]
+    }
+  ],
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "9867482d-9e89-4ca3-a012-27e1ada25cb9",
+    "customer_phone": "+34999000004",
+    "customer_id": "ae2c8230-d605-49e5-a4b8-cc6a2d4ede61",
+    "customer_name": "Elena Garcia",
+    "messages_count": 41,
+    "latest_tool_call_name": "book",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": true
+  },
+  "outcome_observed": "booked",
+  "runner_notes": "Booking completed successfully in 9 turns (appointment_id 8693396d, status PENDING, July 7 10:00 with Pilar). TZ is CORRECT: all slot ISOs carry +02:00 (Europe/Madrid summer) and the calendar link uses the correct UTC equivalent 20260707T080000Z; no dawn/madrugada confusion detected. However, the afternoon preference ('tarde') was NOT carried over when the bot moved from the blocked July 3 to the fallback July 7 — it offered morning slots (10:00, 10:40, 11:20) rather than afternoon slots. Secondary anomaly: customer_consents_count=0 and policy_accepted_at=null in final state despite policy_accepted=true being passed to book."
+}

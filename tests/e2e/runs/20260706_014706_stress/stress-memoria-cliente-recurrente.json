@@ -1,0 +1,188 @@
+{
+  "scenario_id": "stress-memoria-cliente-recurrente",
+  "conversation_id": "0925d70c-bbf2-473c-b626-df725f13f443",
+  "persona": {
+    "name": "Sofía Navarro",
+    "phone": "+34999000028",
+    "style": "cliente habitual, confianzuda, da por hecho que la conocen"
+  },
+  "environment": {
+    "target": "pepe@server:/home/pepe/Proyectos/atrevete-bot",
+    "invocation": "harness scripts run via SSH on the server host venv (./venv/bin/python), NOT inside a container — DATABASE_URL/REDIS_URL overridden to point at localhost:5432/6379 (host-published ports) instead of the docker-network hostnames 'postgres'/'redis' baked into .env, since those hostnames do not resolve from the host.",
+    "env_vars": {
+      "TEST_MODE_GCAL_SKIP": "true",
+      "TEST_PHONE_PREFIX": "+34999",
+      "DATABASE_URL_override": "postgresql+asyncpg://atrevete:***@localhost:5432/atrevete_db",
+      "REDIS_URL_override": "redis://localhost:6379/0"
+    },
+    "health_check": {"ok": true, "redis": "connected", "stream": "exists"},
+    "notifications_worker": "left running — not stopped, because all seeded appointments were placed strictly in the past (completed status), outside any live notification handler's polling window (which only queries future PENDING/CONFIRMED appointments). No collision occurred."
+  },
+  "seeded_data": {
+    "method": "tests/e2e/harness/qa_turn_helper.py seed (wraps seed_customer.seed_returning_customer), called twice to attach two separate past appointments to the same customer, plus direct psql UPDATE for fields the CLI does not support (policy acceptance columns, preferred_stylist_id FK).",
+    "seed_call_1": {
+      "cli": "qa_turn_helper.py seed --phone +34999000028 --customer-name 'Sofía Navarro' --memories-json '{...visit_count:1...}' --past-appointment-json '{\"days_ago\":60,\"service_name\":\"Corte de Mujer\",\"stylist_name\":\"Marta\",\"status\":\"completed\"}'",
+      "result": {"customer_id": "7d193e5b-94d4-49a5-b6e0-33787fced8fd", "past_appointment_id": "ae0b8b0e-0a21-498b-be29-66a80f3c1d78", "store_write": "unavailable (fell back to DB metadata_ — read_customer_memories() falls back to Customer.metadata_.memories, so this is a no-op for correctness)"}
+    },
+    "seed_call_2": {
+      "cli": "qa_turn_helper.py seed --phone +34999000028 --customer-name 'Sofía Navarro' --memories-json '{final memories, visit_count:2}' --past-appointment-json '{\"days_ago\":25,\"service_name\":\"Corte de Mujer\",\"stylist_name\":\"Marta\",\"status\":\"completed\"}'",
+      "result": {"customer_id": "7d193e5b-94d4-49a5-b6e0-33787fced8fd", "past_appointment_id": "1e808c8d-6440-4607-a9e8-9863096347a5", "store_write": "unavailable (same fallback as above)"}
+    },
+    "final_memories_written_to_customers.metadata_json_memories": {
+      "visit_count": 2,
+      "preferred_stylist_name": "Marta",
+      "preferred_stylist_id": "39e1c607-b319-41ba-97db-fa5dcfe24cf1",
+      "typical_services": ["Corte de Mujer"],
+      "agent_notes": "Cliente habitual, siempre pide Corte de Mujer con Marta, sin cambios.",
+      "no_preference_stylist": false
+    },
+    "past_appointments_seeded": [
+      {"id": "ae0b8b0e-0a21-498b-be29-66a80f3c1d78", "start_time": "2026-05-06T23:52:08.057844+00:00", "service": "Corte de Mujer", "stylist": "Marta", "status": "completed", "gcal_sync_status": "not_applicable"},
+      {"id": "1e808c8d-6440-4607-a9e8-9863096347a5", "start_time": "2026-06-10T23:52:22.471276+00:00", "service": "Corte de Mujer", "stylist": "Marta", "status": "completed", "gcal_sync_status": "not_applicable"}
+    ],
+    "psql_manual_updates": {
+      "reason": "seed_returning_customer() has no parameter for policy acceptance or the preferred_stylist_id FK column — these are not exposed by the harness CLI, so they were set directly via psql as instructed by the task when the tooling does not support a field.",
+      "sql": "UPDATE customers SET policy_accepted_at = now() - interval '20 days', policy_version = '1.0', preferred_stylist_id = '39e1c607-b319-41ba-97db-fa5dcfe24cf1' WHERE phone = '+34999000028';",
+      "verified_row": {
+        "id": "7d193e5b-94d4-49a5-b6e0-33787fced8fd",
+        "phone": "+34999000028",
+        "first_name": "Sofía",
+        "last_name": "Navarro",
+        "policy_accepted_at": "2026-06-15 23:52:27.141871+00",
+        "policy_version": "1.0",
+        "preferred_stylist_id": "39e1c607-b319-41ba-97db-fa5dcfe24cf1"
+      }
+    },
+    "catalog_note": "The scenario prompt used 'Corte Dama' as an illustrative example; the live seeded catalog on the server has no service by that exact name (renamed in a prior migration). Used the real equivalent service 'Corte de Mujer' instead — semantically the same 'usual haircut' scenario for a female returning customer."
+  },
+  "outcome": "booked",
+  "turns_taken": 4,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "holaa soy Sofía! me pones lo de siempre para el jueves?",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nPerfecto, Sofía 😊 Te dejo anotado tu Corte de Mujer con Marta para el jueves. ¿Alguna nota para Marta?",
+      "latency_ms": 12552,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "tool_evidence_summary": "update_booking auto-filled services=['Corte de Mujer'], stylist_name='Marta', date_iso='2026-07-09' with NO prior turn ever stating them explicitly — sourced purely from injected customer memory (CustomerResolveMiddleware).",
+      "bugs": [],
+      "milestone": "service + stylist inferred from memory on the very first turn; bot asks for optional notes, has not booked yet"
+    },
+    {
+      "turn": 2,
+      "user_message": "no hace falta nota, ponme la hora de siempre porfa",
+      "agent_response": "Perfecto, Sofía 😊 Para el jueves con Marta tengo huecos a las 10:40, 11:20, 12:00, 12:40, 13:20, 16:00, 16:40, 17:20, 18:00, 18:40, 19:20 y 20:00.  \n¿Cuál te va mejor?",
+      "latency_ms": 20576,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking", "check_availability"],
+      "tool_evidence_summary": "check_availability called with service_ids for 'Corte de Mujer' + stylist_id for Marta on 2026-07-09; returned real open slots. Bot did NOT hallucinate a specific 'usual time' (none was seeded — only preferred_stylist_name/typical_services were seeded, no typical_time_of_day), so it correctly asked her to pick from real availability instead of guessing.",
+      "bugs": [],
+      "milestone": "availability checked for the memory-inferred service+stylist+date; concrete slots offered"
+    },
+    {
+      "turn": 3,
+      "user_message": "venga las 17:20 perfecto",
+      "agent_response": "Perfecto, Sofía 😊 Te lo dejo el jueves 9 de julio a las 17:20 con Marta para corte de mujer. ¿Te lo confirmo?",
+      "latency_ms": 11982,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking", "check_availability", "update_booking"],
+      "tool_evidence_summary": "slot_iso 2026-07-09T17:20:00+02:00 validated against real availability (pre_book_validated=true); bot summarizes full concrete details and asks explicit confirmation before calling book() — did not blind-book.",
+      "bugs": [],
+      "milestone": "booking fully specified and explicitly confirmed with the customer before commit"
+    },
+    {
+      "turn": 4,
+      "user_message": "sí, confírmalo",
+      "agent_response": "¡Listo, Sofía! Te he agendado el jueves 9 de julio a las 17:20 con Marta para tu Corte de Mujer.  \nTe enviaré una confirmación 48h antes y, si quieres, también puedes abrir el enlace del calendario: https://calendar.google.com/calendar/render?action=TEMPLATE&text=Corte%20de%20Mujer%20en%20Atr%C3%A9vete&dates=20260709T152000Z/20260709T160000Z&details=Turno%20con%20Marta&location=Atr%C3%A8vete%20Sal%C3%B3n%20de%20Belleza",
+      "latency_ms": 12266,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking", "check_availability", "update_booking", "book"],
+      "tool_evidence_summary": "book() succeeded: appointment_id 51303ffb-5089-4c0b-9bb9-ad7e7b328a28, start_iso 2026-07-09T17:20:00+02:00, end_iso 2026-07-09T18:00:00+02:00, calendar_link returned. No policy re-prompt occurred anywhere in the conversation even though every tool call carried the literal argument policy_accepted=false — the actual gate reads customer.policy_accepted_at from the DB (seeded), not that per-turn draft field, and correctly stayed silent.",
+      "bugs": [],
+      "milestone": "appointment booked in DB (status=pending per >48h lead-time gate)"
+    }
+  ],
+  "bugs": [],
+  "milestones_reached": [
+    "returning customer recognized, no policy re-ask",
+    "service+stylist inferred from memory on turn 1 ('lo de siempre')",
+    "real-time availability checked before proposing a slot",
+    "explicit confirmation requested and obtained before book()",
+    "appointment created in DB matching seeded preference (Corte de Mujer + Marta)"
+  ],
+  "db_delta": {
+    "customer_count_delta": 0,
+    "appt_count_delta": 1
+  },
+  "snapshot_before": {"customer_count": 1, "appt_count": 2},
+  "snapshot_after": {"customer_count": 1, "appt_count": 3},
+  "new_appointment": {
+    "id": "51303ffb-5089-4c0b-9bb9-ad7e7b328a28",
+    "start_time_local": "2026-07-09T17:20:00+02:00",
+    "day_of_week": "jueves (Thursday) — matches the requested day",
+    "service": "Corte de Mujer",
+    "stylist": "Marta",
+    "status": "pending",
+    "gcal_sync_status": "not_applicable",
+    "lead_time_note": "start_time is ~87.5h ahead of the seed/run moment (server time 2026-07-05 23:5x UTC), which is > 48h, so book() correctly applied the PENDING lead-time gate (confirm_48h flow) rather than auto-CONFIRMED."
+  },
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "0925d70c-bbf2-473c-b626-df725f13f443",
+    "customer_phone": "+34999000028",
+    "customer_id": "7d193e5b-94d4-49a5-b6e0-33787fced8fd",
+    "customer_name": "Sofía Navarro",
+    "messages_count": 18,
+    "latest_tool_call_name": "book",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": false,
+    "note": "policy_accepted_at/customer_consents_count here are the CONVERSATION-scoped consent tracking fields (new acceptance events during THIS thread) — correctly 0/null since Sofía's policy acceptance was seeded as having happened before this conversation, not during it. The DB-level Customer.policy_accepted_at (seeded) is what the DisclosureMiddleware gate actually reads, and it worked."
+  },
+  "langfuse_trace_path": null,
+  "langfuse_error": "UnauthorizedError 401 'Invalid credentials' from langfuse_pull.py — pre-existing stale/invalid Langfuse API keys on the server (tracked separately; see CLAUDE.md 'Langfuse credential regeneration runbook'). Not related to this scenario. Proceeded per skill rule #9 without traces.",
+  "cleanup": {
+    "checkpoints_deleted": 93,
+    "customer_redis_deleted": 1,
+    "artifacts_deleted": 0,
+    "appointments_deleted": 3,
+    "customer_deleted": true
+  },
+  "expect": {
+    "outcome": "personalized_booking_using_memory"
+  },
+  "passed": true,
+  "audit_hooks": [
+    {
+      "hook": "1. Returning-customer recognition",
+      "verdict": "PASS",
+      "detail": "Bot greeted her by name from turn 1, never asked for name/phone lookup, and never re-asked for policy acceptance at any point — consistent with policy_accepted_at being seeded and read by CustomerResolveMiddleware/DisclosureMiddleware."
+    },
+    {
+      "hook": "2. CRITICAL — 'lo de siempre' uses memory vs interrogates from scratch",
+      "verdict": "PASS",
+      "detail": "The very first update_booking tool call (turn 1) already carried services=['Corte de Mujer'] and stylist_name='Marta' — values Sofía never typed. These came directly from the seeded memories (preferred_stylist_name, typical_services) via CustomerResolveMiddleware's <customer> prompt block. The bot did not interrogate her as a new customer."
+    },
+    {
+      "hook": "3. Factual correctness of the 'usual' proposal vs seeded history",
+      "verdict": "PASS",
+      "detail": "Both seeded past appointments were 'Corte de Mujer' with 'Marta'; the proposed/booked service and stylist match exactly, no hallucinated service or stylist."
+    },
+    {
+      "hook": "4. Confirms concrete details before booking (no blind-book)",
+      "verdict": "PASS",
+      "detail": "Bot ran check_availability for the real date, offered a real slot list (turn 2), validated the chosen slot, then explicitly summarized 'jueves 9 de julio a las 17:20 con Marta... ¿Te lo confirmo?' (turn 3) and only called book() after her explicit 'sí, confírmalo' (turn 4)."
+    },
+    {
+      "hook": "5. New DB appointment matches expected service/stylist for Thursday",
+      "verdict": "PASS",
+      "detail": "appointment_id 51303ffb-5089-4c0b-9bb9-ad7e7b328a28 created for 2026-07-09 (Thursday) 17:20 local, service 'Corte de Mujer', stylist 'Marta', status=pending (correct per the >48h lead-time gate), gcal_sync_status=not_applicable (sandbox)."
+    }
+  ],
+  "additional_observations": [
+    "Not a bug: Sofía asked for 'la hora de siempre' (her usual time) in turn 2, but no typical_time_of_day/typical_day_of_week was seeded (out of scope per the task's seed instructions), so the bot correctly avoided guessing a specific time and instead offered the real slot list — safe behavior given the available memory fields.",
+    "Every update_booking/book tool call carried a literal policy_accepted=false argument (draft-state default), yet no policy gate ever fired — confirms the actual gate reads Customer.policy_accepted_at from the DB rather than this per-call draft field, matching the seeded 'already accepted' precondition.",
+    "seed_returning_customer's Redis Store write was unavailable in the standalone CLI process ('Store unavailable — memories written to DB only'); read_customer_memories() falls back to Customer.metadata_.memories in that case, which is exactly what CustomerResolveMiddleware used at runtime — no functional impact, documented here for transparency."
+  ]
+}

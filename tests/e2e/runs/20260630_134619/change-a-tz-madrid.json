@@ -1,0 +1,141 @@
+{
+  "scenario_id": "change-a-tz-madrid",
+  "conversation_id": "122f4bc8-5e55-4b81-b91e-39df479a308d",
+  "outcome": "booked",
+  "turns_taken": 10,
+  "turns": [
+    {
+      "turn": 1,
+      "user": "Buenas noches, teneis huecos manana por la tarde?",
+      "agent": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Qué servicio quieres reservar?",
+      "tool_calls": ["update_booking"],
+      "notes": "Bot greeted and asked for service. Captured date_text=mañana por la tarde in draft."
+    },
+    {
+      "turn": 2,
+      "user": "Un corte de pelo",
+      "agent": "¿Es para señora, caballero, niña, niño o bebé?",
+      "tool_calls": ["update_booking", "update_booking"],
+      "notes": "Service ambiguous — bot correctly disambiguated on audience axis."
+    },
+    {
+      "turn": 3,
+      "user": "Para mi, soy mujer",
+      "agent": "¿Quieres añadir algún otro servicio o solo corte de mujer?",
+      "tool_calls": ["update_booking", "update_booking", "update_booking"],
+      "notes": "Service resolved to Corte de Mujer (cb7ae91c-97ff-e1d1-3b0b-696b11467add). Extras loop triggered."
+    },
+    {
+      "turn": 4,
+      "user": "No, solo el corte",
+      "agent": "No tengo huecos mañana por la tarde para ese corte. Te dejo las opciones más cercanas:\n\n1. Sábado 4 de julio a las 9:00 con Marta  \n2. Sábado 4 de julio a las 9:40 con Marta  \n3. Sábado 4 de julio a las 10:20 con Marta  \n\n¿Te viene bien alguna?",
+      "tool_calls": ["update_booking", "update_booking", "update_booking", "update_booking", "get_next_available_options"],
+      "notes": "No tarde slots for tomorrow (July 1). Nearest available: Saturday July 4 morning (9:00, 9:40, 10:20) with Marta. Slots in CEST (+02:00) — correct for Europe/Madrid. Date label 'sábado 4 de julio' = correct (July 4 2026 is a Saturday)."
+    },
+    {
+      "turn": 5,
+      "user": "No me viene bien, hay algo por la tarde en los proximos dias?",
+      "agent": "Ahora mismo lo más cercano que tengo sigue siendo por la mañana del sábado 4 de julio con Marta.\n\nSi quieres, te puedo mirar otros huecos más adelante.",
+      "tool_calls": ["update_booking", "update_booking", "update_booking", "update_booking", "get_next_available_options", "get_next_available_options"],
+      "notes": "Bot confirmed no tarde slots in the 7-day window. Only morning options available. No tarde slots throughout the near-term calendar."
+    },
+    {
+      "turn": 6,
+      "user": "Vale, me apunto el sabado 4 de julio a las 9:00 con Marta",
+      "agent": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "tool_calls": ["update_booking", "update_booking", "update_booking", "update_booking", "get_next_available_options", "get_next_available_options", "check_availability", "update_booking"],
+      "notes": "Slot July 4 9:00 verified. Policy gate triggered before proceeding. next_step=policy_acceptance_required."
+    },
+    {
+      "turn": 7,
+      "user": "Si, acepto la politica",
+      "agent": "Perfecto. ¿Me dices tu nombre y primer apellido para dejarlo a tu nombre?",
+      "tool_calls": ["update_booking", "update_booking", "update_booking", "update_booking", "get_next_available_options", "get_next_available_options", "check_availability", "update_booking", "update_booking"],
+      "notes": "Policy accepted (policy_accepted=true, policy_version_accepted=1.0). Next step: name_required."
+    },
+    {
+      "turn": 8,
+      "user": "Elena Garcia",
+      "agent": "Ese hueco se ha ocupado justo ahora. Te busco alternativas cercanas y te digo las que haya más próximas.",
+      "tool_calls": ["update_booking", "update_booking", "update_booking", "update_booking", "get_next_available_options", "get_next_available_options", "check_availability", "update_booking", "update_booking", "update_booking", "book"],
+      "notes": "Name collected. Booking attempt for July 4 9:00 rejected — slot taken by another booking. Bot handled the race condition gracefully. See bug: check_availability_stale_discrepancy."
+    },
+    {
+      "turn": 9,
+      "user": "Vaya, que mala suerte. Que otras opciones tienes?",
+      "agent": "Sí, tengo estas opciones con Marta:\n\n1. Martes 7 de julio a las 10:00  \n2. Martes 7 de julio a las 10:40  \n3. Martes 7 de julio a las 11:20  \n\n¿Te cuadra alguna?",
+      "tool_calls": ["update_booking", "update_booking", "update_booking", "update_booking", "get_next_available_options", "get_next_available_options", "check_availability", "update_booking", "update_booking", "update_booking", "book", "get_next_available_options"],
+      "notes": "Bot fetched fresh alternatives using same_stylist_then_any strategy. Offered July 7 (martes) morning slots. 'martes 7 de julio' = correct (July 7 2026 is a Tuesday). Slots at +02:00 CEST — correct for Europe/Madrid."
+    },
+    {
+      "turn": 10,
+      "user": "Me quedo con el martes 7 de julio a las 10:00 con Marta",
+      "agent": "¡Listo! Te queda confirmado el martes 7 de julio a las 10:00 con Marta para corte de mujer.\n\nSi quieres, también te paso el enlace del calendario.",
+      "tool_calls": ["update_booking", "update_booking", "update_booking", "update_booking", "get_next_available_options", "get_next_available_options", "check_availability", "update_booking", "update_booking", "update_booking", "book", "get_next_available_options", "check_availability", "update_booking", "book"],
+      "notes": "Slot July 7 10:00 confirmed available. Booking succeeded. appointment_id=c99cc52a-c81b-4580-866f-774d6f44f6af, customer_id=a86a85c6-f611-402c-a455-6981c3aa5ea9."
+    }
+  ],
+  "bugs": [
+    {
+      "type": "policy_not_persisted",
+      "severity": "WARNING",
+      "description": "Policy was accepted in-conversation (policy_accepted=true, policy_version_accepted=1.0 passed to book tool), but final state shows customer_consents_count=0 and policy_accepted_at=null. The consent audit row and customers.policy_accepted_at were not written to the DB.",
+      "turn": 8,
+      "evidence": "final_state.customer_consents_count=0, final_state.policy_accepted_at=null"
+    },
+    {
+      "type": "check_availability_stale_discrepancy",
+      "severity": "WARNING",
+      "description": "check_availability confirmed July 4 at 09:00 with Marta as available across multiple turns (source: checkpoint), but the live book call in turn 8 rejected it as unavailable ('El hueco ya no está disponible'). The check_availability tool appears to return stale or cached availability and does not perform a definitive lock check. The book tool is the true gatekeeper.",
+      "turn": 8,
+      "evidence": "check_availability status=ok for 2026-07-04T09:00:00+02:00; book status=rejected same slot"
+    },
+    {
+      "type": "no_tarde_slots_in_calendar",
+      "severity": "INFO",
+      "description": "Scenario expected afternoon (tarde) slots to be available for acceptance. The bot correctly reported no tarde availability for tomorrow (July 1) and the 7-day window returned only morning slots (9:00-11:20 range). The booking ultimately completed with a morning slot (10:00 July 7). This may reflect real calendar state rather than a bot logic error.",
+      "turn": 4,
+      "evidence": "get_next_available_options search_days=7 returned only morning slots; get_next_available_options with same_stylist_then_any also returned only morning slots on July 7"
+    }
+  ],
+  "milestones_reached": [
+    "service_selected",
+    "audience_disambiguated",
+    "extras_loop_completed",
+    "no_tarde_slots_communicated_correctly",
+    "get_next_available_options_called",
+    "check_availability_called",
+    "slots_timezone_correct_madrid_cest",
+    "date_labels_correct",
+    "policy_gate_triggered",
+    "policy_accepted_in_conversation",
+    "customer_name_collected",
+    "slot_conflict_handled_gracefully",
+    "alternative_slots_offered",
+    "booking_confirmed"
+  ],
+  "db_delta": {
+    "customers": {"before": 0, "after": 1, "created": [{"phone": "+34999000004", "name": "Elena Garcia", "customer_id": "a86a85c6-f611-402c-a455-6981c3aa5ea9"}]},
+    "appointments": {"before": 0, "after": 1, "created": [{"appointment_id": "c99cc52a-c81b-4580-866f-774d6f44f6af", "start_iso": "2026-07-07T10:00:00+02:00", "end_iso": "2026-07-07T10:40:00+02:00", "service": "Corte de Mujer", "stylist": "Marta", "stylist_id": "5f1745ba-d2b1-4d87-8d47-79821a99ae93"}]}
+  },
+  "snapshot_before": "0 customers, 0 appointments",
+  "snapshot_after": "1 customer, 1 appointment",
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "122f4bc8-5e55-4b81-b91e-39df479a308d",
+    "customer_phone": "+34999000004",
+    "customer_id": "a86a85c6-f611-402c-a455-6981c3aa5ea9",
+    "customer_name": "Elena Garcia",
+    "messages_count": 50,
+    "latest_tool_call_name": "book",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": true
+  },
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "booked",
+    "tool_calls_required": ["check_availability"]
+  },
+  "passed": true
+}

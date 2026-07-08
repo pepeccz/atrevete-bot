@@ -1,0 +1,115 @@
+{
+  "scenario_id": "change-d-returning-customer-personalization",
+  "conversation_id": "8f7e4777-af54-40df-9342-9e86d3aef492",
+  "outcome": "booked",
+  "turns_taken": 5,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, quiero pedir cita otra vez",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nTe dejo estas opciones con Marta para corte de mujer:\n\n1. sábado 4 de julio a las 09:00\n2. sábado 4 de julio a las 09:40\n3. sábado 4 de julio a las 10:20\n\n¿Cuál te viene mejor?",
+      "latency_ms": 14875,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "get_next_available_options"],
+      "bugs": [],
+      "milestone": "personalization_detected — bot offered Marta + Corte de Mujer without any prompting; customer_known=true in draft"
+    },
+    {
+      "turn": 2,
+      "user_message": "La primera, el sabado a las 9",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "latency_ms": 19066,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "get_next_available_options"],
+      "bugs": [],
+      "milestone": "slot_09:00_selected — policy_acceptance_gate_triggered"
+    },
+    {
+      "turn": 3,
+      "user_message": "Si, la acepto",
+      "agent_response": "¿Alguna nota para Marta?",
+      "latency_ms": 12155,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "policy_accepted — notes_prompt_sent"
+    },
+    {
+      "turn": 4,
+      "user_message": "No, sin notas",
+      "agent_response": "Se nos ha quedado libre el hueco de las 09:00, pero el sábado 4 de julio todavía tienes estas alternativas con Marta:\n\n1. sábado 4 de julio a las 09:40\n2. sábado 4 de julio a las 10:20\n3. sábado 4 de julio a las 11:00\n\n¿Cuál prefieres?",
+      "latency_ms": 17227,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "get_next_available_options", "check_availability"],
+      "bugs": [],
+      "milestone": "slot_race_handled — 09:00 rejected by check_availability; bot re-offered alternatives with Marta"
+    },
+    {
+      "turn": 5,
+      "user_message": "La primera entonces, las 9:40",
+      "agent_response": "¡Listo, Carmen! Te he dejado la cita confirmada para el sábado 4 de julio a las 09:40 con Marta para corte de mujer.\n\nAquí tienes el enlace del calendario: https://calendar.google.com/calendar/render?action=TEMPLATE&text=Corte%20de%20Mujer%20en%20Atr%C3%A9vete&dates=20260704T074000Z/20260704T082000Z&details=Turno%20con%20Marta&location=Atr%C3%A9vete%20Sal%C3%B3n%20de%20Belleza",
+      "latency_ms": 23741,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "get_next_available_options", "check_availability", "book"],
+      "bugs": [],
+      "milestone": "booking_confirmed — appointment_id=87d35a71-c51f-4930-9efa-43d52042fa29, Marta, 2026-07-04T09:40:00+02:00, Corte de Mujer"
+    }
+  ],
+  "bugs": [],
+  "milestones_reached": [
+    "personalization_detected",
+    "policy_accepted",
+    "slot_race_handled",
+    "booking_confirmed"
+  ],
+  "db_delta": {
+    "customer_count_before": 1,
+    "customer_count_after": 1,
+    "appt_count_before": 1,
+    "appt_count_after": 2,
+    "net_appointments_created": 1,
+    "appointment_id": "87d35a71-c51f-4930-9efa-43d52042fa29"
+  },
+  "snapshot_before": {
+    "raw": "1 1",
+    "customer_count": 1,
+    "appt_count": 1
+  },
+  "snapshot_after": {
+    "raw": "1 2",
+    "customer_count": 1,
+    "appt_count": 2
+  },
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "8f7e4777-af54-40df-9342-9e86d3aef492",
+    "customer_phone": "+34999000050",
+    "customer_id": "7c234b09-10de-41bb-80b7-0565e48ad0f4",
+    "customer_name": "Carmen Ruiz",
+    "messages_count": 30,
+    "latest_tool_call_name": "book",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": true
+  },
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "booked",
+    "must_contain_any": ["Marta", "tu estilista", "tu visita anterior"],
+    "soft_pass_outcome": "info_provided"
+  },
+  "passed": true,
+  "personalization_detected": true,
+  "personalization_evidence": {
+    "turn_1_response_contains_marta": true,
+    "turn_1_response_contains_service": true,
+    "bot_asked_zero_cold_questions": true,
+    "customer_known_flag_in_draft": true,
+    "matched_criterion": "Marta"
+  },
+  "notes": [
+    "Bot recognized Carmen immediately on turn 1 and offered Marta + Corte de Mujer without asking who she was, what she wanted, or which stylist.",
+    "Slot race condition on 09:00 (taken between offer and validation) handled correctly — bot re-offered with Marta alternatives.",
+    "customer_consents_count=0 in final_state despite policy_accepted=true in tool chain. Policy acceptance was tracked in LLM draft state (update_booking confirmed policy_version_accepted=1.0) but may not have been persisted to customer_consents table. This is a potential concern but did not block booking."
+  ]
+}

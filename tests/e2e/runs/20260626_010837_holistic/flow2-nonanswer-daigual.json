@@ -1,0 +1,252 @@
+{
+  "scenario_id": "flow2-nonanswer-daigual",
+  "conversation_id": "cb1de12e-9cd8-4da5-8cb4-d2cf04926432",
+  "persona": {
+    "name": "Ana Ruiz",
+    "phone": "+34999000131",
+    "gender": "mujer",
+    "description": "Mujer, algo impaciente. Proporciona respuestas no informativas cuando se le pregunta la audiencia, pero finalmente cede."
+  },
+  "expected": {
+    "outcome": "booked",
+    "coherent_behavior": "Cuando el usuario dice 'da igual', el bot NO debe asumir género ni abandonar. Debe explicar amablemente por qué necesita saber (el servicio/precio difiere según el tipo de persona) y volver a preguntar con calidez. Solo cuando ella diga 'mujer' debe avanzar. No debe ser robótico ni repetir exactamente la misma frase."
+  },
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, quiero cortarme el pelo",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Es para señora, caballero, niña, niño o bebé?",
+      "tool_calls_observed": [
+        {
+          "tool": "update_booking",
+          "key_args": {"services": ["corte"], "audience": null},
+          "result_next_step": "audience_required"
+        }
+      ],
+      "response_latency_ms": 10917,
+      "coherence_note": "CORRECTO. El bot reconoce 'corte' como ambiguo (6 variantes posibles) y pide audiencia. Presentación correcta con emoji y nombre.",
+      "bugs": []
+    },
+    {
+      "turn": 2,
+      "user_message": "da igual",
+      "agent_response": "Necesito saber para quién es, porque \"corte\" se separa por tipo de persona.\n\n¿Es para señora, caballero, niña, niño o bebé?",
+      "tool_calls_observed": [
+        {
+          "tool": "update_booking",
+          "key_args": {"services": ["corte"], "audience": null},
+          "result_next_step": "audience_required",
+          "calls_count": 2
+        }
+      ],
+      "response_latency_ms": 13762,
+      "coherence_note": "CORRECTO en comportamiento core: NO asumió género, NO avanzó al siguiente paso. Dio una razón ('corte se separa por tipo de persona') y re-preguntó. Sin embargo, el tono es algo brusco/funcional — podría ser más cálido. No robótico (phrasing distinto al turn 1).",
+      "bugs": []
+    },
+    {
+      "turn": 3,
+      "user_message": "lo que sea, tú elige",
+      "agent_response": "Necesito que me digas para quién es, porque no puedo elegirlo por ti.\n\n¿Es para señora, caballero, niña, niño o bebé?",
+      "tool_calls_observed": [
+        {
+          "tool": "update_booking",
+          "key_args": {"services": ["corte"], "audience": null},
+          "result_next_step": "audience_required",
+          "calls_count": 2
+        }
+      ],
+      "response_latency_ms": 10921,
+      "coherence_note": "PARCIALMENTE CORRECTO. Mantiene el rumbo sin asumir género — bien. Frase levemente distinta ('no puedo elegirlo por ti'). Sin embargo, la estructura turn 2→3 es similar (negativa funcional + re-pregunta exacta). Ligero riesgo de percibirse robótico si el usuario lo compara. La re-pregunta es idéntica literalmente ('¿Es para señora, caballero, niña, niño o bebé?') en ambos turns — eso es un loop repetitivo leve. Aun así cumple el requisito de no asumir.",
+      "bugs": [
+        "robotic_loop_mild: la pregunta final '¿Es para señora, caballero, niña, niño o bebé?' es exactamente la misma en turns 1, 2 y 3"
+      ]
+    },
+    {
+      "turn": 4,
+      "user_message": "vale, es para mí, soy mujer",
+      "agent_response": "Perfecto, entonces para mujer. \n\n¿Quieres solo el corte o añadir algo más?",
+      "tool_calls_observed": [
+        {
+          "tool": "update_booking",
+          "key_args": {"services": ["corte"], "audience": null},
+          "result_next_step": "audience_required",
+          "calls_count": 2
+        },
+        {
+          "tool": "update_booking",
+          "key_args": {"services": ["corte"], "audience": "adult_female"},
+          "result_next_step": "audience_required",
+          "note": "BUG: el tool devuelve audience_required incluso con audience=adult_female + service=corte genérico"
+        }
+      ],
+      "response_latency_ms": 13038,
+      "coherence_note": "CORRECTO en flujo conversacional: el bot reconoce la respuesta, confirma 'para mujer', y avanza a extras. Sin embargo, hay una anomalía de herramienta: update_booking con audience='adult_female' sigue devolviendo 'audience_required' porque el service sigue siendo 'corte' genérico (no 'corte de mujer'). El agente recupera por contexto conversacional, no por la herramienta. El flujo parece continuar correctamente.",
+      "bugs": [
+        "tool_state_drift: update_booking devuelve audience_required incluso cuando audience='adult_female' se pasa; el agente no está persistiendo la audiencia resuelta en el estado del checkpoint"
+      ]
+    },
+    {
+      "turn": 5,
+      "user_message": "solo el corte",
+      "agent_response": "Para dejarlo bien apuntado, ¿te refieres a corte de mujer o a corte de flequillo?",
+      "tool_calls_observed": [
+        {
+          "tool": "update_booking",
+          "key_args": {"services": ["corte"], "audience": null},
+          "result_next_step": "audience_required",
+          "calls_count": 4,
+          "note": "sigue re-invocando con service=corte y audience=null primero, luego adult_female, fallando siempre hasta que intenta corte de mujer"
+        }
+      ],
+      "response_latency_ms": 10598,
+      "coherence_note": "CORRECTO: el bot sabe que Ana dijo 'soy mujer' (contexto retenido a nivel de conversación aunque no en estado de herramienta) y ofrece la bifurcación pertinente: 'corte de mujer' vs 'corte de flequillo'. Disambiguation coherente para una clienta femenina.",
+      "bugs": [
+        "tool_state_drift: el agente empieza cada turn recalculando desde cero (services=['corte'], audience=null) antes de llegar a la resolución correcta — señal de que el estado de update_booking no se persiste entre turns correctamente, obligando al LLM a re-derivar todo desde el historial de mensajes"
+      ]
+    },
+    {
+      "turn": 6,
+      "user_message": "corte de mujer",
+      "agent_response": "¿Con quién te apetece reservarlo: Harolyn, Marta, Pilar, Victor o la primera con disponibilidad?",
+      "tool_calls_observed": [
+        {
+          "tool": "update_booking",
+          "key_args": {"services": ["corte de mujer"], "audience": "adult_female", "no_more_services": true, "variant_resolved": true},
+          "result_next_step": "stylist_required",
+          "service_ids_resolved": ["cb7ae91c-97ff-e1d1-3b0b-696b11467add"]
+        }
+      ],
+      "response_latency_ms": 12476,
+      "coherence_note": "CORRECTO. El servicio queda resuelto a UUID cuando el nombre exacto del catálogo se especifica. El bot pregunta por estilista incluyendo la opción 'primera con disponibilidad'.",
+      "bugs": []
+    },
+    {
+      "turn": 7,
+      "user_message": "la primera con disponibilidad",
+      "agent_response": "Las próximas citas que hay son:\n\n1. Martes 30 de junio a las 10:00 con Marta  \n2. Martes 30 de junio a las 10:40 con Marta  \n3. Martes 30 de junio a las 11:20 con Marta",
+      "tool_calls_observed": [
+        {
+          "tool": "update_booking",
+          "key_args": {"no_preference_stylist": true, "pre_resolved_service_ids": ["cb7ae91c-97ff-e1d1-3b0b-696b11467add"]},
+          "result_next_step": "offer_slots"
+        },
+        {
+          "tool": "get_next_available_options",
+          "key_args": {"service_ids": ["cb7ae91c-97ff-e1d1-3b0b-696b11467add"], "strategy": "any_stylist", "max_options": 3}
+        }
+      ],
+      "response_latency_ms": 15041,
+      "coherence_note": "CORRECTO. Obtiene slots reales del sistema y los presenta de forma legible.",
+      "bugs": []
+    },
+    {
+      "turn": 8,
+      "user_message": "el primero, el martes a las 10",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "tool_calls_observed": [
+        {
+          "tool": "update_booking",
+          "key_args": {"slot_iso": "2026-06-30T10:00:00+02:00", "date_iso": "2026-06-30", "policy_accepted": false},
+          "result_next_step": "policy_acceptance_required"
+        }
+      ],
+      "response_latency_ms": 12876,
+      "coherence_note": "CORRECTO. El bot bloquea la confirmación hasta que se acepte la política, y presenta el resumen de forma amigable con la URL.",
+      "bugs": []
+    },
+    {
+      "turn": 9,
+      "user_message": "sí, la acepto",
+      "agent_response": "Perfecto. ¿Me dices tu nombre y primer apellido?",
+      "tool_calls_observed": [
+        {
+          "tool": "update_booking",
+          "key_args": {"policy_accepted": true},
+          "result_next_step": "name_required"
+        }
+      ],
+      "response_latency_ms": 11074,
+      "coherence_note": "CORRECTO. Acepta la política y solicita el nombre para finalizar.",
+      "bugs": []
+    },
+    {
+      "turn": 10,
+      "user_message": "Ana Ruiz",
+      "agent_response": "Gracias, Ana. ¿Quieres dejarme alguna nota para la cita?",
+      "tool_calls_observed": [
+        {
+          "tool": "update_booking",
+          "key_args": {"customer_full_name": "Ana Ruiz"},
+          "result_next_step": "notes_optional"
+        }
+      ],
+      "response_latency_ms": 10637,
+      "coherence_note": "CORRECTO. Registra el nombre, pregunta por notas opcionales antes de finalizar.",
+      "bugs": []
+    },
+    {
+      "turn": 11,
+      "user_message": "no, sin notas",
+      "agent_response": "Se me ha movido ese hueco y ya no está disponible.\n\nTe quedan estas alternativas para el martes 30 de junio:\n1. 11:20\n2. 12:00\n3. 12:40\n\n¿Cuál prefieres?",
+      "tool_calls_observed": [
+        {
+          "tool": "update_booking",
+          "key_args": {"notes_asked": true},
+          "result_next_step": "pre_book_validation_required"
+        },
+        {
+          "tool": "check_availability",
+          "key_args": {"slot_time": "10:00", "no_preference": true},
+          "result": "rejected — slot_no_longer_available",
+          "alternatives_offered": ["11:20", "12:00", "12:40"]
+        }
+      ],
+      "response_latency_ms": 18129,
+      "coherence_note": "CORRECTO (resilience path). El slot 10:00 ya no estaba disponible en el momento de la reserva (fue tomado por otra reserva durante la sesión multi-turn). El bot detecta esto vía check_availability, no intenta forzar el book, y ofrece alternativas coherentes en el mismo día. La sesión no termina en confirmación, pero por causa externa (slot race condition), no por fallo del bot.",
+      "bugs": [
+        "slot_race_condition: slot 10:00 del 2026-06-30 fue tomado entre turn 7 (offer) y turn 11 (book attempt) — comportamiento esperado en un sistema real, no un bug del bot"
+      ]
+    }
+  ],
+  "outcome": "incomplete_slot_race",
+  "outcome_detail": "La conversación llegó hasta pre_book_validation con todos los datos recogidos (servicio, estilista, fecha, política, nombre), pero el slot 10:00 fue tomado por otra reserva durante la sesión. El bot ofreció alternativas correctamente. La sesión superó el límite de 10 turns antes de poder completar la reserva con una alternativa.",
+  "coherent_with_expectation": {
+    "verdict": "PASS_WITH_MINOR_ISSUES",
+    "reasons": [
+      "PASS: El bot NO asumió género en ningún momento ante 'da igual' ni 'lo que sea, tú elige'",
+      "PASS: El bot explicó por qué necesita saber (turn 2: 'corte se separa por tipo de persona')",
+      "PASS: El bot re-preguntó con frasing ligeramente distinto en turn 3 (no copia literal de turn 2)",
+      "PASS: Una vez que Ana dijo 'soy mujer', el bot continuó el flujo correctamente",
+      "PASS: El bot retuvo el contexto de género a nivel conversacional incluso cuando la herramienta update_booking no lo persistía",
+      "PASS: Se completaron todos los pasos del flujo (audiencia → extras → estilista → slots → política → nombre → notas) hasta llegar a pre-book",
+      "MINOR: La re-pregunta de audiencia ('¿Es para señora, caballero, niña, niño o bebé?') es exactamente idéntica en los 3 primeros turns — leve loop robótico en el texto final aunque el contexto cambia",
+      "MINOR: El tono de turns 2 y 3 es funcional/correcto pero algo frío — no cálido como se esperaba ('de la manera más amable')",
+      "BUG: update_booking no persiste audience en el estado del checkpoint cuando el service term es genérico ('corte'), forzando al LLM a re-derivar el contexto desde el historial de mensajes en cada turn — esto genera 4-5 llamadas a la herramienta por turn desde turn 4 en adelante"
+    ]
+  },
+  "bugs_summary": [
+    {
+      "id": "B1",
+      "label": "tool_state_drift",
+      "severity": "WARNING",
+      "description": "update_booking no persiste audience='adult_female' en el checkpoint cuando el service term es 'corte' genérico. En cada turn posterior a que Ana declaró su género, el agente llama update_booking con audience=null primero (obtiene audience_required), luego reintenta con audience='adult_female' pero el service sigue siendo 'corte' (obtiene audience_required de nuevo), y solo resuelve cuando usa el nombre exacto del catálogo. Esto provoca 4-5 invocaciones de la herramienta por turn en lugar de 1-2, y aumenta la latencia.",
+      "turns_affected": [4, 5, 6, 7, 8, 9, 10, 11],
+      "assumed_audience": false
+    },
+    {
+      "id": "B2",
+      "label": "robotic_loop_mild",
+      "severity": "INFO",
+      "description": "La pregunta '¿Es para señora, caballero, niña, niño o bebé?' es textualmente idéntica en los turns 1, 2 y 3. El contexto cambia pero la pregunta no varía. Puede percibirse como robótico si el usuario compara las respuestas.",
+      "turns_affected": [1, 2, 3],
+      "assumed_audience": false
+    }
+  ],
+  "notes": [
+    "El 'slot race condition' en turn 11 es comportamiento esperado en producción y muestra que el check_availability pre-book funciona correctamente.",
+    "La conversación requirió 11 turns en lugar de los ~8 esperados, en parte por la redundancia del tool_state_drift (recalcula desde cero cada turn).",
+    "El bot nunca usó 'voseo' (no se detectó en ninguna respuesta).",
+    "El bot nunca asumió género — este es el comportamiento CRÍTICO esperado y se cumplió 100%.",
+    "La sesión se ejecutó el 2026-06-26 contra el entorno de staging en pepe@server."
+  ]
+}

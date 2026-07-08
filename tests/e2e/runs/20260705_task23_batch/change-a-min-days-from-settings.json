@@ -1,0 +1,89 @@
+{
+  "scenario_id": "change-a-min-days-from-settings",
+  "conversation_id": "e3767584-c35b-4a26-92cb-feaf06036735",
+  "outcome": "rejected",
+  "turns_taken": 3,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, ¿podéis darme cita para hoy? Necesito urgente un tinte.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nClaro, para tinte necesito saber para quién es: ¿es para ti o para otra persona?",
+      "latency_ms": 18091,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "audience_disambiguation_requested"
+    },
+    {
+      "turn": 2,
+      "user_message": "Para mí. Soy Isabel López. ¿Me lo podéis dar para hoy? Es urgente.",
+      "agent_response": "Perfecto, Isabel 😊 ¿Quieres añadir algún otro servicio o solo el tinte?",
+      "latency_ms": 13476,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "extras_question_asked"
+    },
+    {
+      "turn": 3,
+      "user_message": "Solo el tinte, para hoy si puede ser.",
+      "agent_response": "Lo siento, hoy domingo el salón está cerrado y, además, la primera fecha válida es el miércoles 8 de julio.\n\nEstos son los huecos que te quedan más próximos para el tinte:\n1. Miércoles 8 de julio a las 10:00\n2. Miércoles 8 de julio a las 10:40\n3. Miércoles 8 de julio a las 11:20\n\n¿Cuál te viene mejor?",
+      "latency_ms": 14240,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": ["unbacked_slots"],
+      "milestone": "rejected_citing_closed_day_and_min_advance"
+    }
+  ],
+  "bugs": [
+    {
+      "turn": 3,
+      "type": "unbacked_slots",
+      "detail": "Bot presented three concrete slot times (miercoles 8 julio 10:00/10:40/11:20) with only 'update_booking' tool evidence visible in the turn payload — no check_availability or get_next_available_options call appears in tool_evidence backing those specific times. The update_booking result payload does include 'first_valid_date':'2026-07-08' and a rejection error naming the 3-day minimum, so the date itself is grounded, but the three exact time slots are not traceable to an availability tool call in the evidence returned by qa_turn_helper for this turn."
+    }
+  ],
+  "milestones_reached": [
+    "audience_disambiguation_requested",
+    "extras_question_asked",
+    "rejected_citing_closed_day_and_min_advance"
+  ],
+  "db_delta": {
+    "customer_count_delta": 0,
+    "appt_count_delta": 0
+  },
+  "snapshot_before": {"customer_count": 0, "appt_count": 0},
+  "snapshot_after": {"customer_count": 0, "appt_count": 0},
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "e3767584-c35b-4a26-92cb-feaf06036735",
+    "customer_phone": "+34999000005",
+    "customer_id": null,
+    "customer_name": null,
+    "messages_count": 12,
+    "latest_tool_call_name": "update_booking",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": false
+  },
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "rejected",
+    "db_appointment": null,
+    "tool_calls_required": [],
+    "tool_calls_forbidden": ["book"],
+    "tags": ["change-a", "min-days", "settings"]
+  },
+  "passed": true,
+  "quality_observations": {
+    "extras_question_own_turn": true,
+    "extras_question_own_turn_detail": "Turn 2: bot asked '¿Quieres añadir algún otro servicio o solo el tinte?' as its own turn, before any stylist/date discussion (scenario never got to stylist/date since the date itself was rejected).",
+    "confirmation_last": null,
+    "confirmation_last_detail": "Not applicable — scenario terminated on rejection before reaching name/policy/confirmation sequence; 'Te lo confirmo?' never appeared.",
+    "rejection_both_facts": true,
+    "rejection_both_facts_detail": "Turn 3 explicitly stated BOTH facts in one message: 'hoy domingo el salón está cerrado' (closed day) AND 'la primera fecha válida es el miércoles 8 de julio' (min-advance policy result). This matches the dual-condition rejection pattern the scenario is designed to probe (shared with change-a-closed-and-underadvance).",
+    "stylist_menu_option0": null,
+    "stylist_menu_option0_detail": "No stylist menu appeared in this scenario — persona used no_preference_stylist and conversation never reached stylist selection.",
+    "tone": "Warm/cálido. Verbatim: '¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸' and 'Perfecto, Isabel 😊'. Uses first name, emoji, friendly diminutives ('Lo siento'). Consistent warm register across all 3 turns, including the rejection turn which stays polite rather than curt.",
+    "unbacked_slots": "YES — turn 3. Bot offered 3 concrete slot times (10:00, 10:40, 11:20 on Wed 8 July) with no check_availability or get_next_available_options tool call visible in the returned tool_evidence for that turn (only update_booking calls are shown). The rejected date and first_valid_date are grounded in the update_booking tool's error payload, but the specific slot times are not directly traceable to an availability-tool call in the evidence captured by the harness. Quotes: 'Estos son los huecos que te quedan más próximos para el tinte: 1. Miércoles 8 de julio a las 10:00 2. Miércoles 8 de julio a las 10:40 3. Miércoles 8 de julio a las 11:20'."
+  }
+}

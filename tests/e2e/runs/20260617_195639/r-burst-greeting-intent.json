@@ -1,0 +1,99 @@
+{
+  "scenario_id": "r-burst-greeting-intent",
+  "conversation_id": "76b4d39e-4cee-4083-9a2c-46e239f0a290",
+  "phone": "+34999000051",
+  "persona_name": "Laura Gomez",
+  "expected_outcome": "booked",
+  "outcome": "booked",
+  "max_turns": 8,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "hola | quiero cortarme el pelo",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nEstas son las primeras citas disponibles para corte de mujer:\n\n1. Martes 23 de junio a las 10:00 con Marta\n2. Martes 23 de junio a las 10:40 con Marta\n3. Martes 23 de junio a las 11:20 con Marta\n\nSi no tienes preferencia de estilista, la primera con disponibilidad también es con Marta. ¿Cuál te viene mejor?",
+      "response_latency_ms": 17221,
+      "timed_out": false,
+      "tool_evidence": ["update_booking", "get_next_available_options"],
+      "burst_messages": ["hola", "quiero cortarme el pelo"]
+    },
+    {
+      "turn": 2,
+      "user_message": "la primera, el martes a las 10:00 con Marta",
+      "agent_response": "Lo siento, tuve un problema técnico. ¿Puedes intentarlo de nuevo? 💕",
+      "response_latency_ms": 11049,
+      "timed_out": false,
+      "tool_evidence": ["update_booking", "get_next_available_options"]
+    },
+    {
+      "turn": 3,
+      "user_message": "la primera, el martes a las 10:00 con Marta",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "response_latency_ms": 11684,
+      "timed_out": false,
+      "tool_evidence": ["update_booking", "get_next_available_options", "update_booking"]
+    },
+    {
+      "turn": 4,
+      "user_message": "si, la acepto",
+      "agent_response": "Perfecto. ¿Me das tu nombre y primer apellido?",
+      "response_latency_ms": 12427,
+      "timed_out": false,
+      "tool_evidence": ["update_booking", "get_next_available_options", "update_booking", "update_booking"]
+    },
+    {
+      "turn": 5,
+      "user_message": "Laura Gomez",
+      "agent_response": "¿Alguna nota para Marta?",
+      "response_latency_ms": 13367,
+      "timed_out": false,
+      "tool_evidence": ["update_booking", "get_next_available_options", "update_booking", "update_booking", "update_booking"]
+    },
+    {
+      "turn": 6,
+      "user_message": "no, sin notas",
+      "agent_response": "¡Listo, Laura! Te queda reservada la cita el martes 23 de junio a las 10:00 con Marta para corte de mujer.\n\nAquí tienes el enlace del calendario por si lo quieres guardar:\nhttps://calendar.google.com/calendar/render?action=TEMPLATE&text=Corte%20de%20Mujer%20en%20Atr%C3%A9vete&dates=20260623T080000Z/20260623T084000Z&details=Turno%20con%20Marta&location=Atr%C3%A9vete%20Sal%C3%B3n%20de%20Belleza",
+      "response_latency_ms": 24490,
+      "timed_out": false,
+      "tool_evidence": ["update_booking", "get_next_available_options", "update_booking", "update_booking", "update_booking", "update_booking", "check_availability", "book"]
+    }
+  ],
+  "tool_calls_observed": [
+    "update_booking",
+    "get_next_available_options",
+    "update_booking",
+    "get_next_available_options",
+    "update_booking",
+    "update_booking",
+    "get_next_available_options",
+    "update_booking",
+    "update_booking",
+    "update_booking",
+    "get_next_available_options",
+    "update_booking",
+    "update_booking",
+    "update_booking",
+    "update_booking",
+    "get_next_available_options",
+    "update_booking",
+    "update_booking",
+    "update_booking",
+    "update_booking",
+    "update_booking",
+    "check_availability",
+    "book"
+  ],
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "76b4d39e-4cee-4083-9a2c-46e239f0a290",
+    "customer_phone": "+34999000051",
+    "customer_id": "0b7bb8bc-81bf-46a9-91d7-bbda99b9c4f5",
+    "customer_name": "Laura Gomez",
+    "messages_count": 27,
+    "latest_tool_call_name": "book",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": true
+  },
+  "claim_vs_backend": "¡Listo, Laura! Te queda reservada la cita el martes 23 de junio a las 10:00 con Marta para corte de mujer.",
+  "coherence_notes": "The burst reply CRITICALLY addressed BOTH the greeting AND the haircut intent in a single response: it opened with a greeting/self-introduction as Maite and immediately pivoted to offering three available slots for 'corte de mujer', satisfying both messages without requiring a separate acknowledgment turn. The flow was coherent turn-to-turn: slot selection, policy acceptance, name collection, and notes all followed in natural order. One transient 'technical error' appeared on turn 2 (the first slot-selection attempt) but resolved cleanly on retry with no state loss. No voseo detected; all stylists mentioned (Marta) are in the valid list (Harolyn, Marta, Pilar, Rosa, Victor). The DB shows policy_accepted_at as null despite the agent recording acceptance in the booking — this is a known consent audit gap (customer_consents_count=0) worth flagging as a WARNING."
+}

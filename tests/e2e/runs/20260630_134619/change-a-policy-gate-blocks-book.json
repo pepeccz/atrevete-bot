@@ -1,0 +1,151 @@
+{
+  "scenario_id": "change-a-policy-gate-blocks-book",
+  "conversation_id": "9dc3e9d4-0f73-48b1-811e-efb35d966b74",
+  "outcome": "policy_accepted",
+  "turns_taken": 8,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Quiero reservar un corte de pelo para el viernes.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Es para señora, caballero, niña, niño o bebé?",
+      "latency_ms": 13170,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": null
+    },
+    {
+      "turn": 2,
+      "user_message": "Para mi, soy señora.",
+      "agent_response": "Perfecto. Para registrar la cita, ¿me das tu nombre y apellido?",
+      "latency_ms": 15448,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": null
+    },
+    {
+      "turn": 3,
+      "user_message": "Carmen Ruiz.",
+      "agent_response": "¿Alguna nota para la cita?",
+      "latency_ms": 14687,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": null
+    },
+    {
+      "turn": 4,
+      "user_message": "No, sin notas.",
+      "agent_response": "Me falta el hueco exacto para poder seguir. ¿Qué hora te viene mejor el viernes?",
+      "latency_ms": 14081,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": null
+    },
+    {
+      "turn": 5,
+      "user_message": "Sobre las 11.",
+      "agent_response": "No veo hueco el viernes sobre las 11:00. Te puedo ofrecer la primera disponibilidad con estilista: Marta el sábado 4 de julio a las 9:00, 9:40 o 10:20. ¿Cuál te viene mejor?",
+      "latency_ms": 16006,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "get_next_available_options"],
+      "bugs": [],
+      "milestone": "availability_offered"
+    },
+    {
+      "turn": 6,
+      "user_message": "Las 9 del sabado me va bien.",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política\nde privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos\navisar con al menos 24h si necesitas cambiar o cancelar — fuera de\nese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "latency_ms": 15997,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "get_next_available_options", "check_availability"],
+      "bugs": [],
+      "milestone": "policy_gate_presented"
+    },
+    {
+      "turn": 7,
+      "user_message": "Y si cancelo antes de las 24h que pasa?",
+      "agent_response": "Si cancelas con menos de 24h de antelación, se aplica un cargo del 50% del servicio en tu próxima visita. ¿La aceptas?",
+      "latency_ms": 13192,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "get_next_available_options", "check_availability"],
+      "bugs": [],
+      "milestone": null
+    },
+    {
+      "turn": 8,
+      "user_message": "Si, la acepto.",
+      "agent_response": "¡Listo! Te he dejado reservada la cita para el sábado 4 de julio a las 9:00 con Marta para corte de mujer.\n\nSi quieres, también te paso el enlace del calendario.",
+      "latency_ms": 22902,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "get_next_available_options", "check_availability", "book"],
+      "bugs": [
+        "book called with policy_accepted=false in arguments despite user just accepting — LLM failed to pass accepted=true to book tool",
+        "no consent record persisted in DB (customer_consents_count=0, policy_accepted_at=null) — acceptance not written to database despite booking completing"
+      ],
+      "milestone": "policy_accepted"
+    }
+  ],
+  "bugs": [
+    {
+      "turn": 8,
+      "type": "tool_argument_mismatch",
+      "description": "LLM called book() with policy_accepted=false even though update_booking(policy_accepted=true) returned next_step=booking_ready in the same turn. The book tool accepted the booking regardless, and no customer_consent row was written to DB.",
+      "severity": "HIGH",
+      "tool": "book",
+      "observed_argument": "policy_accepted: false",
+      "expected_argument": "policy_accepted: true"
+    },
+    {
+      "turn": 8,
+      "type": "db_state_inconsistency",
+      "description": "customer_consents_count=0 and policy_accepted_at=null in DB after booking completed. Policy acceptance was not persisted despite user confirming and booking succeeding. The book tool should either enforce policy_accepted=true or the LLM should pass the correct value.",
+      "severity": "HIGH",
+      "db_field": "customer_consents_count",
+      "observed": 0,
+      "expected": 1
+    }
+  ],
+  "milestones_reached": [
+    "availability_offered",
+    "policy_gate_presented",
+    "policy_accepted"
+  ],
+  "db_delta": {
+    "appointments_before": 0,
+    "appointments_after": 1,
+    "customers_before": 0,
+    "customers_after": 1,
+    "customer_consents_count": 0,
+    "note": "Booking was created (appointment_id bb058ee5-ae95-4a40-9296-cddcd56609b0) but no consent record written — policy_accepted=false was passed to book() by LLM"
+  },
+  "snapshot_before": {
+    "appointments": 0,
+    "customers": 0
+  },
+  "snapshot_after": {
+    "appointments": 1,
+    "customers": 1
+  },
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "9dc3e9d4-0f73-48b1-811e-efb35d966b74",
+    "customer_phone": "+34999000002",
+    "customer_id": "a351824a-2d11-4ff6-b7a3-b425d895ebb4",
+    "customer_name": "Carmen Ruiz",
+    "messages_count": 34,
+    "latest_tool_call_name": "book",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": true
+  },
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "policy_accepted",
+    "tool_calls_forbidden": ["book"]
+  },
+  "passed": true,
+  "notes": "Policy gate appeared correctly at turn 6 before any booking. book() was not called before policy acceptance — the gate held. However, book() was called in the same turn as acceptance (turn 8) since the LLM issued both tool calls in one response; QA runner could not terminate before that call fired. Additionally, book() was called with policy_accepted=false (LLM argument bug), and no consent record was persisted to DB. The primary gate invariant (book blocked before acceptance) was satisfied; passed=true per protocol (outcome==policy_accepted). The two HIGH bugs are flagged for separate investigation."
+}

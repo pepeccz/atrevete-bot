@@ -1,0 +1,85 @@
+{
+  "scenario_id": "change-b-catalog-loaded",
+  "conversation_id": "e57a35a7-1e9c-4054-82d9-c8fea765553b",
+  "outcome": "info_provided",
+  "turns_taken": 3,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, ¿qué servicios ofrecéis?",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nTrabajamos con servicios de peluquería y estética, como cortes, peinados, color, depilación, manicura, pedicura, maquillaje y tratamientos faciales y corporales. Si quieres, te digo cuál te encaja y te ayudo a reservarlo.",
+      "latency_ms": 9610,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "catalog_listed_first_response"
+    },
+    {
+      "turn": 2,
+      "user_message": "Vale, ¡gracias! ¿Y tenéis servicio de manicura también?",
+      "agent_response": "Sí, claro 😊 Tenemos manicura y también opciones como manicura permanente y manicura de caballero. Si quieres, te ayudo a ver cuál te encaja y a reservarla.",
+      "latency_ms": 14745,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "catalog_followup_accurate"
+    },
+    {
+      "turn": 3,
+      "user_message": "Perfecto, muchas gracias. Me lo pienso y os escribo cuando decida, ¡un saludo!",
+      "agent_response": "¡Perfecto! Cuando te apetezca, aquí estaré para ayudarte a reservar lo que necesites. Que vaya muy bien 😊",
+      "latency_ms": 13356,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "conversation_ended_naturally_no_booking"
+    }
+  ],
+  "bugs": [],
+  "milestones_reached": [
+    "catalog_listed_first_response",
+    "catalog_followup_accurate",
+    "conversation_ended_naturally_no_booking"
+  ],
+  "db_delta": {
+    "customer_count_delta": 0,
+    "appt_count_delta": 0
+  },
+  "snapshot_before": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "snapshot_after": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "e57a35a7-1e9c-4054-82d9-c8fea765553b",
+    "customer_phone": "+34999000008",
+    "customer_id": null,
+    "customer_name": null,
+    "messages_count": 6,
+    "latest_tool_call_name": null,
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": false
+  },
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "info_provided",
+    "db_appointment": null,
+    "tool_calls_required": [],
+    "tool_calls_forbidden": [],
+    "tags": ["change-b", "catalog", "cache"]
+  },
+  "passed": true,
+  "quality_observations": {
+    "extras_question_own_turn": "not_applicable — no booking flow entered; scenario is a pure FAQ/catalog inquiry",
+    "confirmation_last": "not_applicable — no confirmation sequence occurred",
+    "rejection_both_facts": "not_applicable — no rejection occurred",
+    "stylist_menu_option0": "not_applicable — no stylist menu was presented",
+    "tone": "warm/cercano — uses emoji, self-introduces as \"Maite\", offers proactive help (\"Si quieres, te digo cuál te encaja y te ayudo a reservarlo.\"); closing turn is friendly (\"Que vaya muy bien 😊\")",
+    "unbacked_slots": "none observed — no concrete slot times were presented at any point in this conversation (no availability check was relevant to the catalog-only scenario), so no unbacked-slot risk applies here"
+  }
+}

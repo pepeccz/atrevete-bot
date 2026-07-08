@@ -1,0 +1,110 @@
+{
+  "scenario_id": "change-c-policy-acceptance-stored",
+  "conversation_id": "5f4203a4-d35a-4315-8017-ef24442f752a",
+  "outcome": "policy_accepted",
+  "turns_taken": 7,
+  "turns": [
+    {
+      "turn": 1,
+      "role": "user",
+      "message": "Hola, me gustaria reservar una cita. Es la primera vez que os contacto.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Para qué servicio te gustaría la cita?\n\n¿Para qué servicio te gustaría la cita?",
+      "latency_ms": 13456,
+      "tool_calls": [],
+      "notes": "Duplicate question detected: policy not presented on first contact (disclosure via 'asistenta virtual con IA' present but policy gate deferred correctly)."
+    },
+    {
+      "turn": 2,
+      "role": "user",
+      "message": "Me gustaria hacerme un corte de pelo",
+      "agent_response": "¿Es para señora, caballero, niña, niño o bebé?",
+      "latency_ms": 12268,
+      "tool_calls": ["update_booking"],
+      "notes": "Bot correctly asking for audience disambiguation."
+    },
+    {
+      "turn": 3,
+      "role": "user",
+      "message": "Para señora",
+      "agent_response": "¿Quieres añadir algún otro servicio o solo el corte de señora?",
+      "latency_ms": 11121,
+      "tool_calls": ["update_booking"],
+      "notes": "Service resolved: Corte de Mujer (cb7ae91c-97ff-e1d1-3b0b-696b11467add). Extras loop initiated."
+    },
+    {
+      "turn": 4,
+      "role": "user",
+      "message": "Solo el corte, gracias",
+      "agent_response": "¿Tienes preferencia de estilista?  \n0) La primera con disponibilidad (mín. 3 días de antelación)  \n1) Harolyn  \n2) Marta  \n3) Pilar  \n4) Victor",
+      "latency_ms": 13676,
+      "tool_calls": ["update_booking"],
+      "notes": "No extra services. Proceeding to stylist selection."
+    },
+    {
+      "turn": 5,
+      "role": "user",
+      "message": "La primera con disponibilidad",
+      "agent_response": "Estas son las próximas citas disponibles:\n\n1. Sábado 4 de julio a las 9:40 con Marta\n2. Sábado 4 de julio a las 9:00 con Victor\n3. Sábado 4 de julio a las 10:20 con Marta\n\n¿Cuál te viene mejor?",
+      "latency_ms": 18982,
+      "tool_calls": ["update_booking", "get_next_available_options"],
+      "notes": "no_preference_stylist=true. Slots returned for 2026-07-04."
+    },
+    {
+      "turn": 6,
+      "role": "user",
+      "message": "La primera opcion, el sabado a las 9:40 con Marta",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política  \nde privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos  \navisar con al menos 24h si necesitas cambiar o cancelar — fuera de  \nese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "latency_ms": 18544,
+      "tool_calls": ["update_booking", "update_booking", "update_booking", "update_booking", "get_next_available_options", "update_booking"],
+      "notes": "MILESTONE: policy_presented. Slot selected: 2026-07-04T09:40:00+02:00 with Marta. update_booking next_step=policy_acceptance_required."
+    },
+    {
+      "turn": 7,
+      "role": "user",
+      "message": "Si, la acepto",
+      "agent_response": "Perfecto, ¿me das tu nombre y primer apellido?",
+      "latency_ms": 12436,
+      "tool_calls": ["update_booking", "update_booking", "update_booking", "update_booking", "get_next_available_options", "update_booking", "update_booking"],
+      "notes": "MILESTONE: policy_accepted. update_booking called with policy_accepted=true. Result: policy_accepted=true, policy_version_accepted=1.0. next_step=name_required. Scenario STOP: do not complete booking."
+    }
+  ],
+  "bugs": [
+    {
+      "type": "redundant_question",
+      "turn": 1,
+      "description": "Bot duplicated the service question in a single response: '¿Para qué servicio te gustaría la cita?' appears twice in the same message.",
+      "severity": "minor"
+    }
+  ],
+  "milestones_reached": [
+    "policy_presented",
+    "policy_accepted"
+  ],
+  "db_delta": {
+    "snapshot_before": "0 0",
+    "snapshot_after": "0 0",
+    "appointments_created": 0,
+    "customer_created": false,
+    "customer_consents_stored_in_db": false,
+    "notes": "Policy acceptance recorded in LangGraph checkpoint (policy_accepted=true, policy_version_accepted=1.0) but no customer record created in DB — customer creation (and consent DB write) happens at booking completion. Scenario stopped before booking was finalized per spec. No consent row linked to +34999000014 found in customer_consents."
+  },
+  "snapshot_before": "0 0",
+  "snapshot_after": "0 0",
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "5f4203a4-d35a-4315-8017-ef24442f752a",
+    "customer_phone": "+34999000014",
+    "customer_id": null,
+    "customer_name": null,
+    "messages_count": 28,
+    "latest_tool_call_name": "update_booking",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": true
+  },
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "policy_accepted"
+  },
+  "passed": true
+}

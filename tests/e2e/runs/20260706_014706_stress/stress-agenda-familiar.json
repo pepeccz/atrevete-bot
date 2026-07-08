@@ -1,0 +1,99 @@
+{
+  "scenario_id": "stress-agenda-familiar",
+  "conversation_id": "813b4eae-8ef5-474d-9162-98a6ccfe7d53",
+  "outcome": "escalated",
+  "turns_taken": 1,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "hola! necesito cita de corte para mi y para mi hija de 8 años, mejor seguidas si puede ser",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nTe paso con alguien del equipo para que lo gestione contigo.",
+      "latency_ms": 15502,
+      "timed_out": false,
+      "tool_calls_observed": [
+        {
+          "tool_name": "escalate",
+          "arguments": {"reason": "manual_request"},
+          "result": {
+            "result_summary": "Con mucho gusto te paso con alguien del equipo del salón. Te atenderán en el próximo horario disponible. 🙏",
+            "status": "success"
+          }
+        }
+      ],
+      "bugs": [
+        {
+          "severity": "P1",
+          "type": "premature_escalation",
+          "description": "On the very first customer message combining a booking request for two people (herself + her 8-year-old daughter) with a scheduling preference ('mejor seguidas'), the agent called escalate(reason='manual_request') instead of starting the sequential booking flow. No availability check, no clarifying question, no attempt to gather service/date/time for either person was made. The customer explicitly asked to BOOK, not to speak to a human -- there was no request for a human agent."
+        }
+      ],
+      "milestone": "escalated_without_attempt"
+    }
+  ],
+  "bugs": [
+    {
+      "severity": "P1",
+      "type": "premature_escalation",
+      "description": "Multi-person booking request (mother + minor daughter, back-to-back) was escalated to a human on turn 1 instead of being handled via the documented sequential-booking rule.",
+      "root_cause": "Prompt-adherence failure. agent/prompts/shared/critical_rules.md:72 (R-44) and agent/prompts/shared/booking_flow.md:118-120 explicitly govern this exact case ('un corte para el niño y un pelado para mi marido' is the example given) and mandate handling it as SEQUENTIAL single-person flows within the same conversation ('NUNCA agrupes dos personas... una cita = una persona') -- escalation is never prescribed. agent/tools/escalation_tools.py:42-63 defines escalate(reason='manual_request') with only a vague docstring ('customer explicitly asks to speak with a person, or when the bot cannot handle the request adequately') and no keyword/age/multi-person trigger list, which appears to have given the LLM an easy escape hatch instead of engaging R-44's supported flow. No guardian/minor-consent rule exists anywhere in critical_rules.md, booking_flow.md, or database/models.py that would make escalation the intended behavior for a child booking -- 'Corte de Niña' (audience=child_female) is a normal, fully bookable catalog service.",
+      "evidence_files": [
+        "agent/tools/escalation_tools.py:42-63",
+        "agent/prompts/shared/critical_rules.md:7",
+        "agent/prompts/shared/critical_rules.md:40-47",
+        "agent/prompts/shared/critical_rules.md:72",
+        "agent/prompts/shared/booking_flow.md:118-120",
+        "agent/prompts/shared/glossary.md:11-12"
+      ]
+    },
+    {
+      "severity": "P3",
+      "type": "no_customer_record_created",
+      "description": "customer_count remained 0 after the run (final_state.customer_id is null). Because the conversation escalated before the customer_resolve middleware's normal create-on-first-contact path completed a booking, no Customer row exists for +34999000022. Not confirmed as a defect distinct from the P1 above -- listed for completeness since db_delta is fully zero."
+    }
+  ],
+  "milestones_reached": ["conversation_started", "escalated"],
+  "db_delta": {
+    "customer_count_delta": 0,
+    "appt_count_delta": 0
+  },
+  "snapshot_before": {"customer_count": 0, "appt_count": 0},
+  "snapshot_after": {"customer_count": 0, "appt_count": 0},
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "813b4eae-8ef5-474d-9162-98a6ccfe7d53",
+    "customer_phone": "+34999000022",
+    "customer_id": null,
+    "customer_name": null,
+    "messages_count": 4,
+    "latest_tool_call_name": "escalate",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": false
+  },
+  "langfuse_trace_path": null,
+  "langfuse_pull_error": "401 Unauthorized -- Invalid Langfuse credentials configured on the harness host (known issue, see CLAUDE.md 'Langfuse credential regeneration runbook'). Set langfuse_trace_path=null per skill rule 9 and continued.",
+  "audit_hooks": {
+    "hook_1_correct_child_service": {
+      "verdict": "not_reached",
+      "note": "Bot never attempted to identify a service for either person. Catalog check confirms 'Corte de Niña' (audience=child_female, 30 min) is the correct, available service that WOULD have applied to an 8-year-old daughter -- so the scenario was fully bookable and the escalation was avoidable."
+    },
+    "hook_2_combined_request_handled_gracefully": {
+      "verdict": "FAIL",
+      "note": "The combined request was not handled at all -- the bot escalated instead of running the documented sequential two-person flow (R-44). Both bookings were lost, not just one -- worse than 'losing one of them'."
+    },
+    "hook_3_consecutive_slots_feasible_stylist": {
+      "verdict": "not_reached",
+      "note": "No slots were ever proposed or booked; N/A."
+    },
+    "hook_4_both_appointments_in_db": {
+      "verdict": "FAIL",
+      "note": "Zero appointments created (appt_count_delta=0, confirmed via psql on customers.phone='+34999000022'). Neither the mother's nor the daughter's appointment exists."
+    },
+    "hook_5_price_duration_hallucination": {
+      "verdict": "not_applicable",
+      "note": "No service, price, or duration was ever mentioned by the bot in the single turn produced -- no hallucination to check."
+    }
+  },
+  "expect": {"outcome": "two_appointments_adult_and_child"},
+  "passed": false
+}

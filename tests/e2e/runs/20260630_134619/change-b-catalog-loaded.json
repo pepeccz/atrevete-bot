@@ -1,0 +1,54 @@
+{
+  "scenario_id": "change-b-catalog-loaded",
+  "conversation_id": "a15d39fd-12c1-4af2-8164-89ff3e5a43fa",
+  "outcome": "info_provided",
+  "turns_taken": 1,
+  "turns": [
+    {
+      "turn": 1,
+      "role": "user",
+      "message": "Hola, que servicios ofreceis?",
+      "persona": "Rosa Diaz"
+    },
+    {
+      "turn": 1,
+      "role": "agent",
+      "message": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nTrabajamos pelu\u00quería y estética: cortes, peinados, color, mechas, recogidos, manicura, pedicura, depilación, maquillaje, tratamientos faciales y corporales, y algunos servicios específicos como pestañas y barba.\n\nSi quieres, te digo cuáles encajan mejor con lo que buscas.",
+      "tool_calls": [],
+      "response_latency_ms": 10064,
+      "timed_out": false
+    }
+  ],
+  "bugs": [],
+  "milestones_reached": [
+    "catalog_listed: cortes, peinados, color, mechas, recogidos, manicura, pedicura, depilacion, maquillaje, tratamientos faciales y corporales, pestanas, barba",
+    "no_booking_tools_used",
+    "correct_language_spanish",
+    "no_voseo_detected",
+    "no_escalation"
+  ],
+  "db_delta": {
+    "appointments_created": 0,
+    "appointments_before": 0,
+    "appointments_after": 0
+  },
+  "snapshot_before": "0 0",
+  "snapshot_after": "0 0",
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "a15d39fd-12c1-4af2-8164-89ff3e5a43fa",
+    "customer_phone": "+34999000008",
+    "customer_id": null,
+    "customer_name": null,
+    "messages_count": 2,
+    "latest_tool_call_name": null,
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": false
+  },
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "info_provided"
+  },
+  "passed": true
+}

@@ -1,0 +1,181 @@
+{
+  "scenario_id": "change-a-tz-madrid",
+  "conversation_id": "16f56229-cff6-459c-ad54-e2a9373cdfb2",
+  "outcome": "booked",
+  "turns_taken": 9,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Buenas noches, teneis huecos manana por la tarde?",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nSí, tengo huecos el viernes 4 de julio y, según el servicio, con la estilista Rosa.\n\nPara mañana por la tarde no me salen citas disponibles en la búsqueda que he hecho. Si me dices qué servicio quieres, te paso los huecos concretos.",
+      "latency_ms": 14226,
+      "timed_out": false,
+      "tool_calls_observed": ["get_next_available_options"],
+      "bugs": [
+        {
+          "type": "hallucination",
+          "detail": "Bot said 'el viernes 4 de julio' but July 4, 2026 is a Saturday, not Friday. Mislabeled day of week for the date shown from get_next_available_options results."
+        }
+      ],
+      "milestone": "greeting_ok — bot introduced itself and asked for service; correctly told customer no slots for tomorrow afternoon"
+    },
+    {
+      "turn": 2,
+      "user_message": "Me gustaria un corte de pelo, para una mujer adulta",
+      "agent_response": "Perfecto, entonces te anoto un corte de mujer. ¿Quieres añadir algún otro servicio o solo ese?",
+      "latency_ms": 11925,
+      "timed_out": false,
+      "tool_calls_observed": ["get_next_available_options", "update_booking"],
+      "bugs": [],
+      "milestone": "service_collected — corte de mujer with adult_female audience; extras question asked"
+    },
+    {
+      "turn": 3,
+      "user_message": "Solo el corte, gracias",
+      "agent_response": "Lo siento, para ese corte la primera fecha válida es el viernes 3 de julio, porque trabajamos con al menos 3 días de antelación.\n\n¿Quieres que te pase huecos para el viernes 3 por la tarde?",
+      "latency_ms": 14306,
+      "timed_out": false,
+      "tool_calls_observed": ["get_next_available_options", "update_booking"],
+      "bugs": [],
+      "milestone": "advance_policy_enforced — correctly rejected July 1 (1 day away), offered July 3 (first valid date per 3-day minimum policy)"
+    },
+    {
+      "turn": 4,
+      "user_message": "Si, pasame los huecos del viernes 3 por la tarde",
+      "agent_response": "Sí, para el viernes 3 de julio por la tarde tienes huecos desde las 14:00. Las primeras opciones son con la estilista con disponibilidad más próxima, y también con Marta, Pilar y Victor.\n\nSi quieres, te los ordeno en una lista para elegir.",
+      "latency_ms": 12064,
+      "timed_out": false,
+      "tool_calls_observed": ["get_next_available_options", "update_booking", "check_availability"],
+      "bugs": [],
+      "milestone": "afternoon_slots_found — check_availability called for July 3 afternoon; slots at 14:00+02:00 (Madrid CEST) correctly returned; timezone correct"
+    },
+    {
+      "turn": 5,
+      "user_message": "Si, dime las opciones",
+      "agent_response": "1. Viernes 3 de julio a las 14:00 con Harolyn  \n2. Viernes 3 de julio a las 14:00 con Marta  \n3. Viernes 3 de julio a las 14:00 con Pilar  \n\n¿Cuál te viene mejor?",
+      "latency_ms": 8875,
+      "timed_out": false,
+      "tool_calls_observed": ["get_next_available_options", "update_booking", "check_availability"],
+      "bugs": [],
+      "milestone": "slot_list_shown — 3 afternoon slots at 14:00 CEST (UTC+2) presented correctly"
+    },
+    {
+      "turn": 6,
+      "user_message": "La opcion 2, con Marta a las 14:00",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "latency_ms": 16580,
+      "timed_out": false,
+      "tool_calls_observed": ["get_next_available_options", "update_booking", "check_availability"],
+      "bugs": [],
+      "milestone": "slot_selected — Marta at 14:00 July 3 selected; update_booking confirmed slot_iso=2026-07-03T14:00:00+02:00; policy gate triggered"
+    },
+    {
+      "turn": 7,
+      "user_message": "Si, acepto la politica de privacidad",
+      "agent_response": "Perfecto. ¿Me dices tu nombre y primer apellido, por favor?",
+      "latency_ms": 13246,
+      "timed_out": false,
+      "tool_calls_observed": ["get_next_available_options", "update_booking", "check_availability"],
+      "bugs": [],
+      "milestone": "policy_accepted — update_booking confirmed policy_accepted=true, policy_version_accepted=1.0; name collection started"
+    },
+    {
+      "turn": 8,
+      "user_message": "Elena Garcia",
+      "agent_response": "Perfecto, Elena. ¿Quieres dejar alguna nota para Marta?",
+      "latency_ms": 15472,
+      "timed_out": false,
+      "tool_calls_observed": ["get_next_available_options", "update_booking", "check_availability"],
+      "bugs": [],
+      "milestone": "name_collected — customer_full_name=Elena Garcia captured; notes question asked; next_step=notes_optional"
+    },
+    {
+      "turn": 9,
+      "user_message": "No, sin notas gracias",
+      "agent_response": "¡Listo, Elena! Tu cita ha quedado confirmada para el viernes 3 de julio a las 14:00 con Marta para corte de mujer.\n\nSi quieres, te paso también el enlace del calendario: https://calendar.google.com/calendar/render?action=TEMPLATE&text=Corte%20de%20Mujer%20en%20Atr%C3%A9vete&dates=20260703T120000Z/20260703T124000Z&details=Turno%20con%20Marta&location=Atr%C3%A9vete%20Sal%C3%B3n%20de%20Belleza",
+      "latency_ms": 19643,
+      "timed_out": false,
+      "tool_calls_observed": ["get_next_available_options", "update_booking", "check_availability", "book"],
+      "bugs": [],
+      "milestone": "booked — book tool called; appointment_id=ca73dd18-0899-4f4a-8d91-74a41a01d6a6; start_iso=2026-07-03T14:00:00+02:00; calendar link encodes UTC correctly (20260703T120000Z = 14:00 CEST)"
+    }
+  ],
+  "bugs": [
+    {
+      "turn": 1,
+      "type": "hallucination",
+      "detail": "Bot labeled July 4, 2026 as 'viernes' (Friday) but that date is a Saturday. This occurred when bot mentioned preliminary availability from get_next_available_options for unrelated services (depilación, tratamiento facial). Not in the final booking path but visible in the greeting turn.",
+      "severity": "low",
+      "in_booking_path": false
+    },
+    {
+      "turn": 9,
+      "type": "finding",
+      "detail": "Final state shows customer_consents_count=0 and policy_accepted_at=null despite policy being accepted during the booking flow and the book tool being called with policy_accepted=true. Policy consent may not be persisted to customer_consents table or customers.policy_accepted_at column.",
+      "severity": "medium",
+      "in_booking_path": true
+    }
+  ],
+  "milestones_reached": [
+    "health_ok",
+    "reset_ok",
+    "greeting_ok",
+    "service_collected",
+    "advance_policy_enforced",
+    "afternoon_slots_found",
+    "timezone_correct_afternoon_14h_CEST",
+    "slot_list_shown",
+    "slot_selected",
+    "policy_shown",
+    "policy_accepted",
+    "name_collected",
+    "booked"
+  ],
+  "timezone_assessment": {
+    "slots_in_correct_tz": true,
+    "slot_offered": "2026-07-03T14:00:00+02:00",
+    "slot_local_time": "14:00 CEST (Europe/Madrid)",
+    "calendar_link_utc": "20260703T120000Z",
+    "calendar_link_utc_converts_to_local": "14:00 CEST",
+    "timezone_correct": true,
+    "notes": "All afternoon slots at 14:00 UTC+2 — correct for Madrid (CEST). Calendar link encodes as 12:00Z which is exactly 14:00 CEST. No timezone bug detected."
+  },
+  "db_delta": {
+    "customers_created": 1,
+    "appointments_created": 1,
+    "appointment_id": "ca73dd18-0899-4f4a-8d91-74a41a01d6a6",
+    "customer_id": "f5718ded-e07b-4bea-845c-22a6e0768338",
+    "appointment_start": "2026-07-03T14:00:00+02:00",
+    "appointment_status": "confirmed"
+  },
+  "snapshot_before": {
+    "customer_count": 0,
+    "appointment_count": 0
+  },
+  "snapshot_after": {
+    "customer_count": 1,
+    "appointment_count": 1
+  },
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "16f56229-cff6-459c-ad54-e2a9373cdfb2",
+    "customer_phone": "+34999000004",
+    "customer_id": "f5718ded-e07b-4bea-845c-22a6e0768338",
+    "customer_name": "Elena Garcia",
+    "messages_count": 40,
+    "latest_tool_call_name": "book",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": true
+  },
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "booked",
+    "db_appointment": {
+      "status": "confirmed"
+    },
+    "tool_calls_required": ["check_availability"],
+    "tool_calls_forbidden": []
+  },
+  "passed": true
+}

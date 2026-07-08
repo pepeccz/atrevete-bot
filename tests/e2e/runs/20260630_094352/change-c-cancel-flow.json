@@ -1,0 +1,139 @@
+{
+  "scenario_id": "change-c-cancel-flow",
+  "conversation_id": "2e6c7e3c-e6ae-4f51-9702-74aa561b511f",
+  "outcome": "cancelled",
+  "turns_taken": 8,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, quiero reservar un corte de pelo. Me llamo Lucia Herrera.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Es para señora, caballero, niña, niño o bebé?",
+      "latency_ms": 11504,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "greeted_audience_asked"
+    },
+    {
+      "turn": 2,
+      "user_message": "Para señora, por favor.",
+      "agent_response": "Perfecto, te anoto corte de mujer. ¿Quieres añadir algún otro servicio o solo ese?",
+      "latency_ms": 13969,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "audience_resolved_corte_de_mujer"
+    },
+    {
+      "turn": 3,
+      "user_message": "Solo el corte, gracias.",
+      "agent_response": "Perfecto, Lucia. ¿Con qué estilista te gustaría reservar: Harolyn, Marta, Pilar, Victor o la primera con disponibilidad?",
+      "latency_ms": 12402,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "no_extras_stylist_asked"
+    },
+    {
+      "turn": 4,
+      "user_message": "Me da igual la estilista, la primera disponible.",
+      "agent_response": "Estas son las próximas citas disponibles para corte de mujer:\n\n1. Sábado 4 de julio a las 09:00 con Marta\n2. Sábado 4 de julio a las 09:40 con Marta\n3. Sábado 4 de julio a las 10:20 con Marta\n\n¿Cuál te viene mejor?",
+      "latency_ms": 14326,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "get_next_available_options"],
+      "bugs": [],
+      "milestone": "slots_offered"
+    },
+    {
+      "turn": 5,
+      "user_message": "La primera, el sabado 4 a las 9.",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "latency_ms": 16738,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "get_next_available_options", "check_availability"],
+      "bugs": [],
+      "milestone": "slot_selected_policy_presented"
+    },
+    {
+      "turn": 6,
+      "user_message": "Si, acepto la politica.",
+      "agent_response": "Perfecto, Lucia. ¿Quieres dejar alguna nota para Marta?",
+      "latency_ms": 11153,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "policy_accepted_notes_asked"
+    },
+    {
+      "turn": 7,
+      "user_message": "No, sin notas.",
+      "agent_response": "¡Listo, Lucia! Te he reservado el sábado 4 de julio a las 09:00 con Marta para corte de mujer.\n\nAquí tienes el enlace de la cita:\nhttps://calendar.google.com/calendar/render?action=TEMPLATE&text=Corte%20de%20Mujer%20en%20Atr%C3%A9vete&dates=20260704T070000Z/20260704T074000Z&details=Turno%20con%20Marta&location=Atr%C3%A9vete%20Sal%C3%B3n%20de%20Belleza",
+      "latency_ms": 18498,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "check_availability", "book"],
+      "bugs": [],
+      "milestone": "booked_appointment_id_17f3f58e"
+    },
+    {
+      "turn": 8,
+      "user_message": "Me ha surgido un imprevisto y no voy a poder ir. Necesito cancelar esa cita.",
+      "agent_response": "Tu cita del sábado 4 de julio a las 09:00 con Marta ha sido cancelada.\n\nSi quieres, te ayudo a reservar otra fecha.",
+      "latency_ms": 12444,
+      "timed_out": false,
+      "tool_calls_observed": ["manage_appointments"],
+      "bugs": [],
+      "milestone": "cancelled_appointment_confirmed"
+    }
+  ],
+  "bugs": [],
+  "milestones_reached": [
+    "greeted_audience_asked",
+    "audience_resolved_corte_de_mujer",
+    "no_extras_stylist_asked",
+    "slots_offered",
+    "slot_selected_policy_presented",
+    "policy_accepted_notes_asked",
+    "booked_appointment_id_17f3f58e",
+    "cancelled_appointment_confirmed",
+    "db_status_verified_cancelled"
+  ],
+  "db_delta": {
+    "customers_created": 1,
+    "appointments_created": 1,
+    "appointment_final_status": "cancelled",
+    "appointment_id": "17f3f58e-d078-4617-a5fd-c9391567c317",
+    "customer_id": "26bfa475-2051-4de8-85e5-9d383572b3ab",
+    "db_verification_sql": "SELECT status FROM appointments a JOIN customers c ON c.id=a.customer_id WHERE c.phone='+34999000011' ORDER BY a.created_at DESC LIMIT 1;",
+    "db_verification_result": "cancelled"
+  },
+  "snapshot_before": {
+    "customer_count": 0,
+    "appointment_count": 0
+  },
+  "snapshot_after": {
+    "customer_count": 1,
+    "appointment_count": 1
+  },
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "2e6c7e3c-e6ae-4f51-9702-74aa561b511f",
+    "customer_phone": "+34999000011",
+    "customer_id": "26bfa475-2051-4de8-85e5-9d383572b3ab",
+    "customer_name": "Lucia Herrera",
+    "messages_count": 40,
+    "latest_tool_call_name": "manage_appointments",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": true
+  },
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "cancelled",
+    "db_appointment": {
+      "status": "cancelled"
+    },
+    "tool_calls_required": ["book", "manage_appointments"],
+    "tool_calls_forbidden": []
+  },
+  "passed": true
+}

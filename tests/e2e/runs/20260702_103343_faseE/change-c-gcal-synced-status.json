@@ -1,0 +1,139 @@
+{
+  "scenario_id": "change-c-gcal-synced-status",
+  "conversation_id": "6a110df5-a95d-4c69-8833-e91857356e3b",
+  "phone": "+34999000010",
+  "persona_name": "Ana Torres",
+  "max_turns": 12,
+  "expected": {
+    "outcome": "booked",
+    "db_appointment": {
+      "status": "pending",
+      "gcal_sync_status": "not_applicable"
+    },
+    "tool_calls_required": ["check_availability", "book"],
+    "tool_calls_forbidden": []
+  },
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Quiero reservar una manicura para el miercoles a las 11",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Qué tipo de manicura quieres? Tengo manicura, manicura permanente o manicura permanente con tratamiento.",
+      "timed_out": false,
+      "response_latency_ms": 14858,
+      "tool_evidence": [
+        {"tool_name": "update_booking", "result_next_step": "variant_required"}
+      ]
+    },
+    {
+      "turn": 2,
+      "user_message": "La primera, manicura normal",
+      "agent_response": "¿Para qué día y mes quieres la cita?",
+      "timed_out": false,
+      "response_latency_ms": 11875,
+      "tool_evidence": [
+        {"tool_name": "update_booking", "result_next_step": "variant_required"},
+        {"tool_name": "update_booking", "result_next_step": "date_clarification_required"}
+      ]
+    },
+    {
+      "turn": 3,
+      "user_message": "El miercoles 8 de julio a las 11",
+      "agent_response": "Perfecto. ¿Me dices tu nombre y primer apellido?",
+      "timed_out": false,
+      "response_latency_ms": 13121,
+      "tool_evidence": [
+        {"tool_name": "update_booking", "result_next_step": "variant_required"},
+        {"tool_name": "update_booking", "result_next_step": "date_clarification_required"},
+        {"tool_name": "update_booking", "result_next_step": "name_required", "date_iso": "2026-07-08"}
+      ]
+    },
+    {
+      "turn": 4,
+      "user_message": "Ana Torres",
+      "agent_response": "¿Quieres añadir alguna nota para la cita, o la dejo así?",
+      "timed_out": false,
+      "response_latency_ms": 13524,
+      "tool_evidence": [
+        {"tool_name": "update_booking", "result_next_step": "variant_required"},
+        {"tool_name": "update_booking", "result_next_step": "date_clarification_required"},
+        {"tool_name": "update_booking", "result_next_step": "name_required"},
+        {"tool_name": "update_booking", "result_next_step": "notes_optional", "customer_full_name": "Ana Torres"}
+      ]
+    },
+    {
+      "turn": 5,
+      "user_message": "No, sin notas",
+      "agent_response": "¿Es para ti o para otra persona?",
+      "timed_out": false,
+      "response_latency_ms": 18241,
+      "tool_evidence": [
+        {"tool_name": "update_booking", "result_next_step": "variant_required"},
+        {"tool_name": "update_booking", "result_next_step": "date_clarification_required"},
+        {"tool_name": "update_booking", "result_next_step": "name_required"},
+        {"tool_name": "update_booking", "result_next_step": "notes_optional"},
+        {"tool_name": "update_booking", "result_next_step": "pre_book_validation_required"},
+        {"tool_name": "check_availability", "result_status": "rejected", "error": "audience_required"}
+      ]
+    },
+    {
+      "turn": 6,
+      "user_message": "Para mi",
+      "agent_response": "Perfecto, Ana: te lo dejo el miércoles 8 de julio a las 11:00 con Rosa para manicura. ¿Te lo confirmo?",
+      "timed_out": false,
+      "response_latency_ms": 13927,
+      "tool_evidence": [
+        {"tool_name": "update_booking", "result_next_step": "variant_required"},
+        {"tool_name": "update_booking", "result_next_step": "date_clarification_required"},
+        {"tool_name": "update_booking", "result_next_step": "name_required"},
+        {"tool_name": "update_booking", "result_next_step": "notes_optional"},
+        {"tool_name": "update_booking", "result_next_step": "pre_book_validation_required"},
+        {"tool_name": "check_availability", "result_status": "rejected", "error": "audience_required"},
+        {"tool_name": "update_booking", "result_next_step": "pre_book_validation_required"},
+        {"tool_name": "check_availability", "result_status": "ok", "audience": "adult_female", "slot": "2026-07-08T11:00:00+02:00", "stylist": "Rosa"}
+      ]
+    },
+    {
+      "turn": 7,
+      "user_message": "Si, confirmo",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "timed_out": false,
+      "response_latency_ms": 19029,
+      "tool_evidence": [
+        {"tool_name": "update_booking", "result_next_step": "pre_book_validation_required"},
+        {"tool_name": "check_availability", "result_status": "ok", "slot": "2026-07-08T11:00:00+02:00", "stylist": "Rosa"},
+        {"tool_name": "book", "result_status": "rejected", "error": "policy_acceptance_required"}
+      ]
+    },
+    {
+      "turn": 8,
+      "user_message": "Si, acepto la politica",
+      "agent_response": "Te la he agendado para el miércoles 8 de julio a las 11:00 con Rosa para manicura. Te llegará una confirmación 48h antes; respóndela con un sí y queda lista ✅\n\nSi quieres, también te paso el enlace del calendario.",
+      "timed_out": false,
+      "response_latency_ms": 18554,
+      "tool_evidence": [
+        {"tool_name": "update_booking", "policy_accepted": true, "result_next_step": "booking_ready"},
+        {"tool_name": "check_availability", "result_status": "ok", "slot": "2026-07-08T11:00:00+02:00", "stylist": "Rosa"},
+        {"tool_name": "book", "policy_accepted": true, "result_status": "ok", "appointment_id": "1af0157e-d5af-43bf-b22d-0b33f5530562"}
+      ]
+    }
+  ],
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "6a110df5-a95d-4c69-8833-e91857356e3b",
+    "customer_phone": "+34999000010",
+    "customer_id": "d3c7b3eb-0446-4fee-ae17-45dda1b2a1a8",
+    "customer_name": "Ana Torres",
+    "messages_count": 38,
+    "latest_tool_call_name": "book",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": true,
+    "db_verified": {
+      "appointment_id": "1af0157e-d5af-43bf-b22d-0b33f5530562",
+      "status": "pending",
+      "gcal_sync_status": "not_applicable"
+    }
+  },
+  "outcome_observed": "booked",
+  "runner_notes": "Booking completed in 8 turns for Manicura on 2026-07-08 at 11:00 with Rosa. Appointment created with status=pending (>48h lead) and gcal_sync_status=not_applicable (TEST_MODE). Minor anomaly: state command reported customer_consents_count=0 and policy_accepted_at=null, but direct DB query confirmed policy_accepted_at=2026-07-02T08:54:18+00 and 1 consent row — state command appears to have a stale/incorrect read; actual data is correct."
+}

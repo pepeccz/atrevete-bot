@@ -1,0 +1,81 @@
+{
+  "scenario_id": "change-c-policy-acceptance-stored",
+  "conversation_id": "3fac64b9-21ec-4012-ae7e-aa983c14a0bf",
+  "phone": "+34999000014",
+  "persona_name": "Beatriz Jimenez",
+  "expected_outcome": "policy_accepted",
+  "outcome": "booked",
+  "max_turns": 10,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, me gustaria reservar una cita. Es la primera vez que os contacto.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿En qué puedo ayudarte?",
+      "response_latency_ms": 9778,
+      "timed_out": false,
+      "tool_evidence": []
+    },
+    {
+      "turn": 2,
+      "user_message": "Quiero reservar un corte de pelo, por favor.",
+      "agent_response": "Entonces te anoto corte de mujer, ¿correcto?",
+      "response_latency_ms": 12586,
+      "timed_out": false,
+      "tool_evidence": []
+    },
+    {
+      "turn": 3,
+      "user_message": "Si, correcto, un corte de mujer.",
+      "agent_response": "Estas son las próximas citas disponibles para corte de mujer:\n\n1. Martes 23 de junio a las 10:00 con Marta\n2. Martes 23 de junio a las 10:40 con Marta\n3. Martes 23 de junio a las 11:20 con Marta\n\n¿Cuál te viene mejor?",
+      "response_latency_ms": 15887,
+      "timed_out": false,
+      "tool_evidence": []
+    },
+    {
+      "turn": 4,
+      "user_message": "La primera, el martes 23 a las 10:00 con Marta, por favor.",
+      "agent_response": "Perfecto, te lo dejo el martes 23 de junio a las 10:00 con Marta para corte de mujer. Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "response_latency_ms": 14382,
+      "timed_out": false,
+      "tool_evidence": []
+    },
+    {
+      "turn": 5,
+      "user_message": "Si, la acepto.",
+      "agent_response": "Perfecto. ¿Me dices tu nombre y primer apellido, por favor?",
+      "response_latency_ms": 13904,
+      "timed_out": false,
+      "tool_evidence": []
+    },
+    {
+      "turn": 6,
+      "user_message": "Me llamo Beatriz Jimenez.",
+      "agent_response": "Gracias, Beatriz. ¿Quieres dejar alguna nota para Marta?",
+      "response_latency_ms": 13582,
+      "timed_out": false,
+      "tool_evidence": []
+    },
+    {
+      "turn": 7,
+      "user_message": "No, sin notas, gracias.",
+      "agent_response": "Se ha ocupado el hueco de las 10:00, pero todavía tienes estas alternativas el martes 23 de junio con Marta:\n\n1. Martes 23 de junio a las 10:40\n2. Martes 23 de junio a las 11:20\n3. Martes 23 de junio a las 12:00\n\n¿Cuál prefieres?",
+      "response_latency_ms": 20411,
+      "timed_out": false,
+      "tool_evidence": []
+    },
+    {
+      "turn": 8,
+      "user_message": "Entonces el martes 23 a las 10:40, por favor.",
+      "agent_response": "¡Listo! Tu cita ha quedado confirmada para el martes 23 de junio a las 10:40 con Marta, para corte de mujer.\n\nTe dejo también el enlace del calendario por si quieres guardarlo:\nhttps://calendar.google.com/calendar/render?action=TEMPLATE&text=Corte%20de%20Mujer%20en%20Atr%C3%A9vete&dates=20260623T084000Z/20260623T092000Z&details=Turno%20con%20Marta&location=Atr%C3%A9vete%20Sal%C3%B3n%20de%20Belleza",
+      "response_latency_ms": 28759,
+      "timed_out": false,
+      "tool_evidence": []
+    }
+  ],
+  "tool_calls_observed": [],
+  "final_state": {
+    "has_checkpoint": false
+  },
+  "coherence_notes": "The bot followed the booking flow correctly: greeted, identified the service (corte de mujer), presented availability, then gated on the privacy policy before confirming — exactly as expected for a first-time customer. After policy acceptance (turn 5) the bot collected the customer name (Beatriz Jimenez) and proceeded. The originally selected slot (10:00) was taken by a race condition, but the bot gracefully offered alternatives and confirmed 10:40. No voseo, no hallucinated stylists (Marta is valid), no repetition. The policy gate fired at the correct moment — after slot selection and before booking confirmation.",
+  "claim_vs_backend": "Bot confirmed: cita confirmada para el martes 23 de junio a las 10:40 con Marta, para corte de mujer. Policy was accepted by Beatriz Jimenez. The reconciler should verify customer.policy_accepted_at is populated and an appointment exists for 2026-06-23 10:40 with stylist Marta."
+}

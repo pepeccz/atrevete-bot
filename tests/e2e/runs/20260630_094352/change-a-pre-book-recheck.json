@@ -1,0 +1,177 @@
+{
+  "scenario_id": "change-a-pre-book-recheck",
+  "conversation_id": "1dad681b-299b-4748-bbca-3a02f8251e40",
+  "outcome": "escalated",
+  "turns_taken": 4,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, quiero reservar un corte de dama para el martes, con cualquier estilista.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Quieres añadir algún otro servicio o solo el corte de dama?",
+      "latency_ms": 12875,
+      "timed_out": false,
+      "tool_calls_observed": [
+        {
+          "tool_name": "update_booking",
+          "key_args": {
+            "services": ["corte de mujer"],
+            "audience": "adult_female",
+            "no_preference_stylist": true,
+            "date_iso": "2026-06-30",
+            "pre_resolved_service_ids": null
+          },
+          "status": "success",
+          "next_step": "extras_loop_required"
+        }
+      ],
+      "bugs": [],
+      "milestone": "service_identified_adult_female"
+    },
+    {
+      "turn": 2,
+      "user_message": "Solo el corte de dama, gracias.",
+      "agent_response": "Lo siento, el martes no llegamos con la antelación mínima. La primera fecha disponible es el viernes 3 de julio.\n\nEstos son los huecos más próximos:\n1. Viernes 3 de julio a las 10:00\n2. Viernes 3 de julio a las 10:40\n3. Viernes 3 de julio a las 11:20\n\n¿Cuál te viene mejor?",
+      "latency_ms": 11531,
+      "timed_out": false,
+      "tool_calls_observed": [
+        {
+          "tool_name": "update_booking",
+          "key_args": {
+            "no_more_services": true,
+            "date_iso": "2026-06-30",
+            "pre_resolved_service_ids": ["cb7ae91c-97ff-e1d1-3b0b-696b11467add"]
+          },
+          "status": "success",
+          "next_step": "advance_policy_violated"
+        }
+      ],
+      "bugs": [],
+      "milestone": "advance_policy_violation_handled_correctly_alternatives_offered"
+    },
+    {
+      "turn": 3,
+      "user_message": "La opcion 1, el viernes 3 de julio a las 10:00.",
+      "agent_response": "Perfecto, te lo dejo el viernes 3 de julio a las 10:00 con Marta para corte de dama. ¿Te lo confirmo?",
+      "latency_ms": 13319,
+      "timed_out": false,
+      "tool_calls_observed": [
+        {
+          "tool_name": "update_booking",
+          "key_args": {
+            "date_iso": "2026-06-30",
+            "no_more_services": true,
+            "pre_resolved_service_ids": ["cb7ae91c-97ff-e1d1-3b0b-696b11467add"]
+          },
+          "status": "success",
+          "next_step": "advance_policy_violated"
+        },
+        {
+          "tool_name": "check_availability",
+          "key_args": {
+            "service_ids": ["cb7ae91c-97ff-e1d1-3b0b-696b11467add"],
+            "date_iso": "2026-07-03",
+            "audience": "adult_female",
+            "no_preference": true,
+            "slot_time": "10:00"
+          },
+          "status": "success",
+          "result_summary": "slot confirmed: 2026-07-03T10:00+02:00 with Marta"
+        }
+      ],
+      "bugs": [],
+      "milestone": "check_availability_called_slot_confirmed_with_marta"
+    },
+    {
+      "turn": 4,
+      "user_message": "Si, confirma por favor.",
+      "agent_response": "Te paso con alguien del equipo del salón ahora mismo 🙏",
+      "latency_ms": 13328,
+      "timed_out": false,
+      "tool_calls_observed": [
+        {
+          "tool_name": "update_booking",
+          "key_args": {
+            "date_iso": "2026-06-30",
+            "slot_iso": "2026-07-03T10:00:00+02:00",
+            "no_more_services": true,
+            "policy_accepted": true,
+            "pre_resolved_service_ids": ["cb7ae91c-97ff-e1d1-3b0b-696b11467add"]
+          },
+          "status": "success",
+          "next_step": "escalation_required",
+          "note": "CRITICAL BUG: date_iso still '2026-06-30' (today) while slot_iso='2026-07-03T10:00'. Validator checks date_iso against advance_policy (min 3 days) and rejected a second time, triggering escalation after 2 consecutive rejections."
+        },
+        {
+          "tool_name": "escalate",
+          "key_args": {"reason": "technical_error"},
+          "status": "success"
+        }
+      ],
+      "bugs": [
+        {
+          "type": "context_loss",
+          "description": "date_iso never updated from '2026-06-30' (today) to '2026-07-03' (the confirmed slot date). The slot was correctly identified via check_availability and user selected it, but update_booking received date_iso='2026-06-30' again on the confirmation turn. Validator rejected for advance_policy_violated a second time, hitting the 2-consecutive-rejections threshold and triggering escalation instead of booking."
+        }
+      ],
+      "milestone": "escalated_due_to_date_iso_not_updated_after_slot_selection"
+    }
+  ],
+  "bugs": [
+    {
+      "turn": 4,
+      "type": "context_loss",
+      "severity": "CRITICAL",
+      "description": "After the user selects an alternative slot (July 3) that was offered because the original date (today, June 30) violated the 3-day advance policy, the booking draft's date_iso is never updated. On the confirmation turn, update_booking is called with date_iso='2026-06-30' and slot_iso='2026-07-03T10:00'. The validator evaluates date_iso against the advance policy, finds a violation, counts it as the 2nd consecutive rejection, and escalates. The `book` tool is never called. Root cause: the LLM correctly resolves the slot but does not update date_iso in the booking context when a new date is chosen after an advance_policy_violation."
+    }
+  ],
+  "milestones_reached": [
+    "service_identified_adult_female",
+    "advance_policy_violation_handled_correctly_alternatives_offered",
+    "check_availability_called_slot_confirmed_with_marta"
+  ],
+  "milestones_not_reached": [
+    "book_tool_called",
+    "appointment_created_confirmed"
+  ],
+  "db_delta": {
+    "customers_delta": 0,
+    "appointments_delta": 0,
+    "note": "No appointment created — escalated before book was called"
+  },
+  "snapshot_before": {
+    "customer_count": 0,
+    "appointment_count": 0
+  },
+  "snapshot_after": {
+    "customer_count": 0,
+    "appointment_count": 0
+  },
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "1dad681b-299b-4748-bbca-3a02f8251e40",
+    "customer_phone": "+34999000003",
+    "customer_id": null,
+    "customer_name": null,
+    "messages_count": 18,
+    "latest_tool_call_name": "escalate",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": false
+  },
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "booked",
+    "db_appointment": {"status": "confirmed"},
+    "tool_calls_required": ["check_availability", "book"],
+    "tool_calls_forbidden": [],
+    "service": {
+      "name_contains": "corte",
+      "service_type": "principal",
+      "audience": "adult_female",
+      "forbidden_audience": "adult_male"
+    }
+  },
+  "check_availability_called_before_book": true,
+  "service_audience_correct": true,
+  "passed": false
+}

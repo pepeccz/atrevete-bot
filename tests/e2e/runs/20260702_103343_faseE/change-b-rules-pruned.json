@@ -1,0 +1,40 @@
+{
+  "scenario_id": "change-b-rules-pruned",
+  "conversation_id": "9cee46a4-3289-4343-a28c-1e05da4a0219",
+  "phone": "+34999000009",
+  "persona_name": "Julia Moreno",
+  "max_turns": 4,
+  "expected": {"outcome": "escalated", "db_appointment": null, "tool_calls_required": [], "tool_calls_forbidden": []},
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Como funciona el sistema de reservas? Puedo cambiar mi cita despues?",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nSí, claro: el sistema te ayuda a reservar cita, elegir servicio, estilista y hueco disponible, y también a gestionar citas ya hechas.\n\nY sí, puedes cambiar tu cita después: si ya tienes una reserva, puedo verla, cancelarla o reprogramarla contigo. Si quieres, te digo cómo hacerlo paso a paso.",
+      "timed_out": false,
+      "response_latency_ms": 9302,
+      "tool_evidence": []
+    },
+    {
+      "turn": 2,
+      "user_message": "Y si quiero cambiarla, cuanto tiempo antes necesito avisar?",
+      "agent_response": "Necesitas avisar con al menos 24 horas de antelación para cambiar o cancelar la cita. Fuera de ese plazo, se aplica un cargo del 50% del servicio en la próxima visita.\n\nSi quieres, también te explico cómo reprogramarla por aquí.",
+      "timed_out": false,
+      "response_latency_ms": 9533,
+      "tool_evidence": []
+    }
+  ],
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "9cee46a4-3289-4343-a28c-1e05da4a0219",
+    "customer_phone": "+34999000009",
+    "customer_id": null,
+    "customer_name": null,
+    "messages_count": 4,
+    "latest_tool_call_name": null,
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": false
+  },
+  "outcome_observed": "info_provided",
+  "runner_notes": "Bot answered both general questions inline without escalating — provided clear explanation of the booking system (turn 1) and the 24h cancellation policy with 50% late charge (turn 2). No internal rule numbers (R2, R3, R9, R15, R33) or any 'R-' rule references appeared in either response. Outcome is info_provided, not escalated as expected; the pruning sanity check PASSES in the sense that zero internal rule numbers leaked."
+}

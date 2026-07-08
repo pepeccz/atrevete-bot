@@ -1,0 +1,31 @@
+{
+  "scenario_id": "change-b-catalog-loaded",
+  "conversation_id": "b184bc0b-cfab-4473-9965-f1f48a39538f",
+  "phone": "+34999000008",
+  "persona_name": "Rosa Diaz",
+  "expected_outcome": "escalated",
+  "outcome": "info-provided",
+  "max_turns": 4,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, ¿qué servicios ofrecéis?",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nTrabajamos peluquería y estética: cortes, peinados, recogidos, color, mechas, tratamientos capilares, depilación, manicura, pedicura, maquillaje, maquillaje de novia, masajes y varios tratamientos faciales y corporales.\n\n¿Qué servicio te interesa?",
+      "response_latency_ms": 34021,
+      "timed_out": false,
+      "tool_evidence": []
+    },
+    {
+      "turn": 2,
+      "user_message": "¿Qué tratamientos faciales tenéis exactamente?",
+      "agent_response": "Tenemos estos tratamientos faciales en el catálogo:\n\n- Tratamiento facial\n- Tratamiento facial + radiofrecuencia (15 min)\n- Tratamiento facial + radiofrecuencia (30 min)\n- Barro\n- Barro gold\n- Barro gold extra\n\nSi quieres, te ayudo a reservar uno de ellos.",
+      "response_latency_ms": 11488,
+      "timed_out": false,
+      "tool_evidence": []
+    }
+  ],
+  "tool_calls_observed": [],
+  "final_state": {"has_checkpoint": false},
+  "coherence_notes": "The bot answered both catalog questions directly without escalating to a human. Turn 1 gave a high-level list of service categories (cortes, peinados, recogidos, color, mechas, tratamientos capilares, depilación, manicura, pedicura, maquillaje, masajes, tratamientos faciales y corporales) — all real catalog items, no hallucinations. Turn 2 provided a specific list of facial treatments matching the actual catalog (Tratamiento facial, Tratamiento facial + radiofrecuencia 15min/30min, Barro, Barro gold, Barro gold extra). The bot never escalated or deferred to a human; it answered directly and ended by offering to help book. Expected outcome was 'escalated' but the bot confidently resolved the info request itself.",
+  "claim_vs_backend": "Bot listed facial treatments: Tratamiento facial, Tratamiento facial + radiofrecuencia (15 min), Tratamiento facial + radiofrecuencia (30 min), Barro, Barro gold, Barro gold extra. No booking was made."
+}

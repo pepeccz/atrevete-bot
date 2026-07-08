@@ -1,0 +1,129 @@
+{
+  "scenario_id": "change-c-gcal-synced-status",
+  "conversation_id": "b37203f0-ac45-4033-9cca-4be040bcf020",
+  "outcome": "booked",
+  "turns_taken": 7,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Quiero reservar una manicura para el miercoles a las 11.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Qué tipo de manicura quieres? Tengo manicura, manicura permanente o manicura permanente con tratamiento.",
+      "latency_ms": 13103,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "greeting_sent"
+    },
+    {
+      "turn": 2,
+      "user_message": "Manicura normal.",
+      "agent_response": "Perdona, para esa cita necesitamos al menos 3 días de antelación. La primera fecha válida es el viernes 3 de julio.\n\nSi te va bien, te saco huecos para ese día.",
+      "latency_ms": 17897,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "advance_policy_enforced"
+    },
+    {
+      "turn": 3,
+      "user_message": "Si, el viernes a las 11 esta bien.",
+      "agent_response": "¿Es para ti o para otra persona?",
+      "latency_ms": 12870,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "check_availability"],
+      "bugs": [],
+      "milestone": "audience_asked"
+    },
+    {
+      "turn": 4,
+      "user_message": "Para mi.",
+      "agent_response": "Perfecto. ¿Me das tu nombre y primer apellido?",
+      "latency_ms": 14461,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "check_availability", "update_booking"],
+      "bugs": [],
+      "milestone": "name_requested"
+    },
+    {
+      "turn": 5,
+      "user_message": "Ana Torres.",
+      "agent_response": "¿Alguna nota para la cita?",
+      "latency_ms": 13220,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "name_collected"
+    },
+    {
+      "turn": 6,
+      "user_message": "No, ninguna nota.",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "latency_ms": 18519,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "check_availability", "update_booking", "update_booking", "check_availability", "book"],
+      "bugs": [],
+      "milestone": "policy_gate_presented"
+    },
+    {
+      "turn": 7,
+      "user_message": "Si, acepto la politica.",
+      "agent_response": "¡Listo! Te he reservado la manicura para el viernes 3 de julio a las 11:00 con Rosa.  \nTambién te dejo el enlace del calendario: https://calendar.google.com/calendar/render?action=TEMPLATE&text=Manicura%20en%20Atr%C3%A9vete&dates=20260703T090000Z/20260703T093000Z&details=Turno%20con%20Rosa&location=Atr%C3%A9vete%20Sal%C3%B3n%20de%20Belleza",
+      "latency_ms": 19211,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking", "update_booking", "update_booking", "check_availability", "book", "update_booking", "book"],
+      "bugs": [],
+      "milestone": "booked"
+    }
+  ],
+  "bugs": [],
+  "milestones_reached": [
+    "greeting_sent",
+    "advance_policy_enforced",
+    "audience_asked",
+    "name_requested",
+    "name_collected",
+    "policy_gate_presented",
+    "check_availability_called",
+    "book_called",
+    "booked",
+    "db_status_confirmed",
+    "db_gcal_sync_status_not_applicable"
+  ],
+  "db_delta": {
+    "customers_created": 1,
+    "appointments_created": 1,
+    "appointment_status": "confirmed",
+    "gcal_sync_status": "not_applicable"
+  },
+  "snapshot_before": {
+    "customer_count": 0,
+    "appointment_count": 0
+  },
+  "snapshot_after": {
+    "customer_count": 1,
+    "appointment_count": 1
+  },
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "b37203f0-ac45-4033-9cca-4be040bcf020",
+    "customer_phone": "+34999000010",
+    "customer_id": "25631324-5ee9-4ed0-a75c-b9f712563e8f",
+    "customer_name": "Ana Torres",
+    "messages_count": 33,
+    "latest_tool_call_name": "book",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": true
+  },
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "booked",
+    "db_appointment": {
+      "status": "confirmed",
+      "gcal_sync_status": "not_applicable"
+    },
+    "tool_calls_required": ["check_availability", "book"],
+    "tool_calls_forbidden": []
+  },
+  "passed": true
+}

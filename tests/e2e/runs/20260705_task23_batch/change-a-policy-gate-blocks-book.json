@@ -1,0 +1,152 @@
+{
+  "scenario_id": "change-a-policy-gate-blocks-book",
+  "conversation_id": "61066b8c-0168-4610-96c1-7c304fe18cbd",
+  "outcome": "policy_accepted",
+  "turns_taken": 9,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Quiero reservar un corte de pelo para el viernes.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nClaro, para reservar ese corte necesito saber para quién es: ¿para mujer, hombre, niña, niño o bebé?",
+      "latency_ms": 10848,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "audience_required"
+    },
+    {
+      "turn": 2,
+      "user_message": "Para mujer, soy yo.",
+      "agent_response": "Perfecto, te anoto un corte de mujer para el viernes 😊\n\n¿Quieres añadir algún otro servicio o solo el corte?",
+      "latency_ms": 11743,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking"],
+      "bugs": [],
+      "milestone": "extras_loop_required"
+    },
+    {
+      "turn": 3,
+      "user_message": "Solo el corte, nada mas.",
+      "agent_response": "Perfecto, ya lo dejo cerrado como solo corte de mujer.\n\n¿Prefieres alguna estilista concreta o te vale la primera con disponibilidad?",
+      "latency_ms": 13793,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking", "update_booking"],
+      "bugs": [],
+      "milestone": "stylist_required"
+    },
+    {
+      "turn": 4,
+      "user_message": "Me vale la primera con disponibilidad.",
+      "agent_response": "Genial, para el viernes ya lo tengo encarrilado con la primera con disponibilidad.\n\n¿Me dices tu nombre y primer apellido para dejar la cita registrada?",
+      "latency_ms": 12482,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking", "update_booking", "update_booking"],
+      "bugs": [],
+      "milestone": "name_required"
+    },
+    {
+      "turn": 5,
+      "user_message": "Carmen Ruiz.",
+      "agent_response": "Perfecto, Carmen 😊\n\n¿Quieres dejarme alguna nota para la cita o lo dejamos tal cual?",
+      "latency_ms": 10429,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking", "update_booking", "update_booking", "update_booking"],
+      "bugs": [],
+      "milestone": "notes_optional"
+    },
+    {
+      "turn": 6,
+      "user_message": "No, nada mas. Reservamela ya, por favor.",
+      "agent_response": "Perfecto, Carmen. Antes de dejarla confirmada necesito revalidar la hora exacta, porque todavía me falta el hueco concreto.\n\n¿A qué hora del viernes te viene mejor?",
+      "latency_ms": 12513,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "update_booking"],
+      "bugs": [],
+      "milestone": "pre_book_validation_required"
+    },
+    {
+      "turn": 7,
+      "user_message": "A las 10 de la manana me viene bien.",
+      "agent_response": "Perfecto, Carmen: te dejo el viernes 10 de julio a las 10:00 para corte de mujer con Marta.\n\nAntes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "latency_ms": 13691,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "check_availability", "update_booking"],
+      "bugs": [],
+      "milestone": "policy_acceptance_required"
+    },
+    {
+      "turn": 8,
+      "user_message": "Eso dejalo, solo quiero la cita ya. Confirmame la hora.",
+      "agent_response": "Para dejarla confirmada necesito que me aceptes la política de privacidad y reservas primero.\n\nSi te parece bien, respóndeme con “sí” y la cierro enseguida.",
+      "latency_ms": 10316,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "check_availability", "update_booking"],
+      "bugs": [],
+      "milestone": "policy_acceptance_required (bot insisted, did not skip gate under pressure)"
+    },
+    {
+      "turn": 9,
+      "user_message": "Vale, si, la acepto.",
+      "agent_response": "Perfecto, Carmen 😊 Te lo dejo el viernes 10 de julio a las 10:00 con Marta para corte de mujer.\n\n¿Te lo confirmo?",
+      "latency_ms": 13114,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "check_availability", "update_booking", "update_booking"],
+      "bugs": [],
+      "milestone": "policy_accepted -> booking_ready (book NOT called; runner stopped here per scenario contract: forbidden tool = book, expected outcome = policy_accepted)"
+    }
+  ],
+  "bugs": [],
+  "milestones_reached": [
+    "audience_required",
+    "extras_loop_required",
+    "stylist_required",
+    "name_required",
+    "notes_optional",
+    "pre_book_validation_required",
+    "policy_acceptance_required",
+    "policy_accepted",
+    "booking_ready"
+  ],
+  "db_delta": {
+    "customer_count_delta": 0,
+    "appt_count_delta": 0
+  },
+  "snapshot_before": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "snapshot_after": {
+    "customer_count": 0,
+    "appt_count": 0
+  },
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "61066b8c-0168-4610-96c1-7c304fe18cbd",
+    "customer_phone": "+34999000002",
+    "customer_id": null,
+    "customer_name": null,
+    "messages_count": 36,
+    "latest_tool_call_name": "update_booking",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": true
+  },
+  "langfuse_trace_path": null,
+  "expect": {
+    "outcome": "policy_accepted",
+    "db_appointment": null,
+    "tool_calls_required": [],
+    "tool_calls_forbidden": ["book"],
+    "tags": ["change-a", "policy-gate"]
+  },
+  "passed": true,
+  "quality_observations": {
+    "extras_question_own_turn": "true — turn 2, the bot asked \"¿Quieres añadir algún otro servicio o solo el corte?\" as its own dedicated turn, before touching stylist/date.",
+    "confirmation_last": "true — \"¿Te lo confirmo?\" (turn 9) appeared only after policy acceptance (turns 7-9), name (turn 5), and notes (turn 6) were already collected.",
+    "rejection_both_facts": "not applicable — no closed-day + under-advance rejection occurred in this scenario.",
+    "stylist_menu_option0": "true — turn 3 phrased \"¿Prefieres alguna estilista concreta o te vale la primera con disponibilidad?\", offering 'primera con disponibilidad' first/alongside rather than after a named-stylist list.",
+    "tone": "warm/cercano — e.g. \"¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\" and \"Perfecto, Carmen 😊\"; consistent friendly register held even while firmly re-asserting the policy gate in turn 8.",
+    "unbacked_slots": "none observed — the single slot presented (viernes 10 de julio, 10:00, Marta) in turn 7 was backed by a check_availability call in the same turn's tool_evidence (status ok, exact_match true)."
+  },
+  "notes": "Runner intentionally stopped the turn loop at turn 9 once policy_accepted=true and next_step=booking_ready were reached in the checkpoint state, without sending a further confirmation message — sending one more turn would very likely trigger the book() tool call, which is explicitly forbidden by expect.tool_calls_forbidden for this scenario. This matches the Step 4d termination table entry for policy_accepted and the scenario's intent: verify the policy gate blocks booking for a first-time customer, not that a full booking completes. Also notable: DB customer_consents_count remained 0 and customers.policy_accepted_at is still null at this point — policy acceptance is tracked in the in-flight booking draft state only, and is not persisted to the customers/customer_consents tables until the appointment is actually booked. This is consistent with db_appointment: null in expect and is not itself a bug for this scenario, but is worth flagging for change-c-policy-acceptance-stored style checks if reused."
+}

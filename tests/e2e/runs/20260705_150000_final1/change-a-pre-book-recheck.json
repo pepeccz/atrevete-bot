@@ -1,0 +1,167 @@
+{
+  "scenario_id": "change-a-pre-book-recheck",
+  "conversation_id": "d1731fce-e7c7-43be-bae4-f6abdffeb52d",
+  "outcome": "booked",
+  "turns_taken": 7,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola, quiero reservar un corte de dama para el martes, con cualquier estilista.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nPerfecto, te anoto el corte de mujer para el martes con la estilista con disponibilidad más próxima. ¿Quieres añadir algún otro servicio o solo el corte?",
+      "latency_ms": 14009,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "service_and_date_collected; extras_asked"
+    },
+    {
+      "turn": 2,
+      "user_message": "Solo el corte, nada más.",
+      "agent_response": "Perdona, el martes no llega a la antelación mínima de 3 días con la que trabajamos. La primera fecha disponible es el miércoles 8 de julio.\n\nEstas son las próximas citas disponibles con la estilista con disponibilidad más próxima:\n1. Miércoles 8 de julio a las 10:00\n2. Miércoles 8 de julio a las 10:40\n3. Miércoles 8 de julio a las 11:20\n\n¿Cuál te viene mejor?",
+      "latency_ms": 19940,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking"],
+      "bugs": [
+        {
+          "type": "unbacked_slots",
+          "detail": "Agent presented 3 concrete slot options (10:00/10:40/11:20 miércoles 8 julio) but tool_evidence for this turn only shows update_booking calls (advance_policy_violated rejection with first_valid_date=2026-07-08) — no check_availability or get_next_available_options call is present to back the 3 listed times. Only the 10:00 slot was later confirmed by a check_availability call in turn 3."
+        }
+      ],
+      "milestone": "advance_policy_violated -> rejected 2026-07-07, offered 2026-07-08 alternatives (correctly cited min-advance policy fact + first_valid_date)"
+    },
+    {
+      "turn": 3,
+      "user_message": "Perfecto, el miércoles a las 10:00 me viene genial.",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos\navisar con al menos 24h si necesitas cambiar o cancelar — fuera de\nese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "latency_ms": 18456,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking", "check_availability", "update_booking"],
+      "bugs": [],
+      "milestone": "check_availability confirmed 2026-07-08T10:00 exact match (stylist Marta); next_step=policy_acceptance_required"
+    },
+    {
+      "turn": 4,
+      "user_message": "Sí, la acepto.",
+      "agent_response": "Perfecto, ya tengo el miércoles 8 de julio a las 10:00 para tu corte de mujer. Me falta tu nombre y primer apellido para dejarla cerrada, ¿me los dices?",
+      "latency_ms": 10483,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking", "check_availability", "update_booking", "update_booking"],
+      "bugs": [],
+      "milestone": "policy_accepted=true -> next_step=name_required"
+    },
+    {
+      "turn": 5,
+      "user_message": "Sofía Martínez.",
+      "agent_response": "Genial, Sofía 😊 Solo me falta una nota para la cita, si quieres dejarle algo a la estilista; si no, me dices “nada”.",
+      "latency_ms": 13337,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking", "check_availability", "update_booking", "update_booking", "update_booking"],
+      "bugs": [],
+      "milestone": "customer_full_name captured -> next_step=notes_optional"
+    },
+    {
+      "turn": 6,
+      "user_message": "Nada, gracias.",
+      "agent_response": "Perfecto, Sofía, te lo dejo el miércoles 8 de julio a las 10:00 para corte de mujer con la estilista con disponibilidad más próxima. ¿Te lo confirmo?",
+      "latency_ms": 15952,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking", "check_availability", "update_booking", "update_booking", "update_booking", "update_booking"],
+      "bugs": [],
+      "milestone": "next_step=booking_ready; confirmation question asked AFTER policy->name->notes (correct order)"
+    },
+    {
+      "turn": 7,
+      "user_message": "Sí, confírmamela.",
+      "agent_response": "Te he agendado la cita para el miércoles 8 de julio a las 10:00. Te llegará una confirmación 48h antes; respóndela con un “sí” y queda lista ✅\n\nSi quieres, también te paso el enlace del calendario.",
+      "latency_ms": 22723,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "update_booking", "check_availability", "update_booking", "update_booking", "update_booking", "update_booking", "book"],
+      "bugs": [],
+      "milestone": "book tool succeeded -> appointment_id=8cbc8df6-a19f-431c-aa86-06a3dbe7f48b, status=pending"
+    }
+  ],
+  "bugs": [
+    {
+      "type": "unbacked_slots",
+      "turn": 2,
+      "detail": "Agent presented 3 concrete slot options (10:00/10:40/11:20 miércoles 8 julio) with no check_availability/get_next_available_options tool evidence in that turn backing the 2nd/3rd options; only the 10:00 slot was later confirmed via check_availability in turn 3."
+    },
+    {
+      "type": "harness_bug",
+      "detail": "qa_turn_helper.py state subcommand reports policy_accepted_at=null and customer_consents_count=0 even after direct psql confirms customers.policy_accepted_at='2026-07-05 11:59:29+00' and 1 row in customer_consents for this customer. This is a QA harness defect, not a bot defect — flagging for harness maintainers."
+    }
+  ],
+  "milestones_reached": [
+    "service_and_date_collected",
+    "advance_policy_violated_rejected_correctly",
+    "check_availability_confirmed_slot",
+    "policy_acceptance_required",
+    "policy_accepted",
+    "name_required",
+    "notes_optional",
+    "booking_ready",
+    "confirmation_question_after_policy_name_notes",
+    "book_succeeded"
+  ],
+  "db_delta": {
+    "customer_count_delta": 1,
+    "appt_count_delta": 1
+  },
+  "snapshot_before": {"customer_count": 0, "appt_count": 0},
+  "snapshot_after": {"customer_count": 1, "appt_count": 1},
+  "appointment_detail": {
+    "id": "8cbc8df6-a19f-431c-aa86-06a3dbe7f48b",
+    "status": "pending",
+    "gcal_sync_status": "not_applicable",
+    "start_time": "2026-07-08 08:00:00+00 (2026-07-08T10:00:00+02:00 Europe/Madrid)",
+    "service_ids": ["a0f48408-6479-32c4-96ac-aa7187b99be0"],
+    "stylist_id": "39e1c607-b319-41ba-97db-fa5dcfe24cf1",
+    "service_name": "Corte de Mujer",
+    "service_audience": "adult_female",
+    "service_type": "principal"
+  },
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "d1731fce-e7c7-43be-bae4-f6abdffeb52d",
+    "customer_phone": "+34999000003",
+    "customer_id": "acf3f57d-7b13-4d93-9325-e2489541c6c2",
+    "customer_name": "Sofía Martínez",
+    "messages_count": 30,
+    "latest_tool_call_name": "book",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": true,
+    "note": "policy_accepted_at/customer_consents_count fields are stale/incorrect per harness bug above; verified correct via direct psql query (policy_accepted_at='2026-07-05 11:59:29.977601+00', policy_version='1.0', 1 row in customer_consents)"
+  },
+  "langfuse_trace_path": null,
+  "langfuse_error": "401 Unauthorized - Invalid credentials (known server Langfuse credential issue per runner briefing)",
+  "expect": {
+    "outcome": "booked",
+    "db_appointment": {"status": "pending"},
+    "tool_calls_required": ["check_availability", "book"],
+    "tool_calls_forbidden": [],
+    "tags": ["change-a", "pre-book-recheck"],
+    "service": {
+      "name_contains": "corte",
+      "service_type": "principal",
+      "audience": "adult_female",
+      "forbidden_audience": "adult_male"
+    },
+    "step_order": ["policy_acceptance_required", "name_required", "booking_ready"]
+  },
+  "passed": true,
+  "quality_observations": {
+    "extras_question_own_turn": true,
+    "extras_question_own_turn_detail": "Turn 1: bot asked \"¿Quieres añadir algún otro servicio o solo el corte?\" as its own turn, before stylist/date were finalized (date was tentatively captured but not yet confirmed available).",
+    "confirmation_last": true,
+    "confirmation_last_detail": "\"¿Te lo confirmo?\" appeared in turn 6, strictly after policy acceptance (turn 4), name (turn 5), and notes (turn 6, same turn as the confirmation question, after notes_optional was resolved) — correct step order per step_order contract.",
+    "rejection_both_facts": "n/a_not_closed_day_case",
+    "rejection_both_facts_detail": "Turn requested a Tuesday, which is not a closed day (only under min-advance). Bot correctly cited the advance-policy fact (\"no llega a la antelación mínima de 3 días\") plus the first valid date (miércoles 8 de julio) — single-fact case, not a dual closed+advance rejection, so this observation doesn't directly apply here.",
+    "stylist_menu_option0": "n/a",
+    "stylist_menu_option0_detail": "No explicit stylist-choice menu appeared; persona requested 'cualquier estilista' and the bot resolved to 'la estilista con disponibilidad más próxima' automatically without presenting a stylist list.",
+    "tone": "warm/cercano",
+    "tone_detail": "Opens with \"¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\" and closes with \"Perfecto, Sofía 😊\" — friendly, uses customer's first name, emoji, natural Castellano register throughout.",
+    "unbacked_slots": "YES - turn 2",
+    "unbacked_slots_detail": "Turn 2 listed 3 concrete slot times (10:00, 10:40, 11:20 on miércoles 8 julio) with zero check_availability/get_next_available_options evidence in that turn's tool_evidence array (only update_booking calls, whose payload only contains rejected_date/first_valid_date/policy_min_days — no slot list). The only check_availability call in the whole run happened in turn 3 and returned exactly ONE slot (10:00, exact_match=true), meaning the 10:40 and 11:20 options shown to the customer in turn 2 were never verified against real availability data in the evidence captured by the harness."
+  }
+}

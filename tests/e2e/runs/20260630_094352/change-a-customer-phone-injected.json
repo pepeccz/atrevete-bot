@@ -1,0 +1,159 @@
+{
+  "scenario_id": "change-a-customer-phone-injected",
+  "conversation_id": "3fc0df7b-ae6e-47bc-96f7-c7a5b5ea7a64",
+  "outcome": "booked",
+  "turns_taken": 8,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Quiero reservar un tinte para el proximo jueves por la manana.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Es para ti o para otra persona?",
+      "latency_ms": 10383,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "conversation_started"
+    },
+    {
+      "turn": 2,
+      "user_message": "Es para mi.",
+      "agent_response": "¿Es para señora o para caballero?",
+      "latency_ms": 14883,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "audience_disambiguation_required"
+    },
+    {
+      "turn": 3,
+      "user_message": "Para senora.",
+      "agent_response": "Perfecto. ¿Me dices el día y el mes exactos del próximo jueves?",
+      "latency_ms": 14032,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "service_resolved"
+    },
+    {
+      "turn": 4,
+      "user_message": "El 3 de julio.",
+      "agent_response": "Perfecto. ¿Me dices tu nombre y primer apellido?",
+      "latency_ms": 10894,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "date_collected"
+    },
+    {
+      "turn": 5,
+      "user_message": "Patricia Fernandez.",
+      "agent_response": "¿Quieres dejarme alguna nota para la cita?",
+      "latency_ms": 13075,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "name_collected"
+    },
+    {
+      "turn": 6,
+      "user_message": "No, sin notas.",
+      "agent_response": "Me falta elegir la hora exacta antes de confirmarla. ¿Te va bien por la mañana y qué hora prefieres?",
+      "latency_ms": 13400,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking"],
+      "bugs": [],
+      "milestone": "notes_declined"
+    },
+    {
+      "turn": 7,
+      "user_message": "Si, por la manana. Las 10 esta bien.",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "latency_ms": 17509,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "check_availability", "update_booking"],
+      "bugs": [],
+      "milestone": "availability_checked_slot_found_policy_shown"
+    },
+    {
+      "turn": 8,
+      "user_message": "Si, acepto la politica.",
+      "agent_response": "¡Listo, Patricia! Te queda el **viernes 3 de julio a las 10:00** con **Marta** para **tinte**.\nTambién te dejo el enlace del calendario por si quieres guardarlo: https://calendar.google.com/calendar/render?action=TEMPLATE&text=Tinte%20en%20Atr%C3%A9vete&dates=20260703T080000Z/20260703T084000Z&details=Turno%20con%20Marta&location=Atr%C3%A9vete%20Sal%C3%B3n%20de%20Belleza",
+      "latency_ms": 17817,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking", "check_availability", "update_booking", "update_booking", "book"],
+      "bugs": [],
+      "milestone": "booking_confirmed"
+    }
+  ],
+  "bugs": [
+    {
+      "type": "policy_consent_not_persisted",
+      "detail": "After successful booking with policy_accepted=true passed to book() args, final state snapshot shows customer_consents_count=0 and policy_accepted_at=null for customer 275c4206-8da7-429b-96e1-d42acf70db32. Consent may not be written to the customer_consents audit table. Booking itself succeeded.",
+      "severity": "warning",
+      "turn": 8
+    }
+  ],
+  "milestones_reached": [
+    "conversation_started",
+    "audience_disambiguation_required",
+    "service_resolved",
+    "date_collected",
+    "name_collected",
+    "notes_declined",
+    "availability_checked",
+    "slot_found",
+    "policy_shown",
+    "policy_accepted",
+    "booking_confirmed"
+  ],
+  "db_delta": {
+    "customers_created": 1,
+    "appointments_created": 1,
+    "appointment_id": "2ace2df4-98fa-4804-ad6a-b3ba1458116c",
+    "customer_id": "275c4206-8da7-429b-96e1-d42acf70db32",
+    "booked_slot": "2026-07-03T10:00:00+02:00",
+    "booked_slot_end": "2026-07-03T10:40:00+02:00",
+    "stylist": "Marta",
+    "stylist_id": "5f1745ba-d2b1-4d87-8d47-79821a99ae93",
+    "service": "Tinte",
+    "service_id": "10e3e5dd-57aa-8d69-ec84-d2d47525465f"
+  },
+  "snapshot_before": {
+    "customer_count": 0,
+    "appointment_count": 0
+  },
+  "snapshot_after": {
+    "customer_count": 1,
+    "appointment_count": 1
+  },
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "3fc0df7b-ae6e-47bc-96f7-c7a5b5ea7a64",
+    "customer_phone": "+34999000006",
+    "customer_id": "275c4206-8da7-429b-96e1-d42acf70db32",
+    "customer_name": "Patricia Fernandez",
+    "messages_count": 36,
+    "latest_tool_call_name": "book",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": true
+  },
+  "langfuse_trace_path": null,
+  "security_check": {
+    "injected_state_violation_found": false,
+    "turns_inspected": 8,
+    "tool_calls_inspected": ["update_booking", "check_availability", "update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "update_booking", "check_availability", "update_booking", "update_booking", "book"],
+    "phone_in_args": false,
+    "customer_phone_field_in_args": false,
+    "notes": "All tool arguments were inspected across all 8 turns. No customer_phone field and no phone number value (+34999000006) appeared in any tool call arguments. Phone is correctly injected by middleware and not passed through the LLM tool-calling layer."
+  },
+  "expect": {
+    "outcome": "booked",
+    "db_appointment": {
+      "status": "confirmed"
+    },
+    "tool_calls_required": ["check_availability", "book"],
+    "tool_calls_forbidden": []
+  },
+  "passed": true
+}

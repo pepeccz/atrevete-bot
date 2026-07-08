@@ -1,0 +1,253 @@
+{
+  "scenario_id": "stress-fuera-catalogo-escalacion",
+  "conversation_id": "e45a9430-a30c-4966-8150-d32eb1ce8ef1",
+  "outcome": "booked",
+  "outcome_notes": "Canonical decision-rule priority order (rule 3: book tool succeeded with created appointment) yields 'booked'. Semantically the scenario also satisfied 'honest_decline' (turn 1) and 'escalated' (turn 2) before the booking sub-intent completed; all three expected behaviors from expect.outcome='honest_decline_escalation_then_booking' were observed and are marked passed=true even though the literal string does not match the canonical enum (the scenario's expected_outcome is a custom composite label, not part of the canonical enum).",
+  "turns_taken": 13,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Hola! ¿hacéis alisado japonés? ¿cuánto cuesta?",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nNo tengo ese servicio en el catálogo de Atrévete, así que no puedo confirmártelo ni darte un precio. Si quieres, te reservo una cita presencial para revisar qué opción te conviene en el salón.",
+      "latency_ms": 10297,
+      "timed_out": false,
+      "tool_calls_observed": [],
+      "bugs": [],
+      "milestone": "honest_decline_out_of_catalog_service"
+    },
+    {
+      "turn": 2,
+      "user_message": "Vale, es que me caso y quiero organizar peinado y maquillaje para 6 personas el mismo día, ¿me puede llamar Pilar para organizarlo?",
+      "agent_response": "Te paso con alguien del equipo para que lo organicéis directamente.",
+      "latency_ms": 13865,
+      "timed_out": false,
+      "tool_calls_observed": ["escalate(reason=manual_request)"],
+      "bugs": [
+        {
+          "type": "minor_gap",
+          "description": "escalate tool call carries issue_summary=null/empty in the DB row — the wedding/6-person/same-day context described by the customer is not persisted in escalations.issue_summary, so the human agent picking up the escalation has no written brief and must re-read the full chat history.",
+          "severity": "low"
+        }
+      ],
+      "milestone": "escalated_to_human"
+    },
+    {
+      "turn": 3,
+      "user_message": "Perfecto, gracias. Mientras tanto quiero reservar una Manicura para la semana que viene, ¿qué días tenéis hueco?",
+      "agent_response": "Para la manicura tengo tres opciones: manicura, manicura permanente o manicura permanente con tratamiento. ¿Cuál prefieres?",
+      "latency_ms": 11348,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking(services=[manicura]) -> ambiguous/variant_required"],
+      "bugs": [],
+      "milestone": "post_escalation_booking_resumed_cleanly"
+    },
+    {
+      "turn": 4,
+      "user_message": "La manicura normal, la simple",
+      "agent_response": "Perfecto, la simple entonces. En manicura tengo estas tres opciones: manicura, manicura permanente o manicura permanente con tratamiento. ¿Con cuál te quedas?",
+      "latency_ms": 12745,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking(services=[manicura]) -> ambiguous/variant_required (repeated, unresolved)"],
+      "bugs": [
+        {
+          "type": "redundant_question",
+          "description": "User said 'la simple' (a clear colloquial reference to the plain 'Manicura' variant, as opposed to the two more elaborate 'Manicura Permanente' options). The bot echoed 'la simple entonces' in its reply but still re-asked the identical variant-disambiguation question verbatim instead of resolving to 'Manicura'. Required an explicit follow-up ('manicura a secas, sin permanente ni tratamiento') to resolve.",
+          "severity": "low-medium"
+        }
+      ],
+      "milestone": null
+    },
+    {
+      "turn": 5,
+      "user_message": "Manicura a secas, sin permanente ni tratamiento",
+      "agent_response": "Genial, te anoto la manicura simple 😊\n\n¿Quieres añadir algún otro servicio o solo la manicura?",
+      "latency_ms": 11940,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking(variant_resolved=true, service_ids=[1c06c332-fe08-56fb-3f72-b35eeb57a3ec]) -> extras_loop_required"],
+      "bugs": [],
+      "milestone": "manicura_variant_resolved"
+    },
+    {
+      "turn": 6,
+      "user_message": "Solo la manicura, nada más. Y prefiero por la mañana si puede ser, el martes o miércoles de la semana que viene",
+      "agent_response": "Perfecto, solo la manicura queda cerrada.  \nNo he podido fijar aún el día exacto: ¿me dices el martes o miércoles con día y mes, por favor?",
+      "latency_ms": 13940,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking(no_more_services=true, date_text='la semana que viene') -> date_clarification_required (could not parse relative 'martes o miércoles')"],
+      "bugs": [],
+      "milestone": "extras_closed_date_clarification_requested"
+    },
+    {
+      "turn": 7,
+      "user_message": "El martes 14 de julio",
+      "agent_response": "Perfecto, ya tengo el martes 14 de julio para la manicura.  \nPara dejarla lista, ¿me dices tu nombre y primer apellido?",
+      "latency_ms": 10851,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking(date_iso=2026-07-14) -> name_required"],
+      "bugs": [],
+      "milestone": "date_resolved"
+    },
+    {
+      "turn": 8,
+      "user_message": "Marta Iglesias",
+      "agent_response": "Genial, Marta 😊 ¿Quieres dejarme alguna nota para la manicura?",
+      "latency_ms": 10559,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking(customer_full_name='Marta Iglesias') -> notes_optional"],
+      "bugs": [],
+      "milestone": "name_collected"
+    },
+    {
+      "turn": 9,
+      "user_message": "No, sin notas. ¿Qué horas hay libres ese día?",
+      "agent_response": "Antes de mirarte los huecos de ese día, necesito saber si la manicura es para señora, caballero, niña, niño o bebé.",
+      "latency_ms": 15851,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking(notes_asked=true) -> pre_book_validation_required", "check_availability(audience=null) -> rejected/audience_required"],
+      "bugs": [],
+      "milestone": "audience_requested"
+    },
+    {
+      "turn": 10,
+      "user_message": "Es para mí, señora",
+      "agent_response": "Sí, para el martes 14 de julio tengo huecos por la mañana con Rosa:\n\n1. 10:00  \n2. 10:30  \n3. 11:00  \n4. 11:30  \n5. 12:00  \n6. 12:30  \n7. 13:00  \n8. 13:30\n\nSi quieres, también te la dejo con la estilista con disponibilidad más próxima.",
+      "latency_ms": 18927,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking(audience=adult_female)", "check_availability(audience=adult_female, date_iso=2026-07-14, preferred_window=morning) -> ok, 8 morning slots with Rosa"],
+      "bugs": [],
+      "milestone": "audience_resolved_slots_offered"
+    },
+    {
+      "turn": 11,
+      "user_message": "Perfecto, las 10:00 con Rosa",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política\nde privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos\navisar con al menos 24h si necesitas cambiar o cancelar — fuera de\nese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "latency_ms": 11324,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking(stylist_name='Rosa', slot_iso='2026-07-14T10:00:00+02:00') -> policy_acceptance_required"],
+      "bugs": [],
+      "milestone": "slot_selected_policy_gate_triggered"
+    },
+    {
+      "turn": 12,
+      "user_message": "Sí, la acepto",
+      "agent_response": "Perfecto, Marta, te lo dejo el martes 14 de julio a las 10:00 con Rosa para manicura. ¿Te lo confirmo?",
+      "latency_ms": 13531,
+      "timed_out": false,
+      "tool_calls_observed": ["update_booking(policy_accepted=true) -> booking_ready"],
+      "bugs": [],
+      "milestone": "policy_accepted"
+    },
+    {
+      "turn": 13,
+      "user_message": "Sí, confírmalo",
+      "agent_response": "Te la he agendado para el martes 14 de julio a las 10:00 con Rosa para manicura. Te enviaré una confirmación 48h antes; respóndela con un \"sí\" y queda lista ✅\n\nSi quieres, también te paso el enlace del calendario.",
+      "latency_ms": 13892,
+      "timed_out": false,
+      "tool_calls_observed": ["book(service_ids=[1c06c332-fe08-56fb-3f72-b35eeb57a3ec], stylist_id=Rosa, start_iso=2026-07-14T10:00:00+02:00, confirmed=true) -> ok, appointment_id=df54dc52-e594-42e5-a2a9-4e111029b177"],
+      "bugs": [],
+      "milestone": "booked"
+    }
+  ],
+  "bugs": [
+    {
+      "turn": 2,
+      "type": "minor_gap",
+      "description": "escalations.issue_summary is empty for the wedding/6-person escalation row — the customer's actual request context is not persisted in a structured field for the human agent.",
+      "severity": "low"
+    },
+    {
+      "turn": 4,
+      "type": "redundant_question",
+      "description": "Bot re-asked the identical Manicura-variant disambiguation question verbatim after the customer said 'la simple' (a clear reference to plain Manicura), instead of resolving directly.",
+      "severity": "low-medium"
+    }
+  ],
+  "milestones_reached": [
+    "honest_decline_out_of_catalog_service",
+    "escalated_to_human",
+    "post_escalation_booking_resumed_cleanly",
+    "manicura_variant_resolved",
+    "date_resolved",
+    "name_collected",
+    "audience_resolved_slots_offered",
+    "slot_selected_policy_gate_triggered",
+    "policy_accepted",
+    "booked"
+  ],
+  "db_delta": {
+    "customer_count_delta": 1,
+    "appt_count_delta": 1,
+    "escalations_count_delta": 1
+  },
+  "snapshot_before": {
+    "customer_count": 0,
+    "appt_count": 0,
+    "escalations_count": 0
+  },
+  "snapshot_after": {
+    "customer_count": 1,
+    "appt_count": 1,
+    "escalations_count": 1
+  },
+  "db_evidence": {
+    "escalation_row": {
+      "id": "80087fc9-6a21-481e-9b04-5103645ab0ad",
+      "conversation_id": "e45a9430-a30c-4966-8150-d32eb1ce8ef1",
+      "customer_phone": "+34999000027",
+      "reason": "manual_request",
+      "source": "manual",
+      "status": "triggered",
+      "is_technical_error": false,
+      "issue_summary": null,
+      "triggered_at": "2026-07-05T23:50:43.571691+00:00"
+    },
+    "appointment_row": {
+      "id": "df54dc52-e594-42e5-a2a9-4e111029b177",
+      "customer_id": "c866e41d-22c6-4a26-b0b7-abf28e023dfe",
+      "status": "pending",
+      "start_time": "2026-07-14T08:00:00+00:00",
+      "gcal_sync_status": "not_applicable",
+      "service_ids": ["1c06c332-fe08-56fb-3f72-b35eeb57a3ec"],
+      "service_name": "Manicura",
+      "first_name": "Marta",
+      "last_name": "Iglesias",
+      "stylist_name": "Rosa",
+      "phone": "+34999000027",
+      "note": "status=pending is correct per the confirmation lead-time gate: appointment is >48h out (booked 2026-07-05, appointment 2026-07-14), so it awaits the confirm_48h WhatsApp confirmation flow rather than being auto-confirmed."
+    },
+    "customer_row": {
+      "id": "c866e41d-22c6-4a26-b0b7-abf28e023dfe",
+      "phone": "+34999000027",
+      "policy_accepted_at": "2026-07-05T23:54:38.508840+00:00",
+      "policy_version": "1.0"
+    },
+    "service_price_note": "services.price_cents is NULL for this service AND for all 77 seeded services in this DB (verified via COUNT(*) vs COUNT(price_cents)). This is a pre-existing sandbox seed-data characteristic, not something introduced or exposed by this conversation — not counted as a scenario bug."
+  },
+  "final_state": {
+    "has_checkpoint": true,
+    "conversation_id": "e45a9430-a30c-4966-8150-d32eb1ce8ef1",
+    "customer_phone": "+34999000027",
+    "customer_id": "c866e41d-22c6-4a26-b0b7-abf28e023dfe",
+    "customer_name": "Marta Iglesias",
+    "messages_count": 54,
+    "latest_tool_call_name": "book",
+    "customer_consents_count": 0,
+    "policy_accepted_at": null,
+    "summary_present": true,
+    "note": "policy_accepted_at is null / customer_consents_count is 0 in the LangGraph checkpoint state view, but the DB customers.policy_accepted_at IS correctly set (see db_evidence.customer_row). This is the previously documented state-vs-DB artifact (see project memory: Fase E results — 'consent bug was a state-vs-DB artifact; judge consent via reconcile, NOT the state command'). Not a new bug."
+  },
+  "langfuse_trace_path": null,
+  "langfuse_pull_error": "UnauthorizedError 401 'Invalid credentials. Confirm that you've configured the correct host.' — matches the known Langfuse credential issue documented in CLAUDE.md (obs #7491 finding 6, pending credential regeneration runbook). Not a new bug from this run.",
+  "expect": {
+    "outcome": "honest_decline_escalation_then_booking"
+  },
+  "passed": true,
+  "passed_note": "expect.outcome is a custom composite label, not part of the canonical outcome enum. All three components were individually verified: (1) honest decline with no hallucinated price/availability for 'alisado japonés' (turn 1), (2) escalate tool fired with a persisted escalations row for the wedding/6-person request (turn 2), (3) clean return to normal booking flow with a confirmed Manicura appointment in DB (turns 3-13, no contaminated state). Canonical single-value outcome recorded as 'booked' per the decision-rule priority order.",
+  "observations": {
+    "hook_1_honest_decline_no_hallucination": "PASS — verbatim turn 1 response: \"No tengo ese servicio en el catálogo de Atrévete, así que no puedo confirmártelo ni darte un precio.\" No price, no availability, no invented service was mentioned. The bot explicitly declined to speculate.",
+    "hook_2_in_catalog_alternative_offered": "PARTIAL / NICE-TO-HAVE MISS — the bot did not proactively suggest an in-catalog alternative (e.g. a hair treatment/alisado-adjacent service if one exists in the catalog). It only offered a generic in-person visit ('te reservo una cita presencial para revisar qué opción te conviene'). Not a bug per se (it avoided hallucinating an alternative it wasn't sure about), but a missed opportunity to upsell/redirect.",
+    "hook_3_escalation_tool_and_db_trace": "PASS — turn 2 tool_evidence shows `escalate(reason=manual_request)` firing successfully, and the DB `escalations` table has a matching row (id=80087fc9-6a21-481e-9b04-5103645ab0ad, conversation_id matches, customer_phone matches, status='triggered'). The bot told the customer: \"Te paso con alguien del equipo para que lo organicéis directamente.\" — clear signal a human will follow up. Minor gap: issue_summary is empty, so the escalation row alone doesn't capture the wedding/6-person context (see bugs[]).",
+    "hook_4_clean_return_to_booking": "PASS — turns 3-13 completed the full Manicura booking flow (variant disambiguation, date, name, audience, slot selection, policy acceptance, final confirmation) with no contamination from the escalation or the out-of-catalog request. The escalate tool call is echoed in every subsequent turn's tool_evidence purely because the harness returns cumulative checkpoint history — it did not re-fire or interfere with booking logic.",
+    "hook_5_manicura_appointment_in_db": "PASS — appointments row df54dc52-e594-42e5-a2a9-4e111029b177 exists with service_ids=[1c06c332-fe08-56fb-3f72-b35eeb57a3ec] (Manicura), stylist=Rosa, start_time=2026-07-14T08:00:00+00:00 (10:00 Europe/Madrid), first_name/last_name=Marta/Iglesias, phone=+34999000027, gcal_sync_status=not_applicable (correct sandbox behavior), status=pending (correct — appointment is >48h out, awaiting confirm_48h flow per CLAUDE.md confirmation-flow rules). Price could not be verified because services.price_cents is NULL for the entire seeded catalog (pre-existing sandbox data gap, not scenario-specific)."
+  }
+}

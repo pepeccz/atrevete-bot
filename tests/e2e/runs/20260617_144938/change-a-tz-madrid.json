@@ -1,0 +1,63 @@
+{
+  "scenario_id": "change-a-tz-madrid",
+  "conversation_id": "ca840938-009d-4aa5-994c-36d20f5694da",
+  "phone": "+34999000004",
+  "persona_name": "Elena Garcia",
+  "expected_outcome": "booked",
+  "outcome": "stuck",
+  "max_turns": 6,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Buenas noches, teneis huecos manana por la tarde?",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\n¿Para qué servicio lo quieres?",
+      "response_latency_ms": 17000,
+      "timed_out": false,
+      "tool_evidence": []
+    },
+    {
+      "turn": 2,
+      "user_message": "Queria un corte de pelo, para manana por la tarde si podeis.",
+      "agent_response": "Perdona, no podemos reservar mañana porque no llega a la antelación mínima de 3 días. La primera fecha disponible es el sábado 20 de junio.\n\nSi quieres, te busco huecos para ese día por la tarde.",
+      "response_latency_ms": 15844,
+      "timed_out": false,
+      "tool_evidence": []
+    },
+    {
+      "turn": 3,
+      "user_message": "Ah, vaya. Si, busca huecos para el sabado 20 por la tarde, por favor.",
+      "agent_response": "El sábado 20 de junio por la tarde no tengo huecos para ese servicio.\n\nSi te encaja, te puedo buscar la primera disponibilidad más cercana.",
+      "response_latency_ms": 14475,
+      "timed_out": false,
+      "tool_evidence": []
+    },
+    {
+      "turn": 4,
+      "user_message": "Si, busca la primera disponibilidad que haya, me da igual el dia.",
+      "agent_response": "Estas son las primeras opciones que tengo para corte de mujer:\n\n1. Martes 23 de junio a las 10:00 con Marta\n2. Martes 23 de junio a las 10:40 con Marta\n3. Martes 23 de junio a las 11:20 con Marta\n\n¿Cuál te viene mejor?",
+      "response_latency_ms": 14377,
+      "timed_out": false,
+      "tool_evidence": []
+    },
+    {
+      "turn": 5,
+      "user_message": "Prefiero algo por la tarde si es posible, a partir de las 16:00 o 17:00. Hay algo disponible por la tarde?",
+      "agent_response": "Sí, por la tarde tienes huecos el martes 23 de junio. Los primeros que veo son:\n\n1. Martes 23 de junio a las 14:00 con Marta\n2. Martes 23 de junio a las 14:00 con Victor\n3. Martes 23 de junio a las 14:00 con Harolyn\n4. Martes 23 de junio a las 14:00 con Pilar\n5. Martes 23 de junio a las 14:40 con Marta\n...(up to option 36, Martes 23 a las 19:20 con Pilar)",
+      "response_latency_ms": 13483,
+      "timed_out": false,
+      "tool_evidence": []
+    },
+    {
+      "turn": 6,
+      "user_message": "La opcion 13, el martes 23 a las 16:00 con Marta, perfecto.",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "response_latency_ms": 22346,
+      "timed_out": false,
+      "tool_evidence": []
+    }
+  ],
+  "tool_calls_observed": [],
+  "final_state": {"has_checkpoint": false},
+  "coherence_notes": "The bot resolved the service type correctly (corte de mujer) and properly enforced the 3-day minimum booking lead time, redirecting the customer from 'tomorrow' to the earliest available slot. On turn 4 it offered only morning slots (10:00-11:20), but when the customer explicitly asked for afternoon, turn 5 presented a full afternoon range from 14:00 to 19:20 on June 23 — all clearly Madrid local times (no UTC confusion). The 16:00 slot offered is a legitimate afternoon time. Flow reached the policy gate on turn 6 (after slot selection) and was asking for acceptance — booking was in progress but MAX_TURNS of 6 was reached before confirmation. No voseo, no hallucinated stylists (Marta, Victor, Harolyn, Pilar are all valid), and context was maintained across turns. The 'afternoon' interpretation initially returned options from 14:00, not 16:00 as requested, which is a minor coherence gap.",
+  "claim_vs_backend": "At turn 6, the bot had not yet booked anything — it was presenting the privacy policy gate before confirming the slot (martes 23 de junio a las 16:00 con Marta, corte de mujer). No booking claim was made; conversation stalled at policy step within MAX_TURNS limit."
+}

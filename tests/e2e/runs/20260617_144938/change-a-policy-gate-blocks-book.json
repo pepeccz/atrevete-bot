@@ -1,0 +1,55 @@
+{
+  "scenario_id": "change-a-policy-gate-blocks-book",
+  "conversation_id": "3add7155-4dfe-435a-a5ce-d5a6c8c04d26",
+  "phone": "+34999000002",
+  "persona_name": "Carmen Ruiz",
+  "expected_outcome": "policy_accepted",
+  "outcome": "policy_accepted",
+  "max_turns": 10,
+  "turns": [
+    {
+      "turn": 1,
+      "user_message": "Quiero reservar un corte de pelo para el viernes.",
+      "agent_response": "¡Hola! Soy Maite, asistenta virtual con IA de Atrévete 🌸\n\nPerdona, no podemos reservar para ese viernes porque no llega a la antelación mínima de 3 días. La primera fecha disponible es el sábado 20 de junio.\n\n¿Te viene bien ese día?",
+      "response_latency_ms": 14243,
+      "timed_out": false,
+      "tool_evidence": []
+    },
+    {
+      "turn": 2,
+      "user_message": "Vale, el sabado 20 me viene bien. Que horarios teneis disponibles?",
+      "agent_response": "Sí, el sábado 20 de junio tenéis huecos con Marta, Victor, Harolyn y Pilar.\n\nLas primeras opciones que me salen son:\n1. sábado 20 de junio a las 9:00\n2. sábado 20 de junio a las 9:40\n3. sábado 20 de junio a las 10:20\n4. sábado 20 de junio a las 11:00\n5. sábado 20 de junio a las 11:40\n6. sábado 20 de junio a las 12:20\n7. sábado 20 de junio a las 13:00\n\nSi no tienes preferencia de estilista, también te puedo dar la primera con disponibilidad más próxima. ¿Cuál te viene mejor?",
+      "response_latency_ms": 13378,
+      "timed_out": false,
+      "tool_evidence": []
+    },
+    {
+      "turn": 3,
+      "user_message": "La opcion 1, a las 9:00 del sabado.",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "response_latency_ms": 12457,
+      "timed_out": false,
+      "tool_evidence": []
+    },
+    {
+      "turn": 4,
+      "user_message": "Bueno, solo quiero reservar el corte, lo de la politica no me hace falta leerla.",
+      "agent_response": "Antes de confirmarte la cita, necesito un sí rápido a nuestra política de privacidad y reservas 😊\n\nEn Atrévete reservamos un tiempo exclusivo para ti, así que te pedimos avisar con al menos 24h si necesitas cambiar o cancelar — fuera de ese plazo se aplica un cargo del 50% del servicio en tu próxima visita.\n\nPuedes leerla completa aquí: https://atrevetepeluqueria.com/politica-privacidad/\n\n¿La aceptas?",
+      "response_latency_ms": 10978,
+      "timed_out": false,
+      "tool_evidence": []
+    },
+    {
+      "turn": 5,
+      "user_message": "Si, la acepto.",
+      "agent_response": "Perfecto. ¿Me das tu nombre y primer apellido, por favor?",
+      "response_latency_ms": 14051,
+      "timed_out": false,
+      "tool_evidence": []
+    }
+  ],
+  "tool_calls_observed": [],
+  "final_state": {"has_checkpoint": false},
+  "coherence_notes": "The bot correctly blocked the booking attempt at slot selection (turn 3) by presenting the policy gate before executing book. When the user tried to skip the policy (turn 4), the bot held its ground and re-presented the gate verbatim. On explicit acceptance (turn 5), the bot acknowledged and moved to the next identification step (name collection). Flow was coherent: greet → availability check → present slots → policy gate → acceptance → identify. No voseo, no hallucinated stylists (Marta, Victor, Harolyn, Pilar shown — all valid). The bot did present availability options before the policy gate, which is within acceptable flow since the gate triggered at the commit/confirm step rather than before browsing options.",
+  "claim_vs_backend": "Bot acknowledged policy acceptance with 'Perfecto' and asked for customer name — no booking was claimed yet. Policy gate was gated correctly before any book tool call."
+}
