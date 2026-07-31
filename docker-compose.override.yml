@@ -60,5 +60,5 @@ services:
     command: npm run dev -- --turbo
     environment:
       - NODE_ENV=development
-      - NEXT_PUBLIC_API_URL=https://api.zonavix.com
+      - NEXT_PUBLIC_API_URL=https://apiatrevete.zanovix.com
       - WATCHPACK_POLLING=true
