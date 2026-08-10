@@ -231,8 +231,14 @@ async def test_audience_tagged_principal_with_explicit_input_audience_returns_no
 
 
 @pytest.mark.asyncio
-async def test_variant_with_shared_parent_returns_variant_kind(db_session, variant_services):
-    """H3: VARIANT siblings sharing parent_service_name → kind=='variant'."""
+async def test_child_with_shared_parent_is_not_ambiguous(db_session, variant_services):
+    """H3 (updated): naming an explicit child variant IS the disambiguation.
+
+    Regression guard for the prod bug in the 2026-08-10 WhatsApp transcript: this
+    branch used to return ('variant', parent, [parent, *siblings, self]), which
+    re-asked "which kind?" right after the customer had already named the exact
+    variant. Naming a child variant now commits its own UUID directly.
+    """
     if not await _db_available():
         pytest.skip("Postgres not reachable")
 
@@ -241,9 +247,9 @@ async def test_variant_with_shared_parent_returns_variant_kind(db_session, varia
     kind, family, candidates = await _resolve_audience_variants(
         db_session, variant_services["names"][0]
     )
-    assert kind == "variant", f"Expected kind='variant', got '{kind}'"
-    assert family == variant_services["parent"]
-    assert len(candidates) >= 2
+    assert kind == "none", f"Expected kind='none', got '{kind}'"
+    assert family == ""
+    assert candidates == []
 
 
 @pytest.mark.asyncio

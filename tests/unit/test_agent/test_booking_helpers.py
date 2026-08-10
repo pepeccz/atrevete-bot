@@ -203,16 +203,26 @@ async def test_principal_with_active_children_returns_variant(db_session, princi
 
 
 @pytest.mark.asyncio
-async def test_child_with_sibling_returns_variant(db_session, child_with_sibling):
-    """Child 'Peinado Fiesta Test2' + sibling → ('variant', parent, [parent, siblings...])."""
+async def test_child_with_sibling_is_not_ambiguous(db_session, child_with_sibling):
+    """Child + sibling → ('none', '', []). Naming a variant IS the disambiguation.
+
+    Regression guard for the prod bug in the 2026-08-10 WhatsApp transcript: this
+    branch used to return ('variant', parent, [parent, *siblings, self]), which
+    re-asked "which kind of peinado?" right after the customer answered
+    "peinado largo". The re-ask only cleared if the LLM remembered to carry
+    `variant_resolved=True` on every subsequent call — a flag that was not echoed
+    in `collected` and got dropped as soon as the argument shape changed.
+    """
     from agent.tools._booking_helpers import _resolve_audience_variants
 
     child_name = child_with_sibling["children"][0]
     kind, family, candidates = await _resolve_audience_variants(db_session, child_name)
 
-    assert kind == "variant", f"Expected 'variant', got '{kind}'"
-    assert family == child_with_sibling["parent"]
-    assert child_with_sibling["parent"] in candidates
+    assert kind == "none", (
+        f"Expected 'none' for explicit variant '{child_name}' — the customer already "
+        f"named the variant, there is nothing left to ask. Got '{kind}'."
+    )
+    assert candidates == []
 
 
 @pytest.mark.asyncio
@@ -254,6 +264,46 @@ async def test_principal_variant_fires_regardless_of_audience(
         db_session, principal_with_children["principal"]
     )
     assert kind == "variant"
+
+
+# ---------------------------------------------------------------------------
+# Regression — WhatsApp transcript 2026-08-10 ("peinado largo" asked twice)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_explicit_variant_commits_without_variant_resolved(
+    db_session, principal_with_children
+):
+    """The vague term asks; the explicit variant commits — no flag required.
+
+    Reproduces both halves of the transcript against the strict resolver:
+      1. "Peinado Test"        (the family)  → variant_required, nothing committed
+      2. "Peinado Fiesta Test" (the variant) → 1 UUID committed, no question
+
+    Step 2 previously treated both as equally ambiguous, so answering the
+    question did not close it — only an LLM-carried `variant_resolved=True` did.
+    """
+    from agent.tools._booking_helpers import _resolve_service_ids_strict
+
+    # 1. The family term is still ambiguous — the gate must survive this fix.
+    _ids, _unknown, ambiguous, _partial = await _resolve_service_ids_strict(
+        db_session, [principal_with_children["principal"]]
+    )
+    assert len(ambiguous) == 1, "The principal must still raise the variant gate"
+    assert ambiguous[0]["question_hint"] == "variant_required"
+
+    # 2. The explicit variant is the ANSWER to that gate — it must commit.
+    child_name = principal_with_children["children"][0]
+    resolved_ids, unknown, ambiguous, _partial = await _resolve_service_ids_strict(
+        db_session, [child_name]
+    )
+    assert ambiguous == [], (
+        f"'{child_name}' names a specific variant — re-asking is the prod bug. "
+        f"Got descriptors: {ambiguous}"
+    )
+    assert unknown == []
+    assert len(resolved_ids) == 1, f"Expected the child UUID committed, got {resolved_ids}"
 
 
 # ---------------------------------------------------------------------------

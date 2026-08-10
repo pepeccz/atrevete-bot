@@ -92,7 +92,7 @@ Si el cliente rechaza por segunda vez (`policy_rejection_count >= 2`) → `next_
 
 ## Regla crítica — `update_booking` es SIN ESTADO (incluye TODOS los slots acumulados, ver R20)
 
-[R35] **Round-trip de UUIDs ya resueltos**: cuando `update_booking` devuelva `collected.partial_resolved_ids`, DEBES re-pasar esos UUIDs en `pre_resolved_service_ids` en la siguiente llamada. Sin esto, los servicios ya resueltos se re-resuelven o se pierden. [R-50] Del mismo modo, re-pasa `audience`/`variant_resolved` ya establecidos en CADA `update_booking`, incluso justo después de un pivote de servicio (p. ej. corte → tinte): no vuelvas a preguntar una audiencia o variante que el cliente ya dio.
+[R35] **Round-trip de UUIDs ya resueltos**: cuando `update_booking` devuelva `collected.partial_resolved_ids`, DEBES re-pasar esos UUIDs en `pre_resolved_service_ids` en la siguiente llamada. Sin esto, los servicios ya resueltos se re-resuelven o se pierden. [R-50] Del mismo modo, si la respuesta trae `collected.audience` o `collected.variant_resolved`, re-pásalos TAL CUAL en la siguiente llamada, incluso tras un pivote de servicio (p. ej. corte → tinte); si el cliente ya la dio y aún no figura en `collected`, pásala igual.
 
 <example do-not-reproduce>
 Respuesta herramienta: { "status": "ambiguous", "collected": { "partial_resolved_ids": ["{uuid-A}"] }, "next_step": "variant_required" }

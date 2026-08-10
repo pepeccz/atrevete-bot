@@ -224,6 +224,7 @@ async def update_booking(
             The backend resolves it against the current Europe/Madrid date.
             Use one or the other — if date_iso is set, date_text is ignored.
         audience: Audience qualifier for ambiguous service families.
+            Round-trip flag. Pass back the value from previous collected.audience.
         customer_full_name: Customer full name in 'FirstName LastName' format. Required when
             customer is unknown. If <customer> block has a Nombre: line, pass that value here.
         notes: Optional appointment notes provided by the customer.
@@ -237,7 +238,10 @@ async def update_booking(
         variant_resolved: Set True when the user has explicitly accepted the principal service
             as-is (e.g. "mechas normales" after a variant_required turn). When True, the
             variant gate is bypassed and the principal UUID is committed directly.
+            Round-trip flag. Pass back the value from previous collected.variant_resolved.
             Default False preserves current behavior (gate fires).
+            Note: naming a specific variant ("peinado largo") needs no flag — a variant
+            name is self-disambiguating and commits its own UUID.
             Refs: REQ-TL-1, ADR-DR-1.
         pre_resolved_service_ids: UUIDs from a previous turn's collected.partial_resolved_ids.
             These bypass name resolution entirely and are merged directly into collected.services.
@@ -368,6 +372,17 @@ async def _update_booking_impl(
 
     async with get_async_session() as session:
         collected: dict = {}
+        # ── Round-trip parity seed (D-A) ──────────────────────────────────────
+        # `extras_asked` / `notes_asked` are echoed elsewhere so the LLM can hand
+        # them back verbatim; `variant_resolved` and `audience` were not, which
+        # left the model as the sole memory of two decisions the customer had
+        # already made. Seeding here (before ANY early return) makes every
+        # response path — success, ambiguous, category_mix, audience-source,
+        # Step 2 rejection — carry the flags, instead of only the success path.
+        if variant_resolved:
+            collected["variant_resolved"] = True
+        if audience is not None:
+            collected["audience"] = audience
         missing: list[str] = []
 
         # ── AR5: validate pre_resolved_service_ids against active catalog ─────
@@ -495,7 +510,7 @@ async def _update_booking_impl(
                 status="ambiguous",
                 next_step=next_step,
                 payload=first_desc,
-                collected={"partial_resolved_ids": partial_resolved_ids},
+                collected={**collected, "partial_resolved_ids": partial_resolved_ids},
             ).model_dump_json()
 
         if unknown_names:
@@ -517,7 +532,7 @@ async def _update_booking_impl(
                 status="rejected",
                 next_step=SERVICE_SUGGESTION_REQUIRED,
                 payload={"unknown_terms": unknown_names, "candidates": candidates},
-                collected={"partial_resolved_ids": resolved_ids},
+                collected={**collected, "partial_resolved_ids": resolved_ids},
             ).model_dump_json()
 
         # ── ADR-DR-2: merge pre_resolved_set into resolved_ids ───────────────
@@ -564,6 +579,7 @@ async def _update_booking_impl(
                     "categories": ["HAIRDRESSING", "AESTHETICS"],
                 },
                 errors=["No puedo combinar peluquería y estética en una misma cita."],
+                collected=collected,
             ).model_dump_json()
 
         # ── Step 1.6: audience-source gate (deterministic cold-guess catch) ──
@@ -608,6 +624,7 @@ async def _update_booking_impl(
                     status="rejected",
                     next_step="audience_required",
                     payload={"variants": _candidates, "family": _family_label},
+                    collected=collected,
                 ).model_dump_json()
 
         # ── Step 1 (REMOVED): the legacy memory-blind audience gate lived here ─
@@ -622,22 +639,36 @@ async def _update_booking_impl(
         #     with no legitimate audience source (cold model guess) → audience_required.
         # No remaining case relies on this blind gate; keeping it only broke source (a).
 
-        # ── Step 2: variant disambiguation — UNGATED (independent of audience) ─
-        # kind=="variant" → principal with active children OR child with siblings.
-        # Must run regardless of audience state — the two axes are orthogonal.
+        # ── Step 2: variant disambiguation — backstop for a principal Step 1.7 ──
+        # missed (D-D). kind=="variant" only fires for a principal with active
+        # children now — a child name is self-disambiguating (case (b) above).
+        #
+        # GATED on variant_resolved (D-B / prod bug fix): when the customer
+        # accepted the principal as-is, Step 1.7 already consumed the
+        # descriptor and committed the UUID. Re-running the loop here re-fired
+        # variant_required forever. The rejection below carries `collected`
+        # (seeded at request start, D-A) but deliberately OMITS
+        # `partial_resolved_ids`: at this point `resolved_ids` holds the
+        # principal's own UUID, and leaking it would let the model re-pass it
+        # as `pre_resolved_service_ids`, bypassing name resolution and the
+        # variant gate entirely. Flags only.
         # Design: ADR-2 ordering (booking-disambiguation-hardening).
-        for service_name in services:
-            kind, family, candidates = await _resolve_audience_variants(session, service_name)
-            if kind == "variant":
-                logger.info(
-                    "tool.response.rejected",
-                    extra={"tool_name": "update_booking", "next_step": "variant_required"},
+        if not variant_resolved:
+            for service_name in services:
+                kind, family, candidates = await _resolve_audience_variants(
+                    session, service_name
                 )
-                return ToolResponse(
-                    status="rejected",
-                    next_step="variant_required",
-                    payload={"variants": candidates, "family": family},
-                ).model_dump_json()
+                if kind == "variant":
+                    logger.info(
+                        "tool.response.rejected",
+                        extra={"tool_name": "update_booking", "next_step": "variant_required"},
+                    )
+                    return ToolResponse(
+                        status="rejected",
+                        next_step="variant_required",
+                        payload={"variants": candidates, "family": family},
+                        collected=collected,
+                    ).model_dump_json()
 
         collected["services"] = services
         collected["service_ids"] = resolved_ids

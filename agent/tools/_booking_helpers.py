@@ -449,7 +449,9 @@ async def _resolve_audience_variants(
     Axis (a) — audience: PRINCIPAL services sharing the same `dimension` metadata key
     but differing by `audience` column value.
 
-    Axis (b) — variant (child): input service has `parent_service_name` → look up siblings.
+    Axis (b) — variant (child): input service has `parent_service_name` → NOT ambiguous.
+      The customer named a specific variant, which is itself the answer to the variant
+      question. Returns ("none", "", []) so the child UUID commits directly.
     Axis (b') — variant (principal): input service has no `parent_service_name` → look up
       active children where their `parent_service_name == this.name`. If ≥1 child exists,
       return variant gate with [principal] + sorted children.
@@ -477,25 +479,22 @@ async def _resolve_audience_variants(
     parent_name = metadata.get("parent_service_name")
 
     if parent_name:
-        # ── Case (b): variant axis — input IS a child ─────────────────────────
-        siblings_result = await session.execute(
-            select(Service.name).where(
-                Service.metadata_["parent_service_name"].as_string() == parent_name,
-                Service.name != service_name,
-                Service.is_active.is_(True),
-            )
-        )
-        siblings = sorted(r[0] for r in siblings_result.fetchall())
-        if len(siblings) >= 1:
-            # Include parent name + siblings + self; de-duplicate preserving order
-            candidates_raw = [parent_name] + siblings + [service_name]
-            seen: set[str] = set()
-            candidates: list[str] = []
-            for c in candidates_raw:
-                if c not in seen:
-                    seen.add(c)
-                    candidates.append(c)
-            return ("variant", parent_name, candidates)
+        # ── Case (b): input IS a child — the variant axis is already closed ───
+        # Naming a variant explicitly ("Peinado Largo") IS the answer to the
+        # variant question, so there is nothing left to ask. Every resolution
+        # path that reaches here matched the customer's WHOLE term — colloquial
+        # synonym map, exact internal/display name, or diminutive stem (see
+        # _resolve_service_ids_strict) — so a child name is never a vague match
+        # that could be hiding a different sibling.
+        #
+        # This branch used to return ("variant", parent, [parent, *siblings, self]),
+        # which re-asked a question the customer had just answered and made the
+        # flow depend on the LLM carrying `variant_resolved=True` forward on every
+        # later call. That flag is not echoed in `collected`, so dropping it
+        # re-fired the gate mid-conversation (prod bug, WhatsApp 2026-08-10:
+        # "peinado largo" asked twice). Committing the child's own UUID removes
+        # the dependency instead of papering over it.
+        return ("none", "", [])
     else:
         # ── Case (b'): variant axis — input IS a principal ────────────────────
         children_result = await session.execute(

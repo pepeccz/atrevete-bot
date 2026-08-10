@@ -15,7 +15,15 @@ Tests:
        across 2 turns. partial_resolved_ids carries clean UUID; re-passing it on next turn
        does NOT cause re-resolution.
 
-All tests are HARD FAIL (no xfail). Marked @pytest.mark.integration.
+All tests are HARD FAIL except 2 surviving `xfail(strict=True)` markers
+(test_prod_replay_corte_y_tinte_converges_within_3_calls and
+test_tinte_uuid_preserved_across_disambiguation_turns), which encode a STALE
+Turn-1 expectation: 'tinte' predates the service-disambiguation-data-fixes
+migration that tagged Tinte=adult_female / Color para Hombre=adult_male in the
+'color' dimension, so it is now audience-ambiguous like 'corte'. This is a
+catalog-data follow-up, not a prod bug — see the narrowed `reason=` on each
+marker. All other tests, including test_principal_accept_commits_uuid, are
+HARD FAIL (no xfail). Marked @pytest.mark.integration.
 Skip gracefully when Postgres is unreachable (via db_with_seeds fixture in conftest.py).
 
 Refs: spec REQ-TE-1, REQ-TE-2; design §AR6, §Test parametrization shape; tasks T4.1–T4.6.
@@ -110,17 +118,6 @@ async def test_variant_gate_fires_without_variant_resolved(db_with_seeds, princi
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "PROD BUG: update_booking Step 2 variant gate (lines ~545-556 in update_booking.py) "
-        "calls _resolve_audience_variants() for each service name independently of variant_resolved. "
-        "When variant_resolved=True bypasses Step 1.7, Step 2 still fires variant_required "
-        "for any principal that has active variant children. "
-        "Fix: add 'if not variant_resolved:' before the Step 2 loop in _update_booking_impl. "
-        "Track in engram #6692 (prod bugs surfaced by test-debt remediation)."
-    ),
-)
 @pytest.mark.integration
 @pytest.mark.asyncio
 @pytest.mark.parametrize("principal_name", PRINCIPAL_NAMES_WITH_CHILDREN)
@@ -230,12 +227,14 @@ async def test_static_principal_list_matches_db(db_with_seeds):
 @pytest.mark.xfail(
     strict=True,
     reason=(
-        "PROD BUG: (1) 'tinte' is now ambiguous (Tinte=adult_female vs Color para Hombre=adult_male "
-        "in color dimension) so partial_resolved_ids is empty on Turn 1 — catalog changed by "
-        "service-disambiguation-data-fixes migration. "
-        "(2) Step 2 variant gate in _update_booking_impl ignores variant_resolved=True, so Turn 2 "
-        "with a specific variant still returns variant_required. "
-        "Fix both issues in prod (engram #6692) before expecting this test to go green."
+        "STALE TEST EXPECTATION (not a prod bug): 'Tinte' is now audience-tagged "
+        "(audience=adult_female) and 'Color para Hombre' is audience=adult_male, both in the "
+        "'color' dimension — intended catalog state as of the service-disambiguation-data-fixes "
+        "migration. This test's Turn-1 assumption that 'tinte' resolves cleanly into "
+        "partial_resolved_ids predates that migration; it is now an audience-axis ambiguous term "
+        "like 'corte'. The variant-loop gating bug this test also exercised is fixed (see "
+        "engram #6692 for the variant-gate history; the audience-tagging expectation is a "
+        "separate catalog-data follow-up)."
     ),
 )
 @pytest.mark.integration
@@ -386,10 +385,12 @@ async def test_prod_replay_corte_y_tinte_converges_within_3_calls(db_with_seeds)
 @pytest.mark.xfail(
     strict=True,
     reason=(
-        "PROD BUG: Same as test_prod_replay_corte_y_tinte_converges_within_3_calls. "
-        "'tinte' is now audience-ambiguous (Tinte=adult_female vs Color para Hombre=adult_male) "
-        "so partial_resolved_ids is empty — the catalog changed. Step 2 variant gate also "
-        "ignores variant_resolved=True. Track in engram #6692."
+        "STALE TEST EXPECTATION (not a prod bug): same cause as "
+        "test_prod_replay_corte_y_tinte_converges_within_3_calls. 'Tinte' is now "
+        "audience-tagged (adult_female) vs 'Color para Hombre' (adult_male) in the 'color' "
+        "dimension — intended catalog state post service-disambiguation-data-fixes. This "
+        "test's Turn-1 assumption that 'tinte' resolves cleanly into partial_resolved_ids "
+        "predates that migration."
     ),
 )
 @pytest.mark.integration
