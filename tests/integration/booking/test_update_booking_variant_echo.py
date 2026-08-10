@@ -138,10 +138,10 @@ async def audience_family_without_female(db_with_seeds):
     """
     stem = "zzztestfam"
     names = [f"{stem} de Ellos Test", f"{stem} de Peques Test"]
-    audiences = ["adult_male", "child"]
+    audiences = ["adult_male", "child_male"]
 
     await db_with_seeds.execute(delete(Service).where(Service.name.in_(names)))
-    await db_with_seeds.flush()
+    await db_with_seeds.commit()
 
     for name, aud in zip(names, audiences, strict=True):
         svc = Service(
@@ -158,12 +158,12 @@ async def audience_family_without_female(db_with_seeds):
             },
         )
         db_with_seeds.add(svc)
-    await db_with_seeds.flush()
+    await db_with_seeds.commit()
 
     yield stem
 
     await db_with_seeds.execute(delete(Service).where(Service.name.in_(names)))
-    await db_with_seeds.flush()
+    await db_with_seeds.commit()
 
 
 @pytest.mark.integration
@@ -214,7 +214,7 @@ async def step2_backstop_principal(db_with_seeds):
     child = "Zzzt6 Principal Test Variante"
 
     await db_with_seeds.execute(delete(Service).where(Service.name.in_([principal, child])))
-    await db_with_seeds.flush()
+    await db_with_seeds.commit()
 
     principal_svc = Service(
         id=uuid4(),
@@ -237,12 +237,12 @@ async def step2_backstop_principal(db_with_seeds):
         },
     )
     db_with_seeds.add_all([principal_svc, child_svc])
-    await db_with_seeds.flush()
+    await db_with_seeds.commit()
 
     yield principal
 
     await db_with_seeds.execute(delete(Service).where(Service.name.in_([principal, child])))
-    await db_with_seeds.flush()
+    await db_with_seeds.commit()
 
 
 @pytest.mark.integration
