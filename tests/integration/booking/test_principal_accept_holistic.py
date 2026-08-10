@@ -124,19 +124,36 @@ async def test_variant_gate_fires_without_variant_resolved(db_with_seeds, princi
 async def test_principal_accept_commits_uuid(db_with_seeds, principal_name):
     """REQ-TE-1b: principal UUID is committed when variant_resolved=True (no variant loop).
 
+    The principal's own `audience` is passed whenever the catalog assigns it one.
+    Without it an audience-tagged principal correctly stops at `audience_required`
+    before the variant axis is ever reached — R-32 forbids inferring audience from
+    a catalog name — so the variant-accept path this test exists to cover would
+    never execute. Only `Tratamiento de Senos` is tagged today; the other ten
+    principals carry a NULL audience and are unaffected.
+
     Asserts:
     - status is not "ambiguous"
-    - collected.services contains exactly 1 UUID
+    - collected.services is populated
     - next_step is not "variant_required" (no re-loop)
     """
+    from sqlalchemy import select
+
     from agent.tools.update_booking import _update_booking_impl
+    from database.models import Service
+
+    _audience_row = await db_with_seeds.execute(
+        select(Service.audience).where(Service.name == principal_name)
+    )
+    principal_audience = _audience_row.scalar_one_or_none()
+    if principal_audience is not None:
+        principal_audience = getattr(principal_audience, "value", principal_audience)
 
     result_json = await _update_booking_impl(
         services=[principal_name],
         stylist_name=None,
         no_preference_stylist=False,
         date_iso=None,
-        audience=None,
+        audience=principal_audience,
         date_text=None,
         customer_full_name=None,
         notes=None,
@@ -158,7 +175,7 @@ async def test_principal_accept_commits_uuid(db_with_seeds, principal_name):
     )
     assert result.get("next_step") != "variant_required", (
         f"next_step must not be 'variant_required' when variant_resolved=True ('{principal_name}'). "
-        "Got: '{result.get('next_step')}'. Principal-accept bypass must suppress the loop."
+        f"Got: '{result.get('next_step')}'. Principal-accept bypass must suppress the loop."
     )
     collected = result.get("collected", {})
     services = collected.get("services", [])
